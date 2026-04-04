@@ -1,0 +1,8 @@
+# Clawd Bot Agent Rules
+- **Brain:** Use Gemini 3.0 Pro for all reasoning and documentation.
+- **Project Context:** This is a Point of Sale (POS) system.
+- **Workflow:** 1. Analyze the bug.
+    2. Suggest a fix.
+    3. Execute the code change.
+    4. Automatically generate/update technical documentation in the `/docs` folder.
+- **Documentation Style:** Technical, clear, and including any changes made to the database schema.

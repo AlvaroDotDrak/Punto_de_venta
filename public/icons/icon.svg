@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Fondo con esquinas redondeadas -->
+  <rect width="512" height="512" rx="96" fill="#C97B4B"/>
+
+  <!-- Torta: base -->
+  <rect x="88" y="318" width="336" height="88" rx="16" fill="white" opacity="0.95"/>
+  <!-- Torta: capa superior -->
+  <rect x="120" y="222" width="272" height="88" rx="16" fill="white" opacity="0.92"/>
+  <!-- Glasé superior -->
+  <rect x="120" y="208" width="272" height="28" rx="10" fill="#E8A87C"/>
+  <!-- Detalle glasé ondulado (simulado con elipses) -->
+  <ellipse cx="168" cy="236" rx="20" ry="10" fill="white" opacity="0.6"/>
+  <ellipse cx="220" cy="236" rx="20" ry="10" fill="white" opacity="0.6"/>
+  <ellipse cx="272" cy="236" rx="20" ry="10" fill="white" opacity="0.6"/>
+  <ellipse cx="324" cy="236" rx="20" ry="10" fill="white" opacity="0.6"/>
+
+  <!-- Vela -->
+  <rect x="242" y="148" width="28" height="60" rx="6" fill="#FFF3CD"/>
+  <rect x="242" y="148" width="28" height="12" rx="3" fill="#FFEAA7"/>
+  <!-- Llama -->
+  <ellipse cx="256" cy="138" rx="11" ry="16" fill="#FF8C42"/>
+  <ellipse cx="256" cy="142" rx="6" ry="9" fill="#FFD166"/>
+</svg>

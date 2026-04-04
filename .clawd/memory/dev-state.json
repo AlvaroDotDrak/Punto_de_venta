@@ -1,0 +1,29 @@
+{
+  "projects": {
+    "punto-de-venta": {
+      "branch": "main",
+      "status": "active",
+      "currentTask": "none",
+      "nextSteps": [
+        "Setup Vitest for unit testing",
+        "Improve thermal printing CSS"
+      ],
+      "blockers": [],
+      "lastUpdated": "2026-02-16T21:00:00Z"
+    }
+  },
+  "todos": [
+    {
+      "id": 1,
+      "task": "Fix: Descuento de stock al vender trozos",
+      "priority": "high",
+      "status": "completed"
+    },
+    {
+      "id": 2,
+      "task": "Feat: Configurar Vitest para pruebas unitarias",
+      "priority": "medium",
+      "status": "pending"
+    }
+  ]
+}

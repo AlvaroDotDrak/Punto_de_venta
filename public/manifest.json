@@ -1,0 +1,45 @@
+{
+  "name": "Pastelería POS - Punto de Venta",
+  "short_name": "Pastelería",
+  "description": "Sistema de Punto de Venta para Pastelería — ventas, vitrina, pedidos y métricas. Funciona sin conexión a internet.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FBF7F4",
+  "theme_color": "#C97B4B",
+  "orientation": "any",
+  "lang": "es-CL",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Nueva Venta",
+      "url": "/",
+      "description": "Ir al punto de venta"
+    },
+    {
+      "name": "Vitrina",
+      "url": "/vitrina",
+      "description": "Control de vitrina"
+    }
+  ]
+}
