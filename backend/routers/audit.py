@@ -9,7 +9,7 @@ from ..schemas import AuditLogOut
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
-@router.get("/", response_model=list[AuditLogOut])
+@router.get("", response_model=list[AuditLogOut])
 def list_audit_logs(
     limit: int = 100,
     seller_id: int | None = None,

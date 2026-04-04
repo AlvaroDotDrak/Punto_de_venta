@@ -12,6 +12,7 @@ const LOCKOUT_DURATION = 5 * 60 * 1000;
 
 export default function SellerSelect() {
   const [sellers, setSellers] = useState([]);
+  const [loadError, setLoadError] = useState(false);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -20,9 +21,14 @@ export default function SellerSelect() {
   const [verifying, setVerifying] = useState(false);
   const { selectSeller } = useSeller();
 
-  useEffect(() => {
-    api.get('/auth/sellers').then(setSellers).catch(() => {});
-  }, []);
+  const loadSellers = () => {
+    setLoadError(false);
+    api.get('/auth/sellers')
+      .then(data => setSellers(data))
+      .catch(() => setLoadError(true));
+  };
+
+  useEffect(() => { loadSellers(); }, []);
 
   const isLocked = (sellerId) => {
     const lockTime = lockouts[sellerId];
@@ -148,6 +154,23 @@ export default function SellerSelect() {
           Selecciona tu usuario para comenzar
         </p>
       </div>
+
+      {loadError && (
+        <div style={{ textAlign: 'center', color: 'var(--color-danger)', marginBottom: 'var(--space-lg)' }}>
+          <AlertTriangle size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+          No se pudo conectar al servidor.
+          <button className="btn btn-ghost btn-sm" onClick={loadSellers} style={{ marginLeft: 8 }}>
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {!loadError && sellers.length === 0 && (
+        <div style={{ textAlign: 'center', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-lg)' }}>
+          <div className="spinner" style={{ margin: '0 auto var(--space-sm)' }} />
+          Cargando vendedores...
+        </div>
+      )}
 
       <div className="seller-grid">
         {sellers.map(seller => {

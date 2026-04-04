@@ -10,12 +10,12 @@ from ..schemas import SellerCreate, SellerOut, SellerUpdate
 router = APIRouter(prefix="/sellers", tags=["sellers"])
 
 
-@router.get("/", response_model=list[SellerOut])
+@router.get("", response_model=list[SellerOut])
 def list_sellers(db: Session = Depends(get_db), _=Depends(require_admin)):
     return db.query(Seller).all()
 
 
-@router.post("/", response_model=SellerOut, status_code=201)
+@router.post("", response_model=SellerOut, status_code=201)
 def create_seller(payload: SellerCreate, db: Session = Depends(get_db), admin=Depends(require_admin)):
     seller = Seller(
         name=payload.name,

@@ -10,12 +10,12 @@ from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientOut,
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
 
-@router.get("/", response_model=list[IngredientOut])
+@router.get("", response_model=list[IngredientOut])
 def list_ingredients(db: Session = Depends(get_db), _=Depends(require_admin)):
     return db.query(Ingredient).filter(Ingredient.active == True).order_by(Ingredient.name).all()
 
 
-@router.post("/", response_model=IngredientOut, status_code=201)
+@router.post("", response_model=IngredientOut, status_code=201)
 def create_ingredient(
     payload: IngredientCreate,
     db: Session = Depends(get_db),

@@ -75,7 +75,7 @@ def _handle_showcase_stock(db: Session, product_id: int, showcase_type: str, sal
     ))
 
 
-@router.post("/", response_model=SaleOut, status_code=201)
+@router.post("", response_model=SaleOut, status_code=201)
 def create_sale(
     payload: SaleCreate,
     db: Session = Depends(get_db),
@@ -131,7 +131,7 @@ def create_sale(
     ).filter(Sale.id == sale.id).first()
 
 
-@router.get("/", response_model=list[SaleOut])
+@router.get("", response_model=list[SaleOut])
 def list_sales(
     limit: int = 50,
     offset: int = 0,

@@ -31,6 +31,7 @@ app = FastAPI(
     title="Punto de Venta – Pastelería",
     version="2.0.0",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # CORS para desarrollo (Vite en :5173)

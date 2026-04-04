@@ -11,7 +11,7 @@ from ..schemas import ShowcaseItemCreate, ShowcaseItemOut
 router = APIRouter(prefix="/showcase", tags=["showcase"])
 
 
-@router.get("/", response_model=list[ShowcaseItemOut])
+@router.get("", response_model=list[ShowcaseItemOut])
 def list_showcase(
     status: str = "active",
     db: Session = Depends(get_db),
@@ -23,7 +23,7 @@ def list_showcase(
     return q.order_by(ShowcaseItem.placed_at.desc()).all()
 
 
-@router.post("/", response_model=ShowcaseItemOut, status_code=201)
+@router.post("", response_model=ShowcaseItemOut, status_code=201)
 def add_to_showcase(
     payload: ShowcaseItemCreate,
     db: Session = Depends(get_db),

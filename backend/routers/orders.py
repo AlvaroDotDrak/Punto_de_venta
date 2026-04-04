@@ -11,7 +11,7 @@ from ..schemas import OrderCreate, OrderOut, OrderUpdate
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
-@router.get("/", response_model=list[OrderOut])
+@router.get("", response_model=list[OrderOut])
 def list_orders(
     status: str | None = None,
     db: Session = Depends(get_db),
@@ -23,7 +23,7 @@ def list_orders(
     return q.order_by(Order.delivery_date.asc()).all()
 
 
-@router.post("/", response_model=OrderOut, status_code=201)
+@router.post("", response_model=OrderOut, status_code=201)
 def create_order(
     payload: OrderCreate,
     db: Session = Depends(get_db),
