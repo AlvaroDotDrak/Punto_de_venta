@@ -55,12 +55,12 @@ app.include_router(audit.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
 
 
-# Servir el frontend React (build de producción)
-dist_path = Path(__file__).parent.parent / "dist"
-if dist_path.exists():
-    app.mount("/", StaticFiles(directory=str(dist_path), html=True), name="frontend")
-
-
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
+
+
+# Servir el frontend React — debe ir AL FINAL para no capturar rutas /api
+dist_path = Path(__file__).parent.parent / "dist"
+if dist_path.exists():
+    app.mount("/", StaticFiles(directory=str(dist_path), html=True), name="frontend")
