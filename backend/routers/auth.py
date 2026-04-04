@@ -10,6 +10,12 @@ from ..schemas import LoginRequest, TokenOut, SellerOut
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+@router.get("/sellers", response_model=list[SellerOut])
+def public_sellers(db: Session = Depends(get_db)):
+    """Endpoint público: devuelve vendedores activos para la pantalla de login."""
+    return db.query(Seller).filter(Seller.active == True).all()
+
+
 @router.post("/login", response_model=TokenOut)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     seller = db.query(Seller).filter(

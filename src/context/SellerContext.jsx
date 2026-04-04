@@ -16,9 +16,9 @@ export function SellerProvider({ children }) {
   const [sellers, setSellers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Cargar vendedores activos para la pantalla de selección
+  // Cargar vendedores activos para la pantalla de selección (endpoint público)
   useEffect(() => {
-    api.get('/sellers')
+    api.get('/auth/sellers')
       .then(data => setSellers(data))
       .catch(() => {})
       .finally(() => setLoading(false));

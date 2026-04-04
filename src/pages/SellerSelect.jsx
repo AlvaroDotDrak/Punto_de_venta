@@ -21,7 +21,7 @@ export default function SellerSelect() {
   const { selectSeller } = useSeller();
 
   useEffect(() => {
-    api.get('/sellers').then(setSellers).catch(() => {});
+    api.get('/auth/sellers').then(setSellers).catch(() => {});
   }, []);
 
   const isLocked = (sellerId) => {
