@@ -1,16 +1,14 @@
 /**
- * SellerSelect — Login screen with PIN authentication
- * Features: PIN input, 3-attempt lockout, audit logging
+ * SellerSelect — Login screen with PIN authentication via API
+ * Features: PIN input, 3-attempt lockout (en memoria)
  */
 import { useEffect, useState } from 'react';
-import db from '../db';
 import { useSeller } from '../context/SellerContext';
-import { verifyPin } from '../utils/crypto';
-import { logAction, ACTIONS } from '../utils/auditLog';
+import api from '../utils/api';
 import { User, Lock, AlertTriangle, ArrowLeft } from 'lucide-react';
 
 const MAX_ATTEMPTS = 3;
-const LOCKOUT_DURATION = 5 * 60 * 1000; // 5 minutes
+const LOCKOUT_DURATION = 5 * 60 * 1000;
 
 export default function SellerSelect() {
   const [sellers, setSellers] = useState([]);
@@ -23,17 +21,13 @@ export default function SellerSelect() {
   const { selectSeller } = useSeller();
 
   useEffect(() => {
-    db.sellers.toArray().then(all => {
-      setSellers(all.filter(s => s.active !== false));
-    });
+    api.get('/sellers').then(setSellers).catch(() => {});
   }, []);
 
-  // Check lockout status
   const isLocked = (sellerId) => {
     const lockTime = lockouts[sellerId];
     if (!lockTime) return false;
     if (Date.now() - lockTime < LOCKOUT_DURATION) return true;
-    // Lockout expired
     setLockouts(prev => { const n = { ...prev }; delete n[sellerId]; return n; });
     setAttempts(prev => { const n = { ...prev }; delete n[sellerId]; return n; });
     return false;
@@ -42,20 +36,11 @@ export default function SellerSelect() {
   const getRemainingLockout = (sellerId) => {
     const lockTime = lockouts[sellerId];
     if (!lockTime) return 0;
-    const remaining = LOCKOUT_DURATION - (Date.now() - lockTime);
-    return Math.max(0, Math.ceil(remaining / 1000));
+    return Math.max(0, Math.ceil((LOCKOUT_DURATION - (Date.now() - lockTime)) / 1000));
   };
 
   const handleSellerClick = (seller) => {
     if (isLocked(seller.id)) return;
-    
-    // If seller has no PIN, log in directly
-    if (!seller.pin) {
-      logAction(ACTIONS.LOGIN, seller.id, `${seller.name} ingresó (sin PIN)`);
-      selectSeller(seller);
-      return;
-    }
-    
     setSelectedSeller(seller);
     setPin('');
     setError('');
@@ -69,45 +54,38 @@ export default function SellerSelect() {
     setError('');
 
     try {
-      const isValid = await verifyPin(pin, selectedSeller.pin);
+      const { access_token, seller } = await api.post('/auth/login', {
+        seller_id: selectedSeller.id,
+        pin,
+      });
+      setAttempts(prev => { const n = { ...prev }; delete n[selectedSeller.id]; return n; });
+      selectSeller(seller, access_token);
+    } catch {
+      const newAttempts = (attempts[selectedSeller.id] || 0) + 1;
+      setAttempts(prev => ({ ...prev, [selectedSeller.id]: newAttempts }));
 
-      if (isValid) {
-        await logAction(ACTIONS.LOGIN, selectedSeller.id, `${selectedSeller.name} ingresó correctamente`);
-        setAttempts(prev => { const n = { ...prev }; delete n[selectedSeller.id]; return n; });
-        selectSeller(selectedSeller);
+      if (newAttempts >= MAX_ATTEMPTS) {
+        setLockouts(prev => ({ ...prev, [selectedSeller.id]: Date.now() }));
+        setError('🔒 Cuenta bloqueada por 5 minutos');
+        setSelectedSeller(null);
       } else {
-        const newAttempts = (attempts[selectedSeller.id] || 0) + 1;
-        setAttempts(prev => ({ ...prev, [selectedSeller.id]: newAttempts }));
-
-        if (newAttempts >= MAX_ATTEMPTS) {
-          setLockouts(prev => ({ ...prev, [selectedSeller.id]: Date.now() }));
-          await logAction(ACTIONS.LOGIN_LOCKED, selectedSeller.id, `${selectedSeller.name} bloqueado tras ${MAX_ATTEMPTS} intentos fallidos`);
-          setError(`🔒 Cuenta bloqueada por 5 minutos`);
-          setSelectedSeller(null);
-        } else {
-          await logAction(ACTIONS.LOGIN_FAILED, selectedSeller.id, `Intento ${newAttempts}/${MAX_ATTEMPTS}`);
-          setError(`PIN incorrecto (intento ${newAttempts}/${MAX_ATTEMPTS})`);
-        }
-        setPin('');
+        setError(`PIN incorrecto (intento ${newAttempts}/${MAX_ATTEMPTS})`);
       }
-    } catch (err) {
-      setError('Error de verificación: ' + err.message);
+      setPin('');
     } finally {
       setVerifying(false);
     }
   };
 
-  const remainingAttempts = (sellerId) => MAX_ATTEMPTS - (attempts[sellerId] || 0);
-
-  // PIN entry screen
   if (selectedSeller) {
     return (
       <div className="login-screen">
         <div className="login-card">
-          <button className="btn btn-ghost btn-sm login-back" onClick={() => { setSelectedSeller(null); setPin(''); setError(''); }}>
+          <button className="btn btn-ghost btn-sm login-back"
+            onClick={() => { setSelectedSeller(null); setPin(''); setError(''); }}>
             <ArrowLeft size={16} /> Volver
           </button>
-          
+
           <div className="seller-avatar" style={{ width: 80, height: 80, fontSize: '2rem', margin: '0 auto var(--space-md)' }}>
             {selectedSeller.name.charAt(0).toUpperCase()}
           </div>
@@ -143,24 +121,15 @@ export default function SellerSelect() {
 
             <div className="attempt-dots">
               {Array.from({ length: MAX_ATTEMPTS }).map((_, i) => (
-                <span
-                  key={i}
+                <span key={i}
                   className={`attempt-dot ${i < (attempts[selectedSeller.id] || 0) ? 'failed' : ''}`}
                 />
               ))}
             </div>
 
-            <button
-              type="submit"
-              className="btn btn-primary btn-lg"
-              style={{ width: '100%' }}
-              disabled={!pin || verifying}
-            >
-              {verifying ? (
-                <><span className="spinner spinner-sm" /> Verificando...</>
-              ) : (
-                <>🔓 Ingresar</>
-              )}
+            <button type="submit" className="btn btn-primary btn-lg"
+              style={{ width: '100%' }} disabled={!pin || verifying}>
+              {verifying ? <><span className="spinner spinner-sm" /> Verificando...</> : <>🔓 Ingresar</>}
             </button>
           </form>
         </div>
@@ -168,7 +137,6 @@ export default function SellerSelect() {
     );
   }
 
-  // Seller selection screen
   return (
     <div className="login-screen">
       <div style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
@@ -186,12 +154,10 @@ export default function SellerSelect() {
           const locked = isLocked(seller.id);
           const remaining = getRemainingLockout(seller.id);
           return (
-            <button
-              key={seller.id}
+            <button key={seller.id}
               className={`seller-btn ${locked ? 'locked' : ''}`}
               onClick={() => handleSellerClick(seller)}
-              disabled={locked}
-            >
+              disabled={locked}>
               <div className="seller-avatar">
                 {locked ? <Lock size={24} /> : seller.name.charAt(0).toUpperCase()}
               </div>
@@ -201,7 +167,7 @@ export default function SellerSelect() {
                   Bloqueado ({Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, '0')})
                 </span>
               )}
-              {seller.pin && !locked && (
+              {!locked && (
                 <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>
                   🔒 PIN requerido
                 </span>

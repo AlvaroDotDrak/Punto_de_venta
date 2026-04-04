@@ -1,22 +1,14 @@
 /**
- * Pedidos — Order management with product selector
- * 
- * Features:
- * - Order items from product catalog with auto-pricing
- * - Chilean phone validation (+56 9 XXXX XXXX)
- * - Future delivery date validation
- * - Status workflow: pendiente → en_produccion → listo → entregado
- * - Calendar view
+ * Pedidos — Gestión de pedidos personalizados
+ * V3.0: consume FastAPI backend
  */
-import { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import db from '../db';
+import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
+import api from '../utils/api';
 import { formatCurrency, formatDate, formatShortDate } from '../utils/formatters';
-import { logAction, ACTIONS } from '../utils/auditLog';
-import { ClipboardList, Plus, Phone, Calendar, ChevronLeft, ChevronRight, X, Edit, User, Search, Package, Trash2, ShoppingCart, CreditCard, CheckCircle } from 'lucide-react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, isToday as checkIsToday, isPast } from 'date-fns';
+import { ClipboardList, Plus, Phone, Calendar, ChevronLeft, ChevronRight, X, Edit, Search, Trash2 } from 'lucide-react';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, isToday as checkIsToday } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 const statusLabels = {
@@ -25,496 +17,223 @@ const statusLabels = {
   listo: 'Listo para Entrega',
   entregado: 'Entregado',
 };
-
 const statusFlow = ['pendiente', 'en_produccion', 'listo', 'entregado'];
+const statusColors = { pendiente: 'badge-warning', en_produccion: 'badge-info', listo: 'badge-fresh', entregado: 'badge-secondary' };
 
-const emptyForm = {
-  customerName: '',
-  phone: '',
-  description: '',
-  deliveryDate: '',
-  advance: '',
-  totalPrice: '',
-  notes: '',
-};
-
-// Chilean phone validation: +56 9 XXXX XXXX or 9XXXXXXXX
 function isValidChileanPhone(phone) {
-  if (!phone) return true; // Optional
-  const cleaned = phone.replace(/[\s\-()]/g, '');
-  return /^(\+?56)?9\d{8}$/.test(cleaned);
+  if (!phone) return true;
+  return /^(\+?56)?9\d{8}$/.test(phone.replace(/[\s\-()]/g, ''));
 }
+
+const emptyForm = { customer_name: '', phone: '', description: '', delivery_date: '', advance: '', balance: '' };
 
 export default function Pedidos() {
   const toast = useToast();
   const { currentSeller } = useSeller();
+
+  const [orders, setOrders] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [viewMode, setViewMode] = useState('list');
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [statusFilter, setStatusFilter] = useState('');
+  const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [orderItems, setOrderItems] = useState([]);
-  const [showProductPicker, setShowProductPicker] = useState(false);
-  const [productSearch, setProductSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('todos');
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const [viewMode, setViewMode] = useState('list');
+  const [expandedId, setExpandedId] = useState(null);
 
-  // Payment modal state
-  const [payingOrder, setPayingOrder] = useState(null);
-  const [payMethod, setPayMethod] = useState('efectivo');
-  const [amountReceived, setAmountReceived] = useState('');
-
-  // Delete confirmation state
-  const [deletingOrder, setDeletingOrder] = useState(null);
-  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
-
-  // Load orders
-  const orders = useLiveQuery(() => db.orders.reverse().toArray(), [], []);
-  
-  // Load products for selector
-  const products = useLiveQuery(() => db.products.filter(p => p.active !== false).toArray(), [], []);
-
-  // Load order items for each order
-  const allOrderItems = useLiveQuery(() => db.orderItems.toArray(), [], []);
-
-  const orderItemsMap = useMemo(() => {
-    const map = {};
-    allOrderItems.forEach(item => {
-      if (!map[item.orderId]) map[item.orderId] = [];
-      map[item.orderId].push(item);
-    });
-    return map;
-  }, [allOrderItems]);
-
-  // Filter products for picker
-  const filteredProducts = useMemo(() => {
-    if (!productSearch) return products;
-    const term = productSearch.toLowerCase();
-    return products.filter(p => p.name.toLowerCase().includes(term));
-  }, [products, productSearch]);
-
-  // Filter orders
-  const filteredOrders = useMemo(() => {
-    if (statusFilter === 'todos') return orders.filter(o => o.status !== 'entregado');
-    return orders.filter(o => o.status === statusFilter);
-  }, [orders, statusFilter]);
-
-  // Calendar data
-  const calendarDays = useMemo(() => {
-    const start = startOfMonth(calendarMonth);
-    const end = endOfMonth(calendarMonth);
-    const days = eachDayOfInterval({ start, end });
-    const startDay = getDay(start) === 0 ? 6 : getDay(start) - 1;
-    const padStart = Array.from({ length: startDay }, (_, i) => {
-      const d = new Date(start);
-      d.setDate(d.getDate() - startDay + i);
-      return { date: d, otherMonth: true };
-    });
-    return [...padStart, ...days.map(d => ({ date: d, otherMonth: false }))];
-  }, [calendarMonth]);
-
-  const ordersByDate = useMemo(() => {
-    const map = {};
-    orders.filter(o => o.status !== 'entregado' && o.deliveryDate).forEach(order => {
-      const key = format(new Date(order.deliveryDate), 'yyyy-MM-dd');
-      if (!map[key]) map[key] = [];
-      map[key].push(order);
-    });
-    return map;
-  }, [orders]);
-
-  // Order items management
-  const addOrderItem = (product) => {
-    setOrderItems(prev => {
-      const existing = prev.find(i => i.productId === product.id);
-      if (existing) {
-        return prev.map(i => i.productId === product.id
-          ? { ...i, quantity: i.quantity + 1, subtotal: (i.quantity + 1) * i.price }
-          : i
-        );
-      }
-      return [...prev, {
-        productId: product.id,
-        productName: product.name,
-        price: product.price,
-        quantity: 1,
-        subtotal: product.price,
-      }];
-    });
+  const loadData = async () => {
+    const [ords, prods] = await Promise.all([
+      api.get('/orders'),
+      api.get('/products'),
+    ]);
+    setOrders(ords);
+    setProducts(prods.filter(p => p.active));
   };
 
-  const updateItemQty = (productId, delta) => {
-    setOrderItems(prev => prev.map(i => {
-      if (i.productId !== productId) return i;
-      const newQty = Math.max(0, i.quantity + delta);
-      if (newQty === 0) return null;
-      return { ...i, quantity: newQty, subtotal: newQty * i.price };
-    }).filter(Boolean));
-  };
+  useEffect(() => { loadData(); }, []);
 
-  const removeOrderItem = (productId) => {
-    setOrderItems(prev => prev.filter(i => i.productId !== productId));
-  };
-
-  const itemsTotal = orderItems.reduce((s, i) => s + i.subtotal, 0);
-
-  // Auto-update total when items change
-  const effectiveTotal = orderItems.length > 0 ? itemsTotal : parseInt(form.totalPrice) || 0;
-
-  const openDeleteModal = (order) => {
-    setDeletingOrder(order);
-    setDeleteConfirmed(false);
-  };
-
-  const handleDeleteOrder = async () => {
-    try {
-      await db.orderItems.where('orderId').equals(deletingOrder.id).delete();
-      await db.orders.delete(deletingOrder.id);
-      await logAction(ACTIONS.ORDER_UPDATE, currentSeller?.id,
-        `Pedido eliminado: ${deletingOrder.customerName}`);
-      toast.success('Pedido eliminado');
-      setDeletingOrder(null);
-    } catch (err) {
-      console.error('Error al eliminar pedido:', err);
-      toast.error('Error al eliminar el pedido');
+  const filtered = useMemo(() => {
+    let list = orders;
+    if (statusFilter) list = list.filter(o => o.status === statusFilter);
+    if (search) {
+      const t = search.toLowerCase();
+      list = list.filter(o => o.customer_name.toLowerCase().includes(t) || o.phone?.includes(t));
     }
-  };
+    return list;
+  }, [orders, statusFilter, search]);
 
-  const openPayModal = (order) => {
-    setPayingOrder(order);
-    setPayMethod('efectivo');
-    setAmountReceived('');
-  };
-
-  const handleCobrarPedido = async () => {
-    const order = payingOrder;
-    const balance = order.balance || 0;
-    const items = orderItemsMap[order.id] || [];
-
+  const handleStatusChange = async (order, newStatus) => {
     try {
-      const saleId = await db.sales.add({
-        total: balance,
-        paymentMethod: payMethod,
-        sellerId: currentSeller?.id,
-        createdAt: new Date().toISOString(),
-        status: 'completed',
-        orderId: order.id,
-      });
-
-      const saleItems = items.length > 0
-        ? items.map(i => ({
-            saleId,
-            productId: i.productId || null,
-            productName: i.productName,
-            price: i.price,
-            quantity: i.quantity,
-            subtotal: i.subtotal,
-            category: 'encargo',
-          }))
-        : [{
-            saleId,
-            productId: null,
-            productName: order.description || `Pedido ${order.customerName}`,
-            price: balance,
-            quantity: 1,
-            subtotal: balance,
-            category: 'encargo',
-          }];
-
-      await db.saleItems.bulkAdd(saleItems);
-
-      if (payMethod === 'efectivo' && balance > 0) {
-        const openRegister = await db.cashRegister.where('status').equals('open').first();
-        if (openRegister) {
-          await db.cashMovements.add({
-            registerId: openRegister.id,
-            type: 'sale',
-            amount: balance,
-            description: `Pedido: ${order.customerName}`,
-            paymentMethod: 'efectivo',
-            saleId,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      }
-
-      await db.orders.update(order.id, {
-        status: 'entregado',
-        updatedAt: new Date().toISOString(),
-      });
-
-      await logAction(ACTIONS.ORDER_SALE, currentSeller?.id,
-        `Pedido cobrado: ${order.customerName} – ${formatCurrency(balance)} (${payMethod})`);
-
-      toast.success(`Pedido de ${order.customerName} cobrado y entregado`);
-      setPayingOrder(null);
-    } catch (err) {
-      console.error('Error al cobrar pedido:', err);
-      toast.error('Error al procesar el cobro: ' + err.message);
-    }
+      await api.patch(`/orders/${order.id}`, { status: newStatus });
+      toast.success(`Pedido → ${statusLabels[newStatus]}`);
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   const handleSubmit = async () => {
-    if (!form.customerName.trim()) {
-      toast.error('El nombre del cliente es obligatorio');
-      return;
-    }
-    if (!form.description.trim() && orderItems.length === 0) {
-      toast.error('Agrega una descripción o productos al pedido');
-      return;
-    }
-    // Phone validation
-    if (form.phone && !isValidChileanPhone(form.phone)) {
-      toast.error('Formato de teléfono inválido. Use: +56 9 XXXX XXXX ó 9XXXXXXXX');
-      return;
-    }
-    // Delivery date validation - must be future
-    if (form.deliveryDate) {
-      const deliveryTime = new Date(form.deliveryDate);
-      if (deliveryTime < new Date()) {
-        toast.error('La fecha de entrega debe ser en el futuro');
-        return;
-      }
-    }
+    if (!form.customer_name.trim()) { toast.error('El nombre del cliente es obligatorio'); return; }
+    if (form.phone && !isValidChileanPhone(form.phone)) { toast.error('Teléfono inválido (ej: +56 9 1234 5678)'); return; }
 
-    const advance = parseInt(form.advance) || 0;
-    const totalPrice = effectiveTotal;
-
-    const orderData = {
-      customerName: form.customerName.trim(),
-      phone: form.phone || '',
-      description: form.description || orderItems.map(i => `${i.quantity}x ${i.productName}`).join(', '),
-      deliveryDate: form.deliveryDate || null,
-      advance,
-      balance: totalPrice - advance,
-      totalPrice,
-      notes: form.notes,
-      status: 'pendiente',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    const payload = {
+      customer_name: form.customer_name,
+      phone: form.phone || null,
+      description: form.description || null,
+      delivery_date: form.delivery_date ? new Date(form.delivery_date).toISOString() : null,
+      advance: parseFloat(form.advance) || 0,
+      balance: parseFloat(form.balance) || 0,
+      items: orderItems,
     };
 
     try {
       if (editingId) {
-        await db.orders.update(editingId, { ...orderData, updatedAt: new Date().toISOString() });
-        // Update order items
-        await db.orderItems.where('orderId').equals(editingId).delete();
-        if (orderItems.length > 0) {
-          await db.orderItems.bulkAdd(orderItems.map(item => ({ ...item, orderId: editingId })));
-        }
+        await api.patch(`/orders/${editingId}`, payload);
         toast.success('Pedido actualizado');
-        await logAction(ACTIONS.ORDER_UPDATE, currentSeller?.id, `Pedido para ${form.customerName}`);
       } else {
-        const orderId = await db.orders.add(orderData);
-        if (orderItems.length > 0) {
-          await db.orderItems.bulkAdd(orderItems.map(item => ({ ...item, orderId })));
-        }
-        toast.success('Pedido registrado exitosamente');
-        await logAction(ACTIONS.ORDER_CREATE, currentSeller?.id, `Pedido para ${form.customerName} - ${formatCurrency(totalPrice)}`);
+        await api.post('/orders', payload);
+        toast.success('Pedido creado');
       }
       setShowForm(false);
+      setEditingId(null);
       setForm(emptyForm);
       setOrderItems([]);
-      setEditingId(null);
-    } catch (err) {
-      toast.error('Error: ' + err.message);
-    }
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
-  const advanceStatus = async (order) => {
-    const currentIdx = statusFlow.indexOf(order.status);
-    if (currentIdx < statusFlow.length - 1) {
-      const nextStatus = statusFlow[currentIdx + 1];
-      await db.orders.update(order.id, { status: nextStatus, updatedAt: new Date().toISOString() });
-      toast.success(`Pedido → ${statusLabels[nextStatus]}`);
-    }
-  };
-
-  const editOrder = async (order) => {
-    setForm({
-      customerName: order.customerName,
-      phone: order.phone || '',
-      description: order.description,
-      deliveryDate: order.deliveryDate ? format(new Date(order.deliveryDate), "yyyy-MM-dd'T'HH:mm") : '',
-      advance: order.advance?.toString() || '',
-      totalPrice: order.totalPrice?.toString() || '',
-      notes: order.notes || '',
+  const addOrderItem = (product) => {
+    setOrderItems(prev => {
+      const existing = prev.find(i => i.product_id === product.id);
+      if (existing) return prev.map(i => i.product_id === product.id ? { ...i, quantity: i.quantity + 1, subtotal: (i.quantity + 1) * i.price } : i);
+      return [...prev, { product_id: product.id, product_name: product.name, price: product.price, quantity: 1, subtotal: product.price }];
     });
-    // Load order items
-    const items = await db.orderItems.where('orderId').equals(order.id).toArray();
-    setOrderItems(items.map(i => ({
-      productId: i.productId,
-      productName: i.productName,
-      price: i.price,
-      quantity: i.quantity,
-      subtotal: i.subtotal,
-    })));
-    setEditingId(order.id);
-    setShowForm(true);
   };
 
-  const updateField = (field, value) => setForm(f => ({ ...f, [field]: value }));
+  // Calendar helpers
+  const calendarDays = useMemo(() => {
+    const start = startOfMonth(calendarMonth);
+    const end = endOfMonth(calendarMonth);
+    const days = eachDayOfInterval({ start, end });
+    const startPad = getDay(start);
+    return { days, startPad };
+  }, [calendarMonth]);
+
+  const ordersWithDelivery = orders.filter(o => o.delivery_date && o.status !== 'entregado');
 
   return (
     <div>
       <div className="page-header">
-        <h1 className="page-title">
-          <ClipboardList size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-          Pedidos por Encargo
-        </h1>
+        <h1 className="page-title"><ClipboardList size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />Pedidos</h1>
         <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-          <div className="quick-filters">
-            <button className={`quick-filter ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}>
-              Lista
-            </button>
-            <button className={`quick-filter ${viewMode === 'calendar' ? 'active' : ''}`} onClick={() => setViewMode('calendar')}>
-              Calendario
-            </button>
+          <div className="tabs">
+            <button className={`tab ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}>Lista</button>
+            <button className={`tab ${viewMode === 'calendar' ? 'active' : ''}`} onClick={() => setViewMode('calendar')}>Calendario</button>
           </div>
-          <button className="btn btn-primary" onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm); setOrderItems([]); }}>
-            <Plus size={18} /> Nuevo Pedido
+          <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(emptyForm); setOrderItems([]); setShowForm(true); }}>
+            <Plus size={16} /> Nuevo Pedido
           </button>
         </div>
       </div>
 
-      {viewMode === 'list' ? (
+      {viewMode === 'list' && (
         <>
-          {/* Status filter tabs */}
-          <div className="tabs">
-            <button className={`tab ${statusFilter === 'todos' ? 'active' : ''}`} onClick={() => setStatusFilter('todos')}>
-              Activos ({orders.filter(o => o.status !== 'entregado').length})
-            </button>
-            {statusFlow.map(status => (
-              <button key={status} className={`tab ${statusFilter === status ? 'active' : ''}`} onClick={() => setStatusFilter(status)}>
-                {statusLabels[status]} ({orders.filter(o => o.status === status).length})
-              </button>
-            ))}
+          <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)', flexWrap: 'wrap' }}>
+            <div className="search-bar" style={{ flex: 1, minWidth: 180 }}>
+              <Search className="search-icon" size={16} />
+              <input type="text" placeholder="Buscar cliente..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <div className="tabs">
+              <button className={`tab ${!statusFilter ? 'active' : ''}`} onClick={() => setStatusFilter('')}>Todos</button>
+              {statusFlow.map(s => (
+                <button key={s} className={`tab ${statusFilter === s ? 'active' : ''}`} onClick={() => setStatusFilter(s)}>
+                  {statusLabels[s]}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {filteredOrders.length === 0 ? (
-            <div className="empty-state">
-              <ClipboardList size={48} />
-              <h3>Sin pedidos</h3>
-              <p>No hay pedidos {statusFilter !== 'todos' ? `con estado "${statusLabels[statusFilter]}"` : 'activos'}</p>
-            </div>
+          {filtered.length === 0 ? (
+            <div className="empty-state"><ClipboardList size={48} /><h3>Sin pedidos</h3></div>
           ) : (
-            <div className="grid-auto">
-              {filteredOrders.map(order => {
-                const items = orderItemsMap[order.id] || [];
-                return (
-                  <div key={order.id} className="order-card">
-                    <div className="order-card-header">
-                      <span className="order-card-customer">
-                        <User size={16} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                        {order.customerName}
-                      </span>
-                      <span className={`badge badge-${order.status === 'pendiente' ? 'pending' : order.status === 'en_produccion' ? 'production' : order.status === 'listo' ? 'ready' : 'delivered'}`}>
-                        {statusLabels[order.status]}
-                      </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+              {filtered.map(order => (
+                <div key={order.id} className="card">
+                  <div className="card-header" style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}>
+                    <div>
+                      <strong>{order.customer_name}</strong>
+                      {order.phone && <span style={{ marginLeft: 8, color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}><Phone size={12} /> {order.phone}</span>}
                     </div>
-
-                    {/* Order items list */}
-                    {items.length > 0 ? (
-                      <div className="order-items-summary">
-                        {items.map((item, i) => (
-                          <div key={i} className="order-item-row">
-                            <span>{item.quantity}x {item.productName}</span>
-                            <span>{formatCurrency(item.subtotal)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="order-card-detail">
-                        <ClipboardList size={14} />
-                        {order.description}
-                      </div>
-                    )}
-                    
-                    {order.phone && (
-                      <div className="order-card-detail">
-                        <Phone size={14} /> {order.phone}
-                      </div>
-                    )}
-                    
-                    {order.deliveryDate && (
-                      <div className="order-card-detail">
-                        <Calendar size={14} />
-                        Entrega: {formatDate(order.deliveryDate)}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: 'var(--space-lg)', marginTop: 'var(--space-sm)', fontSize: '0.85rem' }}>
-                      <div>
-                        <span style={{ color: 'var(--color-text-secondary)' }}>Total: </span>
-                        <strong>{formatCurrency(order.totalPrice || 0)}</strong>
-                      </div>
-                      <div>
-                        <span style={{ color: 'var(--color-text-secondary)' }}>Anticipo: </span>
-                        <strong>{formatCurrency(order.advance || 0)}</strong>
-                      </div>
-                      <div>
-                        <span style={{ color: 'var(--color-text-secondary)' }}>Saldo: </span>
-                        <strong style={{ color: order.balance > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>
-                          {formatCurrency(order.balance || 0)}
-                        </strong>
-                      </div>
-                    </div>
-
-                    <div className="order-card-actions">
-                      <button className="btn btn-ghost btn-sm" onClick={() => editOrder(order)}>
-                        <Edit size={14} /> Editar
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => openDeleteModal(order)}
-                        style={{ color: 'var(--color-danger)' }}
-                        title="Eliminar pedido"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                      {order.status !== 'entregado' && (
-                        <>
-                          <button className="btn btn-primary btn-sm" onClick={() => advanceStatus(order)}>
-                            → {statusLabels[statusFlow[statusFlow.indexOf(order.status) + 1]] || ''}
-                          </button>
-                          <button className="btn btn-success btn-sm" onClick={() => openPayModal(order)}>
-                            <CreditCard size={14} /> Cobrar
-                          </button>
-                        </>
+                    <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+                      <span className={`badge ${statusColors[order.status] || 'badge-info'}`}>{statusLabels[order.status]}</span>
+                      {order.delivery_date && (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                          <Calendar size={12} /> {formatShortDate(order.delivery_date)}
+                        </span>
                       )}
+                      <span style={{ fontWeight: 600 }}>{formatCurrency((order.advance || 0) + (order.balance || 0))}</span>
                     </div>
                   </div>
-                );
-              })}
+
+                  {expandedId === order.id && (
+                    <div style={{ padding: 'var(--space-md)', borderTop: '1px solid var(--color-border)' }}>
+                      {order.description && <p style={{ marginBottom: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>{order.description}</p>}
+                      {order.items?.length > 0 && (
+                        <table style={{ width: '100%', fontSize: '0.875rem', marginBottom: 'var(--space-md)' }}>
+                          <thead><tr><th>Producto</th><th>Cant.</th><th style={{ textAlign: 'right' }}>Subtotal</th></tr></thead>
+                          <tbody>
+                            {order.items.map(i => <tr key={i.id}><td>{i.product_name}</td><td>{i.quantity}</td><td style={{ textAlign: 'right' }}>{formatCurrency(i.subtotal)}</td></tr>)}
+                          </tbody>
+                        </table>
+                      )}
+                      <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                        {statusFlow.map((s, idx) => {
+                          const currentIdx = statusFlow.indexOf(order.status);
+                          if (s === order.status) return null;
+                          if (idx !== currentIdx + 1) return null;
+                          return (
+                            <button key={s} className="btn btn-primary btn-sm" onClick={() => handleStatusChange(order, s)}>
+                              → {statusLabels[s]}
+                            </button>
+                          );
+                        })}
+                        <button className="btn btn-ghost btn-sm" onClick={() => {
+                          setEditingId(order.id);
+                          setForm({ customer_name: order.customer_name, phone: order.phone || '', description: order.description || '', delivery_date: order.delivery_date ? order.delivery_date.split('T')[0] : '', advance: String(order.advance || ''), balance: String(order.balance || '') });
+                          setOrderItems(order.items || []);
+                          setShowForm(true);
+                        }}><Edit size={14} /> Editar</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </>
-      ) : (
-        /* Calendar View */
-        <div className="calendar">
-          <div className="calendar-header">
-            <button className="btn btn-ghost btn-sm" onClick={() => setCalendarMonth(m => subMonths(m, 1))}>
-              <ChevronLeft size={18} />
-            </button>
-            <h3 style={{ fontFamily: 'var(--font-body)' }}>
-              {format(calendarMonth, 'MMMM yyyy', { locale: es })}
-            </h3>
-            <button className="btn btn-ghost btn-sm" onClick={() => setCalendarMonth(m => addMonths(m, 1))}>
-              <ChevronRight size={18} />
-            </button>
+      )}
+
+      {viewMode === 'calendar' && (
+        <div className="card">
+          <div className="card-header">
+            <button className="btn btn-ghost btn-sm" onClick={() => setCalendarMonth(subMonths(calendarMonth, 1))}><ChevronLeft size={16} /></button>
+            <h3 style={{ textTransform: 'capitalize' }}>{format(calendarMonth, 'MMMM yyyy', { locale: es })}</h3>
+            <button className="btn btn-ghost btn-sm" onClick={() => setCalendarMonth(addMonths(calendarMonth, 1))}><ChevronRight size={16} /></button>
           </div>
-          <div className="calendar-grid">
-            {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(d => (
-              <div key={d} className="calendar-day-header">{d}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, padding: 'var(--space-md)' }}>
+            {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(d => (
+              <div key={d} style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>{d}</div>
             ))}
-            {calendarDays.map(({ date, otherMonth }, i) => {
-              const key = format(date, 'yyyy-MM-dd');
-              const dayOrders = ordersByDate[key] || [];
+            {Array.from({ length: calendarDays.startPad }).map((_, i) => <div key={`pad-${i}`} />)}
+            {calendarDays.days.map(day => {
+              const dayOrders = ordersWithDelivery.filter(o => isSameDay(new Date(o.delivery_date), day));
+              const isToday = checkIsToday(day);
               return (
-                <div key={i} className={`calendar-day ${otherMonth ? 'other-month' : ''} ${checkIsToday(date) ? 'today' : ''}`}>
-                  <div className="calendar-day-number">{format(date, 'd')}</div>
-                  {dayOrders.map(order => (
-                    <div key={order.id} className="calendar-event" title={order.description}>
-                      {order.customerName}
+                <div key={day.toISOString()} style={{ minHeight: 64, padding: 4, border: `1px solid ${isToday ? 'var(--color-primary)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-sm)', background: isToday ? 'var(--color-primary-light, #f0f4ff)' : 'transparent' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: isToday ? 700 : 400 }}>{format(day, 'd')}</div>
+                  {dayOrders.map(o => (
+                    <div key={o.id} style={{ fontSize: '0.7rem', background: 'var(--color-primary)', color: '#fff', borderRadius: 2, padding: '1px 3px', marginTop: 2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                      {o.customer_name}
                     </div>
                   ))}
                 </div>
@@ -524,344 +243,67 @@ export default function Pedidos() {
         </div>
       )}
 
-      {/* Payment Modal */}
-      {payingOrder && (() => {
-        const balance = payingOrder.balance || 0;
-        const items = orderItemsMap[payingOrder.id] || [];
-        const received = parseInt(amountReceived) || 0;
-        const change = payMethod === 'efectivo' && received >= balance ? received - balance : 0;
-        const canConfirm = balance === 0 || payMethod !== 'efectivo' || received >= balance;
-
-        return (
-          <div className="modal-overlay" onClick={() => setPayingOrder(null)}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2><CreditCard size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />Cobrar Pedido</h2>
-                <button className="modal-close" onClick={() => setPayingOrder(null)}><X size={20} /></button>
-              </div>
-              <div className="modal-body">
-                {/* Order summary */}
-                <div style={{ background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
-                  <div style={{ fontWeight: 600, marginBottom: 'var(--space-xs)' }}>
-                    <User size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                    {payingOrder.customerName}
-                  </div>
-                  {items.length > 0 ? (
-                    <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-                      {items.map((i, idx) => (
-                        <div key={idx}>{i.quantity}× {i.productName}</div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-                      {payingOrder.description}
-                    </div>
-                  )}
-                </div>
-
-                {/* Amounts */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)', marginBottom: 'var(--space-md)', fontSize: '0.9rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: 'var(--color-text-secondary)' }}>Total del pedido</span>
-                    <span>{formatCurrency(payingOrder.totalPrice || 0)}</span>
-                  </div>
-                  {(payingOrder.advance || 0) > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--color-text-secondary)' }}>Anticipo cobrado</span>
-                      <span style={{ color: 'var(--color-success)' }}>– {formatCurrency(payingOrder.advance)}</span>
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '1.05rem', borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-xs)' }}>
-                    <span>Saldo a cobrar</span>
-                    <span style={{ color: balance > 0 ? 'var(--color-primary)' : 'var(--color-success)' }}>
-                      {formatCurrency(balance)}
-                    </span>
-                  </div>
-                </div>
-
-                {balance === 0 ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', color: 'var(--color-success)', background: 'var(--color-success-bg, #f0fdf4)', padding: 'var(--space-sm)', borderRadius: 'var(--radius-sm)' }}>
-                    <CheckCircle size={16} />
-                    Pedido pagado en su totalidad con anticipo
-                  </div>
-                ) : (
-                  <>
-                    {/* Payment method */}
-                    <div className="form-group">
-                      <label className="form-label">Método de pago</label>
-                      <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                        {['efectivo', 'tarjeta', 'transferencia'].map(m => (
-                          <button
-                            key={m}
-                            className={`btn btn-sm ${payMethod === m ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => { setPayMethod(m); setAmountReceived(''); }}
-                            style={{ textTransform: 'capitalize', flex: 1 }}
-                          >
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Cash change */}
-                    {payMethod === 'efectivo' && (
-                      <div className="form-row">
-                        <div className="form-group">
-                          <label className="form-label">Monto recibido</label>
-                          <input
-                            type="number"
-                            className="form-input"
-                            placeholder={balance}
-                            value={amountReceived}
-                            onChange={e => setAmountReceived(e.target.value)}
-                            autoFocus
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Vuelto</label>
-                          <div className="form-input" style={{ background: 'var(--color-bg)', fontWeight: 700, color: change > 0 ? 'var(--color-success)' : 'var(--color-text-secondary)' }}>
-                            {formatCurrency(change)}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-secondary" onClick={() => setPayingOrder(null)}>Cancelar</button>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleCobrarPedido}
-                  disabled={!canConfirm}
-                >
-                  <CheckCircle size={16} />
-                  {balance === 0 ? 'Marcar como entregado' : 'Confirmar cobro'}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Delete Confirmation Modal */}
-      {deletingOrder && (
-        <div className="modal-overlay" onClick={() => setDeletingOrder(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 style={{ color: 'var(--color-danger)' }}>
-                <Trash2 size={20} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-                Eliminar Pedido
-              </h2>
-              <button className="modal-close" onClick={() => setDeletingOrder(null)}><X size={20} /></button>
-            </div>
-            <div className="modal-body">
-              <p style={{ marginBottom: 'var(--space-md)' }}>
-                Vas a eliminar permanentemente el pedido de{' '}
-                <strong>{deletingOrder.customerName}</strong>
-                {deletingOrder.deliveryDate && (
-                  <> con entrega el <strong>{formatDate(deletingOrder.deliveryDate)}</strong></>
-                )}.
-              </p>
-              <div style={{
-                background: 'var(--color-bg)',
-                borderRadius: 'var(--radius-sm)',
-                padding: 'var(--space-md)',
-                marginBottom: 'var(--space-md)',
-                fontSize: '0.85rem',
-                color: 'var(--color-text-secondary)',
-              }}>
-                <div><strong>Total:</strong> {formatCurrency(deletingOrder.totalPrice || 0)}</div>
-                {(deletingOrder.advance || 0) > 0 && (
-                  <div><strong>Anticipo:</strong> {formatCurrency(deletingOrder.advance)}</div>
-                )}
-                <div><strong>Estado:</strong> {statusLabels[deletingOrder.status]}</div>
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', userSelect: 'none' }}>
-                <input
-                  type="checkbox"
-                  checked={deleteConfirmed}
-                  onChange={e => setDeleteConfirmed(e.target.checked)}
-                  style={{ width: 18, height: 18, cursor: 'pointer' }}
-                />
-                <span>Confirmo que quiero eliminar este pedido</span>
-              </label>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setDeletingOrder(null)}>Cancelar</button>
-              <button
-                className="btn btn-danger"
-                onClick={handleDeleteOrder}
-                disabled={!deleteConfirmed}
-              >
-                <Trash2 size={16} /> Eliminar pedido
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Order Form Modal */}
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
-          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
             <div className="modal-header">
               <h2>{editingId ? 'Editar Pedido' : 'Nuevo Pedido'}</h2>
               <button className="modal-close" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
             <div className="modal-body">
-              <div className="form-row">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
                 <div className="form-group">
-                  <label className="form-label">Nombre del Cliente *</label>
-                  <input type="text" className="form-input" placeholder="Nombre..." value={form.customerName} onChange={e => updateField('customerName', e.target.value)} autoFocus />
+                  <label className="form-label">Cliente *</label>
+                  <input className="form-input" value={form.customer_name} onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))} autoFocus />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Teléfono</label>
-                  <input type="tel" className="form-input" placeholder="+56 9 XXXX XXXX" value={form.phone} onChange={e => updateField('phone', e.target.value)} />
-                  {form.phone && !isValidChileanPhone(form.phone) && (
-                    <small style={{ color: 'var(--color-danger)', fontSize: '0.75rem' }}>
-                      Formato inválido. Use: +56 9 XXXX XXXX
-                    </small>
-                  )}
+                  <input className="form-input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+56 9 1234 5678" />
                 </div>
-              </div>
-
-              {/* Product Selector */}
-              <div className="form-group">
-                <label className="form-label">
-                  <ShoppingCart size={14} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                  Productos del Pedido
-                </label>
-                <button className="btn btn-secondary btn-sm" onClick={() => setShowProductPicker(!showProductPicker)}>
-                  <Plus size={14} /> Agregar Producto
-                </button>
-
-                {showProductPicker && (
-                  <div className="order-items-picker">
-                    <div className="search-bar" style={{ maxWidth: '100%', marginBottom: 'var(--space-sm)' }}>
-                      <Search className="search-icon" size={16} />
-                      <input
-                        type="text"
-                        placeholder="Buscar producto..."
-                        value={productSearch}
-                        onChange={e => setProductSearch(e.target.value)}
-                      />
-                    </div>
-                    <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                      {filteredProducts.map(p => (
-                        <div key={p.id} className="order-picker-item" onClick={() => addOrderItem(p)}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                            {p.photo ? <img src={p.photo} alt="" className="product-thumb-sm" /> : null}
-                            <span>{p.name}</span>
-                          </div>
-                          <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{formatCurrency(p.price)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Selected items */}
-                {orderItems.length > 0 && (
-                  <div className="order-items-list">
-                    {orderItems.map(item => (
-                      <div key={item.productId} className="order-item-row">
-                        <span className="order-item-name">{item.productName}</span>
-                        <div className="order-item-controls">
-                          <button className="btn btn-ghost btn-sm" onClick={() => updateItemQty(item.productId, -1)}>−</button>
-                          <span style={{ fontWeight: 600, minWidth: 24, textAlign: 'center' }}>{item.quantity}</span>
-                          <button className="btn btn-ghost btn-sm" onClick={() => updateItemQty(item.productId, 1)}>+</button>
-                        </div>
-                        <span style={{ fontWeight: 600, minWidth: 70, textAlign: 'right' }}>{formatCurrency(item.subtotal)}</span>
-                        <button className="btn btn-ghost btn-sm" onClick={() => removeOrderItem(item.productId)} style={{ color: 'var(--color-danger)' }}>
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                    <div className="order-items-total">
-                      <span>Total productos:</span>
-                      <strong>{formatCurrency(itemsTotal)}</strong>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Descripción / notas del pedido {orderItems.length === 0 ? '*' : ''}</label>
-                <textarea className="form-textarea" placeholder="Ej: Torta de chocolate 3 pisos para 20 personas..." value={form.description} onChange={e => updateField('description', e.target.value)} />
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Fecha de entrega / retiro</label>
-                  <input
-                    type="date"
-                    className="form-input"
-                    value={form.deliveryDate ? form.deliveryDate.slice(0, 10) : ''}
-                    onChange={e => {
-                      const datePart = e.target.value;
-                      const timePart = form.deliveryDate ? form.deliveryDate.slice(11, 16) : '10:00';
-                      updateField('deliveryDate', datePart ? `${datePart}T${timePart}` : '');
-                    }}
-                  />
+                <div className="form-group" style={{ gridColumn: '1/-1' }}>
+                  <label className="form-label">Descripción</label>
+                  <textarea className="form-input" rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Hora de entrega / retiro</label>
-                  <input
-                    type="time"
-                    className="form-input"
-                    value={form.deliveryDate ? form.deliveryDate.slice(11, 16) : ''}
-                    onChange={e => {
-                      const timePart = e.target.value;
-                      const datePart = form.deliveryDate
-                        ? form.deliveryDate.slice(0, 10)
-                        : format(new Date(), 'yyyy-MM-dd');
-                      updateField('deliveryDate', timePart ? `${datePart}T${timePart}` : form.deliveryDate);
-                    }}
-                  />
-                </div>
-              </div>
-              {form.deliveryDate && new Date(form.deliveryDate) < new Date() && (
-                <small style={{ color: 'var(--color-danger)', fontSize: '0.75rem', display: 'block', marginTop: -8, marginBottom: 'var(--space-sm)' }}>
-                  ⚠️ La fecha debe ser en el futuro
-                </small>
-              )}
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Precio total</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    placeholder="0"
-                    value={orderItems.length > 0 ? itemsTotal : form.totalPrice}
-                    onChange={e => updateField('totalPrice', e.target.value)}
-                    disabled={orderItems.length > 0}
-                  />
-                  {orderItems.length > 0 && (
-                    <small style={{ color: 'var(--color-text-light)', fontSize: '0.75rem' }}>
-                      Calculado automáticamente desde los productos
-                    </small>
-                  )}
+                  <label className="form-label">Fecha entrega</label>
+                  <input className="form-input" type="date" value={form.delivery_date} onChange={e => setForm(f => ({ ...f, delivery_date: e.target.value }))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Anticipo</label>
-                  <input type="number" className="form-input" placeholder="0" value={form.advance} onChange={e => updateField('advance', e.target.value)} />
+                  <input className="form-input" type="number" min="0" value={form.advance} onChange={e => setForm(f => ({ ...f, advance: e.target.value }))} />
                 </div>
               </div>
-              {effectiveTotal > 0 && (
-                <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: '0.9rem' }}>
-                  Saldo pendiente: <strong>{formatCurrency(effectiveTotal - (parseInt(form.advance) || 0))}</strong>
-                </div>
-              )}
+
               <div className="form-group" style={{ marginTop: 'var(--space-md)' }}>
-                <label className="form-label">Notas adicionales</label>
-                <textarea className="form-textarea" placeholder="Observaciones..." value={form.notes} onChange={e => updateField('notes', e.target.value)} />
+                <label className="form-label">Agregar productos</label>
+                <select className="form-input" onChange={e => { const p = products.find(x => x.id === parseInt(e.target.value)); if (p) addOrderItem(p); e.target.value = ''; }}>
+                  <option value="">Seleccionar producto...</option>
+                  {products.map(p => <option key={p.id} value={p.id}>{p.name} — {formatCurrency(p.price)}</option>)}
+                </select>
               </div>
+
+              {orderItems.length > 0 && (
+                <table style={{ width: '100%', fontSize: '0.875rem' }}>
+                  <thead><tr><th>Producto</th><th>Cant.</th><th style={{ textAlign: 'right' }}>Subtotal</th><th></th></tr></thead>
+                  <tbody>
+                    {orderItems.map((item, idx) => (
+                      <tr key={idx}>
+                        <td>{item.product_name}</td>
+                        <td>
+                          <input type="number" min="1" value={item.quantity} style={{ width: 60 }}
+                            onChange={e => setOrderItems(prev => prev.map((i, j) => j !== idx ? i : { ...i, quantity: parseInt(e.target.value) || 1, subtotal: (parseInt(e.target.value) || 1) * i.price }))} />
+                        </td>
+                        <td style={{ textAlign: 'right' }}>{formatCurrency(item.subtotal)}</td>
+                        <td><button className="btn btn-ghost btn-sm" onClick={() => setOrderItems(prev => prev.filter((_, j) => j !== idx))}><X size={12} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleSubmit}>
-                {editingId ? 'Actualizar Pedido' : 'Crear Pedido'}
-              </button>
+              <button className="btn btn-primary" onClick={handleSubmit}>{editingId ? 'Guardar' : 'Crear Pedido'}</button>
             </div>
           </div>
         </div>
