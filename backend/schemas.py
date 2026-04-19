@@ -42,10 +42,13 @@ class TokenOut(BaseModel):
 
 class ProductCreate(BaseModel):
     name: str
-    category: str     # 'vitrina' | 'salados' | 'encargo'
+    category: str     # 'vitrina' | 'salados' | 'encargo' | 'bebidas' | 'cafe'
     price: float
     slices: int = 8
-    max_showcase_hours: int = 48
+    slice_price: Optional[float] = None  # precio por trozo; None = sin precio fijo
+    max_showcase_hours: Optional[int] = 48
+    stock: Optional[int] = None          # solo para bebidas
+    min_stock_cooler: Optional[int] = None  # umbral alerta visicooler
     photo: Optional[str] = None
 
 class ProductUpdate(BaseModel):
@@ -53,7 +56,10 @@ class ProductUpdate(BaseModel):
     category: Optional[str] = None
     price: Optional[float] = None
     slices: Optional[int] = None
+    slice_price: Optional[float] = None
     max_showcase_hours: Optional[int] = None
+    stock: Optional[int] = None
+    min_stock_cooler: Optional[int] = None
     photo: Optional[str] = None
     active: Optional[bool] = None
 
@@ -63,12 +69,19 @@ class ProductOut(BaseModel):
     category: str
     price: float
     slices: int
-    max_showcase_hours: int
+    slice_price: Optional[float]
+    max_showcase_hours: Optional[int]
+    stock: Optional[int]
+    min_stock_cooler: Optional[int]
     photo: Optional[str]
     active: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class RestockRequest(BaseModel):
+    quantity: int   # unidades a agregar al stock
 
 
 # ── Showcase ──────────────────────────────────────────────────────────────────
@@ -165,6 +178,9 @@ class OrderUpdate(BaseModel):
     balance: Optional[float] = None
     status: Optional[str] = None
 
+class OrderCompleteRequest(BaseModel):
+    payment_method: str   # 'efectivo' | 'tarjeta' | 'transferencia'
+
 class OrderItemOut(BaseModel):
     id: int
     product_id: Optional[int]
@@ -198,11 +214,13 @@ class CashOpenRequest(BaseModel):
 
 class CashCloseRequest(BaseModel):
     closing_amount: float
+    notes: Optional[str] = None
 
 class CashMovementCreate(BaseModel):
-    type: str         # 'expense' | 'income'
+    type: str                          # 'expense' | 'income'
     amount: float
     description: Optional[str] = None
+    payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia'
 
 class CashMovementOut(BaseModel):
     id: int
@@ -223,6 +241,7 @@ class CashRegisterOut(BaseModel):
     opening_amount: float
     closing_amount: Optional[float]
     expected_amount: Optional[float]
+    notes: Optional[str]
     status: str
     movements: list[CashMovementOut] = []
 
@@ -263,6 +282,18 @@ class IngredientOut(BaseModel):
     category: Optional[str]
     active: bool
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+class IngredientMovementOut(BaseModel):
+    id: int
+    ingredient_id: int
+    type: str
+    quantity: float
+    cost: Optional[float]
+    seller_id: Optional[int]
+    created_at: datetime
+    seller: Optional[SellerOut] = None
 
     model_config = {"from_attributes": True}
 

@@ -51,7 +51,7 @@ def _handle_showcase_stock(db: Session, product_id: int, showcase_type: str, sal
         return  # sin stock en vitrina, igual se puede vender
 
     entero.status = "sliced"
-    entero.sliced_at = datetime.utcnow()
+    entero.sliced_at = datetime.now()
 
     product = db.query(Product).filter(Product.id == product_id).first()
     slices_count = product.slices if product else 8
@@ -111,6 +111,17 @@ def create_sale(
         if item_in.showcase_type and item_in.product_id:
             for _ in range(item_in.quantity):
                 _handle_showcase_stock(db, item_in.product_id, item_in.showcase_type, sale.id)
+
+        # Decrementar stock físico (bebidas)
+        if item_in.product_id and not item_in.showcase_type:
+            product = db.query(Product).filter(Product.id == item_in.product_id).first()
+            if product and product.stock is not None:
+                if product.stock < item_in.quantity:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Stock insuficiente para '{product.name}' (disponible: {product.stock})"
+                    )
+                product.stock -= item_in.quantity
 
     # Registrar movimiento de caja si hay caja abierta y es efectivo
     if register and payload.payment_method == "efectivo":
@@ -179,7 +190,7 @@ def void_sale(
 
     # Anular venta
     sale.status = "voided"
-    sale.voided_at = datetime.utcnow()
+    sale.voided_at = datetime.now()
     sale.void_reason = payload.reason
 
     # Revertir showcase items

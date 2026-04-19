@@ -12,9 +12,13 @@ const categories = [
   { value: 'vitrina', label: 'Vitrina 🍰' },
   { value: 'salados', label: 'Salados 🥪' },
   { value: 'encargo', label: 'Encargo 🎂' },
+  { value: 'bebidas', label: 'Bebidas 🥤' },
+  { value: 'cafe', label: 'Café ☕' },
 ];
 
-const emptyForm = { name: '', category: 'vitrina', price: '', max_showcase_hours: '48', photo: null, slices: 8 };
+const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
+
+const emptyForm = { name: '', category: 'vitrina', price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '' };
 
 function resizeImage(file) {
   return new Promise((resolve) => {
@@ -76,13 +80,16 @@ export default function Productos() {
     const price = parseFloat(form.price);
     if (isNaN(price) || price <= 0) { toast.error('El precio debe ser mayor a 0'); return; }
 
+    const slicePrice = parseFloat(form.slice_price);
     const payload = {
       name: form.name.trim(),
       category: form.category,
       price,
-      max_showcase_hours: parseInt(form.max_showcase_hours) || 48,
+      slice_price: form.category === 'vitrina' && slicePrice > 0 ? slicePrice : null,
+      max_showcase_hours: form.noFreshness ? null : (parseInt(form.max_showcase_hours) || 48),
       slices: parseInt(form.slices) || 8,
       photo: form.photo || null,
+      stock: form.category === 'bebidas' ? (parseInt(form.stock) || 0) : null,
     };
 
     try {
@@ -102,7 +109,7 @@ export default function Productos() {
 
   const handleEdit = (p) => {
     setEditingId(p.id);
-    setForm({ name: p.name, category: p.category, price: String(p.price), max_showcase_hours: String(p.max_showcase_hours), photo: p.photo, slices: p.slices });
+    setForm({ name: p.name, category: p.category, price: String(p.price), slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '' });
     setShowForm(true);
   };
 
@@ -144,7 +151,7 @@ export default function Productos() {
           <div key={p.id} className={`product-card ${!p.active ? 'inactive' : ''}`}>
             {p.photo
               ? <img src={p.photo} alt={p.name} className="product-card-photo" />
-              : <div className="product-card-emoji">{p.category === 'vitrina' ? '🍰' : p.category === 'salados' ? '🥪' : '🎂'}</div>}
+              : <div className="product-card-emoji">{categoryEmoji[p.category] || '🍞'}</div>}
             <div className="product-card-body">
               <h4>{p.name}</h4>
               <div className="product-card-meta">
@@ -153,7 +160,13 @@ export default function Productos() {
               </div>
               {p.category === 'vitrina' && (
                 <small style={{ color: 'var(--color-text-light)' }}>
-                  {p.slices} trozos · {p.max_showcase_hours}h
+                  {p.slices} trozos · {p.max_showcase_hours != null ? `${p.max_showcase_hours}h` : 'Sin control'}
+                  {p.slice_price != null && <> · trozo {formatCurrency(p.slice_price)}</>}
+                </small>
+              )}
+              {p.category === 'bebidas' && p.stock != null && (
+                <small style={{ color: p.stock > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                  Stock: {p.stock} unidades
                 </small>
               )}
             </div>
@@ -177,39 +190,88 @@ export default function Productos() {
               <button className="modal-close" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
             <div className="modal-body">
+
+              {/* Nombre */}
               <div className="form-group">
                 <label className="form-label">Nombre *</label>
                 <input className="form-input" value={form.name} onChange={e => updateField('name', e.target.value)} autoFocus />
               </div>
+
+              {/* Categoría */}
               <div className="form-group">
                 <label className="form-label">Categoría</label>
-                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
                   {categories.map(c => (
-                    <button key={c.value} className={`btn ${form.category === c.value ? 'btn-primary' : 'btn-secondary'}`}
+                    <button key={c.value} className={`btn btn-sm ${form.category === c.value ? 'btn-primary' : 'btn-secondary'}`}
                       onClick={() => updateField('category', c.value)}>{c.label}</button>
                   ))}
                 </div>
               </div>
+
+              {/* Precio + campo secundario según categoría */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
-                <div className="form-group">
+                <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Precio *</label>
                   <input className="form-input" type="number" min="1" value={form.price} onChange={e => updateField('price', e.target.value)} />
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Horas en vitrina</label>
-                  <input className="form-input" type="number" min="1" value={form.max_showcase_hours} onChange={e => updateField('max_showcase_hours', e.target.value)} />
-                </div>
+                {form.category === 'vitrina' && (
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Trozos por unidad</label>
+                    <input className="form-input" type="number" min="1" max="32" value={form.slices} onChange={e => updateField('slices', parseInt(e.target.value) || 8)} />
+                  </div>
+                )}
               </div>
+
               {form.category === 'vitrina' && (
+              <div className="form-group">
+                <label className="form-label">Precio por trozo</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="1"
+                  step="100"
+                  placeholder="Ej: 3000"
+                  value={form.slice_price}
+                  onChange={e => updateField('slice_price', e.target.value)}
+                />
+                <small style={{ color: 'var(--color-text-light)', fontSize: '0.78rem' }}>
+                  Si se deja vacío, el precio del trozo se calculará al momento de trozar.
+                </small>
+              </div>
+              )}
+
+              {form.category === 'bebidas' && (
                 <div className="form-group">
-                  <label className="form-label">Trozos por unidad</label>
-                  <input className="form-input" type="number" min="1" max="32" value={form.slices} onChange={e => updateField('slices', parseInt(e.target.value) || 8)} />
+                  <label className="form-label">Stock inicial (unidades)</label>
+                  <input className="form-input" type="number" min="0" value={form.stock} onChange={e => updateField('stock', e.target.value)} placeholder="0" />
                 </div>
               )}
-              <div className="form-group">
+
+              {/* Horas en vitrina — solo para categorías con exposición */}
+              {['vitrina', 'salados'].includes(form.category) && (
+                <div className="form-group">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
+                    <label className="form-label" style={{ marginBottom: 0 }}>Horas en vitrina</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.82rem', color: 'var(--color-text-secondary)', cursor: 'pointer', fontWeight: 500 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.noFreshness}
+                        onChange={e => updateField('noFreshness', e.target.checked)}
+                      />
+                      Sin control de tiempo
+                    </label>
+                  </div>
+                  {!form.noFreshness && (
+                    <input className="form-input" type="number" min="1" value={form.max_showcase_hours} onChange={e => updateField('max_showcase_hours', e.target.value)} />
+                  )}
+                </div>
+              )}
+
+              {/* Foto */}
+              <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Foto</label>
                 <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                  {form.photo && <img src={form.photo} alt="" style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 'var(--radius-sm)' }} />}
+                  {form.photo && <img src={form.photo} alt="" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 'var(--radius-sm)', flexShrink: 0 }} />}
                   <button className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()}>
                     <Upload size={14} /> Archivo
                   </button>
@@ -221,6 +283,7 @@ export default function Productos() {
                 <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={e => handlePhoto(e.target.files[0])} />
                 <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden onChange={e => handlePhoto(e.target.files[0])} />
               </div>
+
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>

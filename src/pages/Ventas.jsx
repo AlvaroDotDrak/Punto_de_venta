@@ -13,8 +13,8 @@ import TypeModal from '../components/Ventas/TypeModal';
 import PaymentModal from '../components/Ventas/PaymentModal';
 import ReceiptModal from '../components/Ventas/ReceiptModal';
 
-const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂' };
-const categoryLabel = { todos: 'Todos', vitrina: 'Vitrina', salados: 'Salados', encargo: 'Encargo' };
+const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
+const categoryLabel = { todos: 'Todos', vitrina: 'Vitrina', salados: 'Salados', encargo: 'Encargo', bebidas: 'Bebidas', cafe: 'Café' };
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
@@ -100,7 +100,8 @@ export default function Ventas() {
       return;
     }
     if (stock.trozos > 0 && stock.enteros === 0) {
-      addToCart(product, Math.round(product.price / (product.slices || 8)), `${product.name} (Trozo)`, 'trozado');
+      const slicePrice = product.slice_price ?? Math.round(product.price / (product.slices || 8));
+      addToCart(product, slicePrice, `${product.name} (Trozo)`, 'trozado');
       return;
     }
     addToCart(product, null, null, 'entero');
@@ -200,13 +201,16 @@ export default function Ventas() {
                 <p>{onlyInShowcase ? 'No hay productos en vitrina actualmente' : 'No se encontraron productos'}</p>
               </div>
             ) : filteredProducts.map(product => {
-              const stock = stockMap[product.id];
-              const hasStock = stock && stock.total > 0;
+              const showcaseStock = stockMap[product.id];
+              const hasShowcaseStock = showcaseStock && showcaseStock.total > 0;
+              const physicalStock = product.stock;  // null = sin tracking, number = bebidas
+              const outOfPhysicalStock = physicalStock !== null && physicalStock !== undefined && physicalStock <= 0;
+              const isDisabled = (onlyInShowcase && !hasShowcaseStock) || outOfPhysicalStock;
               return (
                 <button key={product.id}
-                  className={`pos-product-btn ${onlyInShowcase && !hasStock ? 'out-of-stock' : ''}`}
+                  className={`pos-product-btn ${isDisabled ? 'out-of-stock' : ''} ${product.photo ? 'has-photo' : ''}`}
                   onClick={() => handleProductClick(product)}
-                  disabled={onlyInShowcase && !hasStock}>
+                  disabled={isDisabled}>
                   {product.photo ? (
                     <div className="pos-product-photo">
                       <img src={product.photo} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-sm)' }} />
@@ -216,11 +220,16 @@ export default function Ventas() {
                   )}
                   <div className="pos-product-name">{product.name}</div>
                   <div className="pos-product-price">{formatCurrency(product.price)}</div>
-                  {stock && stock.total > 0 && (
+                  {showcaseStock && showcaseStock.total > 0 && (
                     <div style={{ fontSize: '0.7rem', color: 'var(--color-success)', marginTop: 2 }}>
-                      {stock.enteros > 0 && `${stock.enteros} entero${stock.enteros > 1 ? 's' : ''}`}
-                      {stock.enteros > 0 && stock.trozos > 0 && ' · '}
-                      {stock.trozos > 0 && `${stock.trozos} trozo${stock.trozos > 1 ? 's' : ''}`}
+                      {showcaseStock.enteros > 0 && `${showcaseStock.enteros} entero${showcaseStock.enteros > 1 ? 's' : ''}`}
+                      {showcaseStock.enteros > 0 && showcaseStock.trozos > 0 && ' · '}
+                      {showcaseStock.trozos > 0 && `${showcaseStock.trozos} trozo${showcaseStock.trozos > 1 ? 's' : ''}`}
+                    </div>
+                  )}
+                  {physicalStock !== null && physicalStock !== undefined && (
+                    <div style={{ fontSize: '0.7rem', color: physicalStock > 0 ? 'var(--color-success)' : 'var(--color-danger)', marginTop: 2 }}>
+                      {physicalStock > 0 ? `${physicalStock} en stock` : 'Sin stock'}
                     </div>
                   )}
                 </button>
@@ -231,46 +240,64 @@ export default function Ventas() {
 
         {/* RIGHT: Cart */}
         <div className="pos-cart">
-          <div className="cart-header">
-            <h3>Carrito {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}</h3>
+          <div className="pos-cart-header">
+            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              Carrito
+              {cartCount > 0 && (
+                <span style={{
+                  background: 'var(--color-primary)',
+                  color: '#fff',
+                  borderRadius: '999px',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  minWidth: 20,
+                  height: 20,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 6px',
+                }}>{cartCount}</span>
+              )}
+            </h3>
             {cart.length > 0 && (
               <button className="btn btn-ghost btn-sm" onClick={() => setCart([])}>Limpiar</button>
             )}
           </div>
 
           {cart.length === 0 ? (
-            <div className="cart-empty">
-              <p>Selecciona productos</p>
+            <div className="pos-cart-empty">
+              <span className="icon" style={{ fontSize: '2.5rem' }}>🛒</span>
+              <p style={{ margin: 0, fontSize: '0.9rem' }}>Selecciona productos</p>
             </div>
           ) : (
-            <div className="cart-items">
+            <div className="pos-cart-items">
               {cart.map(item => (
-                <div key={`${item.product_id}-${item.product_name}`} className="cart-item">
-                  <div className="cart-item-info">
-                    <span className="cart-item-name">{item.product_name}</span>
-                    <span className="cart-item-price">{formatCurrency(item.price)}</span>
+                <div key={`${item.product_id}-${item.product_name}`} className="pos-cart-item">
+                  <div className="pos-cart-item-info">
+                    <div className="pos-cart-item-name">{item.product_name}</div>
+                    <div className="pos-cart-item-price">{formatCurrency(item.price)} c/u</div>
                   </div>
-                  <div className="cart-item-controls">
-                    <button className="qty-btn" onClick={() => updateQuantity(item.product_id, item.product_name, -1)}>−</button>
-                    <span className="qty-value">{item.quantity}</span>
-                    <button className="qty-btn" onClick={() => updateQuantity(item.product_id, item.product_name, 1)}>+</button>
-                    <button className="qty-btn remove" onClick={() => removeFromCart(item.product_id, item.product_name)}>✕</button>
+                  <div className="pos-cart-qty">
+                    <button onClick={() => updateQuantity(item.product_id, item.product_name, -1)}>−</button>
+                    <span>{item.quantity}</span>
+                    <button onClick={() => updateQuantity(item.product_id, item.product_name, 1)}>+</button>
                   </div>
-                  <div className="cart-item-subtotal">{formatCurrency(item.subtotal)}</div>
+                  <div className="pos-cart-item-subtotal">{formatCurrency(item.subtotal)}</div>
+                  <button className="pos-cart-remove" onClick={() => removeFromCart(item.product_id, item.product_name)}>✕</button>
                 </div>
               ))}
             </div>
           )}
 
-          <div className="cart-footer">
-            <div className="cart-total">
+          <div className="pos-cart-footer">
+            <div className="pos-cart-total">
               <span>Total</span>
-              <span>{formatCurrency(cartTotal)}</span>
+              <span className="amount">{formatCurrency(cartTotal)}</span>
             </div>
-            <button className="btn btn-primary btn-lg cart-checkout"
+            <button className="btn btn-primary pos-pay-btn"
               disabled={cart.length === 0}
               onClick={() => setShowPayment(true)}>
-              Cobrar
+              Cobrar {cartTotal > 0 && formatCurrency(cartTotal)}
             </button>
           </div>
         </div>
@@ -283,7 +310,8 @@ export default function Ventas() {
           onSelect={(type) => {
             const p = showTypeModal.product;
             if (type === 'trozo') {
-              addToCart(p, Math.round(p.price / (p.slices || 8)), `${p.name} (Trozo)`, 'trozado');
+              const slicePrice = p.slice_price ?? Math.round(p.price / (p.slices || 8));
+              addToCart(p, slicePrice, `${p.name} (Trozo)`, 'trozado');
             } else {
               addToCart(p, null, null, 'entero');
             }

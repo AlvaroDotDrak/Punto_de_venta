@@ -14,6 +14,7 @@ import {
   PointElement, ArcElement, Title, Tooltip, Legend, Filler,
 } from 'chart.js';
 import { Bar, Doughnut } from 'react-chartjs-2';
+import DateInput from '../components/DateInput';
 import { format, subDays, startOfDay, endOfDay, getDay, getHours } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -64,6 +65,7 @@ export default function Dashboard() {
   const [prevSales, setPrevSales] = useState([]);
   const [recentSales, setRecentSales] = useState([]);
   const [sellers, setSellers] = useState([]);
+  const [products, setProducts] = useState([]);
 
   useEffect(() => {
     const now = new Date();
@@ -80,15 +82,18 @@ export default function Dashboard() {
       api.get(`/sales?limit=2000&date_from=${prevStart}&date_to=${prevEnd}`),
       api.get(`/sales?limit=2000&date_from=${format(subDays(new Date(), 180), 'yyyy-MM-dd')}`),
       api.get('/sellers'),
-    ]).then(([cur, prev, recent, sel]) => {
+      api.get('/products?active_only=false'),
+    ]).then(([cur, prev, recent, sel, prods]) => {
       setCurrentSales(cur.filter(s => s.status !== 'voided'));
       setPrevSales(prev.filter(s => s.status !== 'voided'));
       setRecentSales(recent.filter(s => s.status !== 'voided'));
       setSellers(sel);
+      setProducts(prods);
     }).catch(() => {});
   }, [startDate, endDate]);
 
-  const sellerMap = useMemo(() => Object.fromEntries(sellers.map(s => [s.id, s])), [sellers]);
+  const sellerMap  = useMemo(() => Object.fromEntries(sellers.map(s => [s.id, s])), [sellers]);
+  const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products]);
   const currentItems = useMemo(() => currentSales.flatMap(s => s.items || []), [currentSales]);
   const prevItems = useMemo(() => prevSales.flatMap(s => s.items || []), [prevSales]);
 
@@ -117,12 +122,12 @@ export default function Dashboard() {
   const categoryData = useMemo(() => {
     const map = {};
     currentItems.forEach(i => {
-      const cat = i.product?.category || 'otro';
+      const cat = productMap[i.product_id]?.category || 'otro';
       if (!map[cat]) map[cat] = 0;
       map[cat] += i.subtotal;
     });
     return map;
-  }, [currentItems]);
+  }, [currentItems, productMap]);
 
   // Pago
   const paymentData = useMemo(() => {
@@ -186,9 +191,9 @@ export default function Dashboard() {
             ))}
           </div>
           <div className="date-range">
-            <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); setDateRange('custom'); }} />
+            <DateInput value={startDate} onChange={e => { setStartDate(e.target.value); setDateRange('custom'); }} />
             <span>—</span>
-            <input type="date" value={endDate} onChange={e => { setEndDate(e.target.value); setDateRange('custom'); }} />
+            <DateInput value={endDate} onChange={e => { setEndDate(e.target.value); setDateRange('custom'); }} />
           </div>
         </div>
       </div>

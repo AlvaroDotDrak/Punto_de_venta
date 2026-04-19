@@ -5,7 +5,7 @@ from ..database import get_db
 from ..models import Ingredient, IngredientMovement
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
-from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientOut, IngredientUpdate
+from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientMovementOut, IngredientOut, IngredientUpdate
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
@@ -46,6 +46,25 @@ def update_ingredient(
     db.commit()
     db.refresh(ingredient)
     return ingredient
+
+
+@router.get("/{ingredient_id}/movements", response_model=list[IngredientMovementOut])
+def list_movements(
+    ingredient_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    ingredient = db.query(Ingredient).filter(Ingredient.id == ingredient_id).first()
+    if not ingredient:
+        raise HTTPException(status_code=404, detail="Insumo no encontrado")
+    return (
+        db.query(IngredientMovement)
+        .filter(IngredientMovement.ingredient_id == ingredient_id)
+        .order_by(IngredientMovement.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 @router.post("/{ingredient_id}/movements", status_code=201)

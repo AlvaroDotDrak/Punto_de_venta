@@ -15,7 +15,7 @@ class Seller(Base):
     pin = Column(String, nullable=False)          # SHA-256 hash
     role = Column(String, default="seller")       # 'admin' | 'seller'
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
     audit_logs = relationship("AuditLog", back_populates="seller")
@@ -27,13 +27,16 @@ class Product(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
-    category = Column(String, nullable=False)     # 'vitrina' | 'salados' | 'encargo'
+    category = Column(String, nullable=False)     # 'vitrina' | 'salados' | 'encargo' | 'bebidas' | 'cafe'
     price = Column(Float, nullable=False)
-    slices = Column(Integer, default=8)           # trozos por unidad
-    max_showcase_hours = Column(Integer, default=48)
+    slices = Column(Integer, default=8)           # trozos por unidad (solo vitrina)
+    slice_price = Column(Float, nullable=True)    # precio por trozo (None = sin precio fijo)
+    max_showcase_hours = Column(Integer, nullable=True, default=48)
+    stock = Column(Integer, nullable=True)        # stock físico (solo bebidas); None = sin tracking
+    min_stock_cooler = Column(Integer, nullable=True)  # umbral alerta semáforo visicooler
     photo = Column(Text, nullable=True)           # base64
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     showcase_items = relationship("ShowcaseItem", back_populates="product")
     sale_items = relationship("SaleItem", back_populates="product")
@@ -47,7 +50,7 @@ class ShowcaseItem(Base):
     showcase_type = Column(String, nullable=False)  # 'entero' | 'trozado'
     status = Column(String, default="active")        # 'active' | 'sold' | 'removed' | 'sliced'
     parent_id = Column(Integer, ForeignKey("showcase_items.id"), nullable=True)
-    placed_at = Column(DateTime, default=datetime.utcnow)
+    placed_at = Column(DateTime, default=datetime.now)
     removed_at = Column(DateTime, nullable=True)
     sliced_at = Column(DateTime, nullable=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
@@ -61,13 +64,13 @@ class Sale(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     total = Column(Float, nullable=False)
-    payment_method = Column(String, nullable=False)  # 'efectivo' | 'debito' | 'credito' | 'transferencia'
+    payment_method = Column(String, nullable=False)  # 'efectivo' | 'tarjeta' | 'transferencia'
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     status = Column(String, default="completed")     # 'completed' | 'voided'
     voided_at = Column(DateTime, nullable=True)
     void_reason = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     seller = relationship("Seller", back_populates="sales")
     items = relationship("SaleItem", back_populates="sale")
@@ -102,8 +105,8 @@ class Order(Base):
     advance = Column(Float, default=0)
     balance = Column(Float, default=0)
     status = Column(String, default="pendiente")    # 'pendiente' | 'en_produccion' | 'listo' | 'entregado'
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     items = relationship("OrderItem", back_populates="order")
     sales = relationship("Sale", back_populates="order")
@@ -127,11 +130,12 @@ class CashRegister(Base):
     __tablename__ = "cash_register"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    opened_at = Column(DateTime, default=datetime.utcnow)
+    opened_at = Column(DateTime, default=datetime.now)
     closed_at = Column(DateTime, nullable=True)
     opening_amount = Column(Float, default=0)
     closing_amount = Column(Float, nullable=True)
     expected_amount = Column(Float, nullable=True)
+    notes = Column(Text, nullable=True)
     status = Column(String, default="open")         # 'open' | 'closed'
 
     movements = relationship("CashMovement", back_populates="register")
@@ -147,7 +151,7 @@ class CashMovement(Base):
     description = Column(String, nullable=True)
     payment_method = Column(String, nullable=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     register = relationship("CashRegister", back_populates="movements")
     sale = relationship("Sale", back_populates="cash_movements")
@@ -164,7 +168,7 @@ class Ingredient(Base):
     last_price = Column(Float, default=0)
     category = Column(String, nullable=True)
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     movements = relationship("IngredientMovement", back_populates="ingredient")
 
@@ -178,7 +182,7 @@ class IngredientMovement(Base):
     quantity = Column(Float, nullable=False)
     cost = Column(Float, nullable=True)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     ingredient = relationship("Ingredient", back_populates="movements")
     seller = relationship("Seller", back_populates="ingredient_movements")
@@ -191,6 +195,6 @@ class AuditLog(Base):
     action = Column(String, nullable=False)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
     details = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     seller = relationship("Seller", back_populates="audit_logs")

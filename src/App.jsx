@@ -10,6 +10,7 @@ import { useSeller } from './context/SellerContext';
 // Pages
 import Ventas from './pages/Ventas';
 import Vitrina from './pages/Vitrina';
+import Visicooler from './pages/Visicooler';
 import Pedidos from './pages/Pedidos';
 import Productos from './pages/Productos';
 import Insumos from './pages/Insumos';
@@ -74,6 +75,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Ventas />} />
             <Route path="/vitrina" element={<Vitrina />} />
+            <Route path="/visicooler" element={<Visicooler />} />
             <Route path="/pedidos" element={<Pedidos />} />
             <Route path="/caja" element={<Caja />} />
 

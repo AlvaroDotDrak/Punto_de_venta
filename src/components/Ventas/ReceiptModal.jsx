@@ -1,17 +1,15 @@
 import { X, Printer } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
-export default function ReceiptModal({ show, lastSale, onClose }) {
-  if (!show || !lastSale) return null;
+export default function ReceiptModal({ sale, onClose }) {
+  if (!sale) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Comprobante de Venta</h2>
-          <button className="modal-close" onClick={onClose}>
-            <X size={20} />
-          </button>
+          <button className="modal-close" onClick={onClose}><X size={20} /></button>
         </div>
         <div className="modal-body">
           <div className="receipt" id="receipt-print">
@@ -21,36 +19,36 @@ export default function ReceiptModal({ show, lastSale, onClose }) {
               <br />
               <small>Comprobante de Venta</small>
               <br />
-              <small>Venta #{lastSale.id}</small>
+              <small>Venta #{sale.id}</small>
             </div>
             <hr className="receipt-divider" />
-            <small>{new Date(lastSale.date).toLocaleString('es-CL')}</small>
+            <small>{new Date(sale.date).toLocaleString('es-CL')}</small>
             <br />
-            <small>Vendedor: {lastSale.seller}</small>
+            <small>Vendedor: {sale.seller}</small>
             <hr className="receipt-divider" />
-            {lastSale.items.map((item, i) => (
+            {sale.items.map((item, i) => (
               <div key={i} className="receipt-item">
-                <span>{item.quantity}x {item.productName}</span>
+                <span>{item.quantity}x {item.product_name}</span>
                 <span>{formatCurrency(item.subtotal)}</span>
               </div>
             ))}
             <hr className="receipt-divider" />
             <div className="receipt-total">
               <span>TOTAL</span>
-              <span>{formatCurrency(lastSale.total)}</span>
+              <span>{formatCurrency(sale.total)}</span>
             </div>
             <div className="receipt-item">
-              <span>Pago: {lastSale.paymentMethod}</span>
+              <span>Pago: {sale.paymentMethod}</span>
             </div>
-            {lastSale.paymentMethod === 'efectivo' && lastSale.cashReceived > 0 && (
+            {sale.paymentMethod === 'efectivo' && sale.cashReceived > 0 && (
               <>
                 <div className="receipt-item">
                   <span>Recibido:</span>
-                  <span>{formatCurrency(lastSale.cashReceived)}</span>
+                  <span>{formatCurrency(sale.cashReceived)}</span>
                 </div>
                 <div className="receipt-item">
                   <span>Vuelto:</span>
-                  <span>{formatCurrency(lastSale.change)}</span>
+                  <span>{formatCurrency(sale.change)}</span>
                 </div>
               </>
             )}
