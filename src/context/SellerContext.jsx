@@ -1,10 +1,9 @@
 /**
  * SellerContext — Manages the currently logged-in seller
- * Persists seller ID in sessionStorage
+ * Auth via JWT. Token stored in sessionStorage (cleared on tab close).
  */
 import { createContext, useContext, useState, useEffect } from 'react';
-import db from '../db';
-import { logAction, ACTIONS } from '../utils/auditLog';
+import api, { setToken } from '../utils/api';
 
 const SellerContext = createContext();
 
@@ -17,40 +16,38 @@ export function SellerProvider({ children }) {
   const [sellers, setSellers] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Cargar vendedores activos para la pantalla de selección (endpoint público)
   useEffect(() => {
-    async function loadSellers() {
-      const allSellers = await db.sellers.toArray();
-      setSellers(allSellers.filter(s => s.active !== false));
-      
-      // Restore session
-      const savedId = sessionStorage.getItem('currentSellerId');
-      if (savedId) {
-        const seller = allSellers.find(s => s.id === parseInt(savedId));
-        if (seller && seller.active !== false) {
-          setCurrentSeller(seller);
-        }
-      }
-      setLoading(false);
-    }
-    loadSellers();
+    api.get('/auth/sellers')
+      .then(data => setSellers(data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
-  const selectSeller = (seller) => {
+  // Restaurar sesión si hay token guardado
+  useEffect(() => {
+    const token = sessionStorage.getItem('authToken');
+    if (!token) { setLoading(false); return; }
+    api.get('/auth/me')
+      .then(seller => setCurrentSeller(seller))
+      .catch(() => setToken(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const selectSeller = (seller, token) => {
+    setToken(token);
     setCurrentSeller(seller);
-    sessionStorage.setItem('currentSellerId', seller.id.toString());
   };
 
-  const logout = () => {
-    if (currentSeller) {
-      logAction(ACTIONS.LOGOUT, currentSeller.id, `${currentSeller.name} cerró sesión`);
-    }
+  const logout = async () => {
+    try { await api.post('/auth/logout'); } catch { /* silencioso */ }
     setCurrentSeller(null);
-    sessionStorage.removeItem('currentSellerId');
+    setToken(null);
   };
 
   const refreshSellers = async () => {
-    const allSellers = await db.sellers.toArray();
-    setSellers(allSellers.filter(s => s.active !== false));
+    const data = await api.get('/sellers');
+    setSellers(data);
   };
 
   return (

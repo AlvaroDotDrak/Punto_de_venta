@@ -1,412 +1,494 @@
 /**
- * Insumos — Gestión de ingredientes y gastos de producción
- * Permite registrar compras, ajustar stock y ver alertas de stock bajo.
+ * Insumos — Gestión de ingredientes y stock
+ * V4.0: historial, modal unificado, filtros, ordenamiento
  */
-import { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import db from '../db';
+import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../context/ToastContext';
-import { useSeller } from '../context/SellerContext';
+import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
-import { logAction, ACTIONS } from '../utils/auditLog';
-import { 
-  Package, Plus, Search, AlertTriangle, 
-  History, ShoppingCart, Edit, Trash2, 
-  ChevronRight, ArrowDown, ArrowUp, X 
+import {
+  Package, Plus, Search, AlertTriangle, Edit, X,
+  ArrowDownToLine, ArrowUpFromLine, SlidersHorizontal,
+  History, ChevronUp, ChevronDown, ChevronsUpDown, Filter,
 } from 'lucide-react';
 
-const emptyIngredient = {
-  name: '',
-  unit: 'kg', // kg, gr, l, ml, unidad, docena
-  currentStock: 0,
-  minStock: 0,
-  lastPrice: 0,
-  category: 'reposteria',
-  active: true
+const UNITS = ['kg', 'gr', 'l', 'ml', 'unidad', 'docena'];
+
+const CATEGORIES = [
+  { value: 'reposteria',  label: 'Repostería' },
+  { value: 'panaderia',   label: 'Panadería' },
+  { value: 'lacteos',     label: 'Lácteos' },
+  { value: 'frutas',      label: 'Frutas' },
+  { value: 'packaging',   label: 'Packaging' },
+  { value: 'limpieza',    label: 'Limpieza' },
+  { value: 'otro',        label: 'Otro' },
+];
+
+const MOVEMENT_META = {
+  purchase:   { label: 'Compra',   color: '#2E8B57', bg: 'rgba(46,139,87,0.1)',   icon: ArrowDownToLine },
+  adjustment: { label: 'Ajuste',   color: '#2E7BBF', bg: 'rgba(46,123,191,0.1)', icon: SlidersHorizontal },
+  usage:      { label: 'Consumo',  color: '#C8820A', bg: 'rgba(200,130,10,0.1)', icon: ArrowUpFromLine },
 };
+
+const emptyForm = { name: '', unit: 'kg', current_stock: 0, min_stock: 0, last_price: 0, category: 'reposteria' };
+
+function SortIcon({ field, sort }) {
+  if (sort.field !== field) return <ChevronsUpDown size={13} style={{ opacity: 0.3, verticalAlign: 'middle', marginLeft: 3 }} />;
+  return sort.dir === 'asc'
+    ? <ChevronUp size={13} style={{ color: 'var(--color-primary)', verticalAlign: 'middle', marginLeft: 3 }} />
+    : <ChevronDown size={13} style={{ color: 'var(--color-primary)', verticalAlign: 'middle', marginLeft: 3 }} />;
+}
 
 export default function Insumos() {
   const toast = useToast();
-  const { currentSeller } = useSeller();
-  
-  // States
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showIngredientModal, setShowIngredientModal] = useState(false);
-  const [showPurchaseModal, setShowPurchaseModal] = useState(false);
-  const [editingIngredient, setEditingIngredient] = useState(null);
-  const [ingredientForm, setIngredientForm] = useState(emptyIngredient);
-  const [purchaseForm, setPurchaseForm] = useState({ ingredientId: '', quantity: '', cost: '', provider: '' });
-  const [viewMode, setViewMode] = useState('inventory'); // 'inventory' | 'history'
 
-  // Data
-  const ingredients = useLiveQuery(() => 
-    db.ingredients.toArray()
-  , [], []);
+  const [ingredients, setIngredients]   = useState([]);
+  const [search, setSearch]             = useState('');
+  const [catFilter, setCatFilter]       = useState('todos');
+  const [sort, setSort]                 = useState({ field: 'name', dir: 'asc' });
 
-  const movements = useLiveQuery(() => 
-    db.ingredientMovements.reverse().limit(50).toArray()
-  , [], []);
+  const [showForm, setShowForm]         = useState(false);
+  const [editingId, setEditingId]       = useState(null);
+  const [form, setForm]                 = useState(emptyForm);
 
-  // Helpers for history view
-  const ingredientsMap = useMemo(() => {
-    return Object.fromEntries(ingredients.map(i => [i.id, i]));
-  }, [ingredients]);
+  const [showMovement, setShowMovement] = useState(null); // ingredient
+  const [movType, setMovType]           = useState('purchase');
+  const [movForm, setMovForm]           = useState({ quantity: '', cost: '' });
 
-  const openRegister = useLiveQuery(() =>
-    db.cashRegister.where('status').equals('open').first()
-  );
+  const [showHistory, setShowHistory]   = useState(null); // ingredient
+  const [history, setHistory]           = useState([]);
+  const [histLoading, setHistLoading]   = useState(false);
 
-  // Filters
-  const filteredIngredients = useMemo(() => {
-    if (!searchTerm) return ingredients;
-    const term = searchTerm.toLowerCase();
-    return ingredients.filter(i => i.name.toLowerCase().includes(term));
-  }, [ingredients, searchTerm]);
+  const loadData = async () => {
+    const data = await api.get('/ingredients').catch(() => []);
+    setIngredients(data);
+  };
 
-  const lowStockCount = useMemo(() => 
-    ingredients.filter(i => i.currentStock <= i.minStock).length
-  , [ingredients]);
+  useEffect(() => { loadData(); }, []);
 
-  // Handlers
-  const handleSaveIngredient = async () => {
-    if (!ingredientForm.name.trim()) return toast.error('El nombre es obligatorio');
-    
+  // ── FILTRO + SORT ──────────────────────────────────────
+  const displayed = useMemo(() => {
+    let list = ingredients;
+    if (catFilter !== 'todos') list = list.filter(i => i.category === catFilter);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(i => i.name.toLowerCase().includes(q));
+    }
+    return [...list].sort((a, b) => {
+      let va, vb;
+      if (sort.field === 'name')    { va = a.name; vb = b.name; }
+      if (sort.field === 'stock')   { va = a.current_stock; vb = b.current_stock; }
+      if (sort.field === 'status')  { va = a.current_stock <= a.min_stock ? 0 : 1; vb = b.current_stock <= b.min_stock ? 0 : 1; }
+      if (typeof va === 'string') return sort.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      return sort.dir === 'asc' ? va - vb : vb - va;
+    });
+  }, [ingredients, search, catFilter, sort]);
+
+  const toggleSort = (field) => setSort(s => s.field === field ? { field, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { field, dir: 'asc' });
+
+  const lowStock   = ingredients.filter(i => i.current_stock <= i.min_stock && i.min_stock > 0);
+  const noStock    = ingredients.filter(i => i.current_stock === 0);
+  const pricePerUnit = useMemo(() => {
+    const q = parseFloat(movForm.quantity);
+    const c = parseFloat(movForm.cost);
+    if (!q || !c || q <= 0) return null;
+    return c / q;
+  }, [movForm.quantity, movForm.cost]);
+
+  // ── HANDLERS ──────────────────────────────────────────
+  const handleSubmit = async () => {
+    if (!form.name.trim()) { toast.error('El nombre es obligatorio'); return; }
     try {
-      if (editingIngredient) {
-        await db.ingredients.update(editingIngredient.id, {
-          ...ingredientForm,
-          currentStock: Number(ingredientForm.currentStock),
-          minStock: Number(ingredientForm.minStock)
-        });
+      if (editingId) {
+        await api.patch(`/ingredients/${editingId}`, form);
         toast.success('Insumo actualizado');
-        await logAction(ACTIONS.INGREDIENT_UPDATE, currentSeller?.id, `Editó ${ingredientForm.name}`);
       } else {
-        await db.ingredients.add({
-          ...ingredientForm,
-          currentStock: Number(ingredientForm.currentStock),
-          minStock: Number(ingredientForm.minStock)
-        });
-        toast.success('Insumo registrado');
+        await api.post('/ingredients', form);
+        toast.success('Insumo creado');
       }
-      setShowIngredientModal(false);
-      setIngredientForm(emptyIngredient);
-      setEditingIngredient(null);
-    } catch (err) {
-      toast.error('Error al guardar: ' + err.message);
-    }
+      setShowForm(false);
+      setEditingId(null);
+      setForm(emptyForm);
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
-  const handleRegisterPurchase = async () => {
-    const { ingredientId, quantity, cost } = purchaseForm;
-    if (!ingredientId || !quantity || !cost) return toast.error('Todos los campos son obligatorios');
+  const handleMovement = async () => {
+    const qty = parseFloat(movForm.quantity);
+    if (!qty || qty === 0) { toast.error('Ingresa una cantidad distinta de 0'); return; }
 
-    const qty = Number(quantity);
-    const totalCost = Number(cost);
-    const ingredient = ingredients.find(i => i.id === Number(ingredientId));
+    // Para "usage" el backend resta, así que siempre enviamos positivo
+    // Para "adjustment" permitimos negativo (el backend suma, el signo hace el resto)
+    const finalQty = movType === 'usage' ? Math.abs(qty) : qty;
 
     try {
-      // 1. Update stock and last price
-      await db.ingredients.update(ingredient.id, {
-        currentStock: ingredient.currentStock + qty,
-        lastPrice: Math.round(totalCost / qty)
+      await api.post(`/ingredients/${showMovement.id}/movements`, {
+        type: movType,
+        quantity: finalQty,
+        cost: movType === 'purchase' ? (parseFloat(movForm.cost) || null) : null,
       });
-
-      // 2. Record movement
-      await db.ingredientMovements.add({
-        ingredientId: ingredient.id,
-        type: 'purchase',
-        quantity: qty,
-        cost: totalCost,
-        sellerId: currentSeller?.id,
-        createdAt: new Date().toISOString()
-      });
-
-      // 3. IF register is open, add cash movement (expense)
-      if (openRegister) {
-        await db.cashMovements.add({
-          registerId: openRegister.id,
-          type: 'expense',
-          amount: totalCost,
-          description: `Compra: ${qty} ${ingredient.unit} de ${ingredient.name}`,
-          paymentMethod: 'efectivo',
-          createdAt: new Date().toISOString()
-        });
-        toast.info('Gasto registrado automáticamente en caja');
-      } else {
-        toast.warning('Compra registrada, pero no se pudo descontar de caja (está cerrada)');
-      }
-
-      await logAction(ACTIONS.INGREDIENT_PURCHASE, currentSeller?.id, `Compró ${qty} ${ingredient.unit} de ${ingredient.name}`);
-      toast.success('Compra registrada exitosamente');
-      setShowPurchaseModal(false);
-      setPurchaseForm({ ingredientId: '', quantity: '', cost: '', provider: '' });
-    } catch (err) {
-      toast.error('Error al registrar compra: ' + err.message);
-    }
+      const labels = { purchase: 'Compra registrada', adjustment: 'Ajuste aplicado', usage: 'Consumo registrado' };
+      toast.success(labels[movType]);
+      setShowMovement(null);
+      setMovForm({ quantity: '', cost: '' });
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
-  const startEdit = (ing) => {
-    setEditingIngredient(ing);
-    setIngredientForm(ing);
-    setShowIngredientModal(true);
+  const openHistory = async (ing) => {
+    setShowHistory(ing);
+    setHistLoading(true);
+    setHistory([]);
+    try {
+      const data = await api.get(`/ingredients/${ing.id}/movements`);
+      setHistory(data);
+    } catch { toast.error('No se pudo cargar el historial'); }
+    finally { setHistLoading(false); }
   };
 
+  // ── RENDER ────────────────────────────────────────────
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <h1 className="page-title">
           <Package size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-          Gestión de Insumos
+          Insumos
         </h1>
-        <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-          <div className="quick-filters">
-            <button className={`quick-filter ${viewMode === 'inventory' ? 'active' : ''}`} onClick={() => setViewMode('inventory')}>
-              Inventario
-            </button>
-            <button className={`quick-filter ${viewMode === 'history' ? 'active' : ''}`} onClick={() => setViewMode('history')}>
-              Historial
-            </button>
-          </div>
-          <button className="btn btn-secondary" onClick={() => setShowPurchaseModal(true)}>
-            <ShoppingCart size={18} /> Registrar Compra
-          </button>
-          <button className="btn btn-primary" onClick={() => { setShowIngredientModal(true); setEditingIngredient(null); setIngredientForm(emptyIngredient); }}>
-            <Plus size={18} /> Nuevo Insumo
-          </button>
-        </div>
+        <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(emptyForm); setShowForm(true); }}>
+          <Plus size={16} /> Nuevo Insumo
+        </button>
       </div>
 
-      {viewMode === 'inventory' ? (
-        <>
-          <div className="search-bar" style={{ marginBottom: 'var(--space-md)' }}>
-            <Search className="search-icon" size={20} />
-            <input 
-              type="text" 
-              placeholder="Buscar por nombre (harina, azúcar, huevos...)" 
-              value={searchTerm} 
-              onChange={e => setSearchTerm(e.target.value)} 
-            />
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
+        {[
+          { label: 'Total',      value: ingredients.length, color: 'var(--color-text)' },
+          { label: 'OK',         value: ingredients.length - lowStock.length, color: '#2E8B57' },
+          { label: 'Stock bajo', value: lowStock.length,  color: '#C8820A' },
+          { label: 'Sin stock',  value: noStock.length,   color: '#C0392B' },
+        ].map(s => (
+          <div key={s.label} style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 14px', textAlign: 'center' }}>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: s.color, lineHeight: 1.2 }}>{s.value}</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>{s.label}</div>
           </div>
+        ))}
+      </div>
 
-          {lowStockCount > 0 && (
-            <div className="alert alert-warning" style={{ marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <AlertTriangle size={20} />
-              Hay <strong>{lowStockCount} insumos</strong> con stock bajo el mínimo. ¡Hora de ir a comprar!
-            </div>
-          )}
-
-          <div className="grid-auto">
-            {filteredIngredients.map(ing => {
-              const isLowStock = ing.currentStock <= ing.minStock;
-              return (
-                <div key={ing.id} className={`card ${isLowStock ? 'alert-border' : ''}`} style={{ padding: 'var(--space-md)', position: 'relative' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-sm)' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{ing.name}</h3>
-                    <span className="badge">{ing.category}</span>
-                  </div>
-                  
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
-                    <div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>Stock Actual</div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: isLowStock ? 'var(--color-danger)' : 'var(--color-success)' }}>
-                        {ing.currentStock} <span style={{ fontSize: '0.8rem', fontWeight: 400 }}>{ing.unit}</span>
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>Último Precio</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{formatCurrency(ing.lastPrice)}</div>
-                    </div>
-                  </div>
-
-                  {isLowStock && (
-                    <div style={{ marginTop: 'var(--space-xs)', fontSize: '0.8rem', color: 'var(--color-danger)', fontWeight: 600 }}>
-                      ⚠️ Bajo el mínimo ({ing.minStock} {ing.unit})
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: 'var(--space-md)', display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-xs)' }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ing)}>
-                      <Edit size={14} /> Editar
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {filteredIngredients.length === 0 && (
-            <div className="empty-state">
-              <Package size={48} />
-              <h3>No hay insumos registrados</h3>
-              <p>Comienza agregando los ingredientes base de tu pastelería.</p>
-            </div>
-          )}
-        </>
-      ) : (
-        /* History View */
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title"><History size={18} style={{ verticalAlign: 'middle', marginRight: 8 }} /> Últimos Movimientos</h3>
-          </div>
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Insumo</th>
-                  <th>Tipo</th>
-                  <th>Cantidad</th>
-                  <th>Costo Total</th>
-                  <th>Responsable</th>
-                </tr>
-              </thead>
-              <tbody>
-                {movements.map(mov => {
-                  const ing = ingredientsMap[mov.ingredientId];
-                  return (
-                    <tr key={mov.id}>
-                      <td>{formatDate(mov.createdAt)}</td>
-                      <td style={{ fontWeight: 600 }}>{ing?.name || 'Insumo eliminado'}</td>
-                      <td>
-                        <span className={`badge badge-${mov.type === 'purchase' ? 'fresh' : 'info'}`}>
-                          {mov.type === 'purchase' ? 'Compra' : 'Ajuste'}
-                        </span>
-                      </td>
-                      <td style={{ color: mov.quantity > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                        {mov.quantity > 0 ? '+' : ''}{mov.quantity} {ing?.unit}
-                      </td>
-                      <td>{mov.cost > 0 ? formatCurrency(mov.cost) : '—'}</td>
-                      <td style={{ fontSize: '0.85rem' }}>ID: {mov.sellerId || '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+      {/* Alerta stock bajo */}
+      {lowStock.length > 0 && (
+        <div className="alert alert-warning" style={{ marginBottom: 'var(--space-md)' }}>
+          <AlertTriangle size={15} />
+          <strong>{lowStock.length} insumo{lowStock.length > 1 ? 's' : ''} con stock bajo:</strong>{' '}
+          {lowStock.map(i => i.name).join(', ')}
         </div>
       )}
 
-      {/* Ingredient Modal */}
-      {showIngredientModal && (
-        <div className="modal-overlay" onClick={() => setShowIngredientModal(false)}>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="search-bar" style={{ flex: 1, minWidth: 180 }}>
+          <Search className="search-icon" size={15} />
+          <input type="text" placeholder="Buscar insumo..." value={search} onChange={e => setSearch(e.target.value)} />
+          {search && (
+            <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <button className={`btn btn-sm ${catFilter === 'todos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter('todos')}>
+            <Filter size={12} /> Todos
+          </button>
+          {CATEGORIES.map(c => (
+            <button key={c.value} className={`btn btn-sm ${catFilter === c.value ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter(c.value)}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tabla */}
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>
+                Nombre <SortIcon field="name" sort={sort} />
+              </th>
+              <th>Categoría</th>
+              <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('stock')}>
+                Stock actual <SortIcon field="stock" sort={sort} />
+              </th>
+              <th>Stock mínimo</th>
+              <th>Precio/unidad</th>
+              <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('status')}>
+                Estado <SortIcon field="status" sort={sort} />
+              </th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayed.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--color-text-secondary)' }}>Sin insumos{search || catFilter !== 'todos' ? ' que coincidan' : ''}</td></tr>
+            ) : displayed.map(ing => {
+              const isLow    = ing.current_stock <= ing.min_stock && ing.min_stock > 0;
+              const isEmpty  = ing.current_stock === 0;
+              const catLabel = CATEGORIES.find(c => c.value === ing.category)?.label ?? ing.category;
+              return (
+                <tr key={ing.id}>
+                  <td style={{ fontWeight: 600 }}>{ing.name}</td>
+                  <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>{catLabel}</td>
+                  <td style={{ fontWeight: 600, color: isEmpty ? '#C0392B' : isLow ? '#C8820A' : 'inherit' }}>
+                    {ing.current_stock} {ing.unit}
+                  </td>
+                  <td style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>{ing.min_stock} {ing.unit}</td>
+                  <td style={{ fontSize: '0.85rem' }}>
+                    {ing.last_price > 0 ? `${formatCurrency(ing.last_price)}/${ing.unit}` : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                  </td>
+                  <td>
+                    {isEmpty
+                      ? <span className="badge badge-danger"><AlertTriangle size={11} /> Sin stock</span>
+                      : isLow
+                        ? <span className="badge badge-warning"><AlertTriangle size={11} /> Bajo</span>
+                        : <span className="badge badge-fresh">OK</span>}
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <button className="btn btn-ghost btn-sm" title="Editar" onClick={() => {
+                        setEditingId(ing.id);
+                        setForm({ name: ing.name, unit: ing.unit, current_stock: ing.current_stock, min_stock: ing.min_stock, last_price: ing.last_price, category: ing.category || 'reposteria' });
+                        setShowForm(true);
+                      }}><Edit size={14} /></button>
+                      <button className="btn btn-ghost btn-sm" title="Historial" onClick={() => openHistory(ing)}>
+                        <History size={14} />
+                      </button>
+                      <button className="btn btn-primary btn-sm" onClick={() => { setShowMovement(ing); setMovType('purchase'); setMovForm({ quantity: '', cost: '' }); }}>
+                        <ArrowDownToLine size={14} /> Movimiento
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── MODAL: CREAR / EDITAR ───────────────────────── */}
+      {showForm && (
+        <div className="modal-overlay" onClick={() => setShowForm(false)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editingIngredient ? 'Editar Insumo' : 'Nuevo Insumo'}</h2>
-              <button className="modal-close" onClick={() => setShowIngredientModal(false)}><X size={20} /></button>
+              <h2>{editingId ? 'Editar Insumo' : 'Nuevo Insumo'}</h2>
+              <button className="modal-close" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
             <div className="modal-body">
               <div className="form-group">
                 <label className="form-label">Nombre *</label>
-                <input 
-                  type="text" className="form-input" placeholder="Ej: Harina de Trigo" 
-                  value={ingredientForm.name} onChange={e => setIngredientForm(f => ({ ...f, name: e.target.value }))}
-                />
+                <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
               </div>
-              <div className="form-row">
-                <div className="form-group">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Unidad</label>
-                  <select className="form-select" value={ingredientForm.unit} onChange={e => setIngredientForm(f => ({ ...f, unit: e.target.value }))}>
-                    <option value="kg">Kilos (kg)</option>
-                    <option value="gr">Gramos (gr)</option>
-                    <option value="l">Litros (l)</option>
-                    <option value="ml">Mililitros (ml)</option>
-                    <option value="unidad">Unidades</option>
-                    <option value="docena">Docenas</option>
+                  <select className="form-input" value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}>
+                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
-                <div className="form-group">
+                <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Categoría</label>
-                  <select className="form-select" value={ingredientForm.category} onChange={e => setIngredientForm(f => ({ ...f, category: e.target.value }))}>
-                    <option value="reposteria">Repostería</option>
-                    <option value="lacteos">Lácteos</option>
-                    <option value="frutas">Frutas / Verduras</option>
-                    <option value="desechables">Desechables</option>
-                    <option value="otros">Otros</option>
+                  <select className="form-input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                    {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                 </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Stock Actual</label>
-                  <input 
-                    type="number" className="form-input" 
-                    value={ingredientForm.currentStock} onChange={e => setIngredientForm(f => ({ ...f, currentStock: e.target.value }))}
-                  />
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Stock inicial</label>
+                  <input className="form-input" type="number" min="0" step="0.01" value={form.current_stock} onChange={e => setForm(f => ({ ...f, current_stock: parseFloat(e.target.value) || 0 }))} />
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Stock Mínimo</label>
-                  <input 
-                    type="number" className="form-input" 
-                    value={ingredientForm.minStock} onChange={e => setIngredientForm(f => ({ ...f, minStock: e.target.value }))}
-                  />
-                  <small style={{ fontSize: '0.7rem', color: 'var(--color-text-light)' }}>Avisar cuando quede menos de...</small>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Stock mínimo</label>
+                  <input className="form-input" type="number" min="0" step="0.01" value={form.min_stock} onChange={e => setForm(f => ({ ...f, min_stock: parseFloat(e.target.value) || 0 }))} />
                 </div>
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowIngredientModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleSaveIngredient}>Guardar Insumo</button>
+              <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleSubmit}>{editingId ? 'Guardar' : 'Crear'}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Purchase Modal */}
-      {showPurchaseModal && (
-        <div className="modal-overlay" onClick={() => setShowPurchaseModal(false)}>
+      {/* ── MODAL: MOVIMIENTO ───────────────────────────── */}
+      {showMovement && (
+        <div className="modal-overlay" onClick={() => setShowMovement(null)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2><ShoppingCart size={20} /> Registrar Compra</h2>
-              <button className="modal-close" onClick={() => setShowPurchaseModal(false)}><X size={20} /></button>
+              <div>
+                <h2 style={{ fontSize: '1rem' }}>{showMovement.name}</h2>
+                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                  Stock actual: <strong>{showMovement.current_stock} {showMovement.unit}</strong>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setShowMovement(null)}><X size={18} /></button>
             </div>
-            <div className="modal-body">
-              {!openRegister && (
-                <div className="alert alert-danger" style={{ marginBottom: 'var(--space-md)', fontSize: '0.85rem' }}>
-                  ⚠️ <strong>Caja cerrada:</strong> El gasto se registrará pero no se descontará del efectivo del turno actual.
-                </div>
-              )}
-              
-              <div className="form-group">
-                <label className="form-label">Seleccionar Insumo *</label>
-                <select 
-                  className="form-select" 
-                  value={purchaseForm.ingredientId} 
-                  onChange={e => setPurchaseForm(f => ({ ...f, ingredientId: e.target.value }))}
-                >
-                  <option value="">-- Seleccionar --</option>
-                  {ingredients.map(i => (
-                    <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Cantidad comprada *</label>
-                  <input 
-                    type="number" className="form-input" placeholder="Ej: 5"
-                    value={purchaseForm.quantity} onChange={e => setPurchaseForm(f => ({ ...f, quantity: e.target.value }))}
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Costo Total ($) *</label>
-                  <input 
-                    type="number" className="form-input" placeholder="Ej: 15000"
-                    value={purchaseForm.cost} onChange={e => setPurchaseForm(f => ({ ...f, cost: e.target.value }))}
-                  />
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+
+              {/* Tipo de movimiento */}
+              <div>
+                <label className="form-label">Tipo de movimiento</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-xs)' }}>
+                  {[
+                    { type: 'purchase',   label: 'Compra',  Icon: ArrowDownToLine,  desc: 'Agrega stock' },
+                    { type: 'adjustment', label: 'Ajuste',  Icon: SlidersHorizontal, desc: 'Corrección manual' },
+                    { type: 'usage',      label: 'Consumo', Icon: ArrowUpFromLine,   desc: 'Descuenta stock' },
+                  ].map(({ type, label, Icon, desc }) => {
+                    const meta = MOVEMENT_META[type];
+                    const active = movType === type;
+                    return (
+                      <button key={type} onClick={() => { setMovType(type); setMovForm({ quantity: '', cost: '' }); }}
+                        style={{
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                          padding: '10px 6px', border: `1.5px solid ${active ? meta.color : 'var(--color-border)'}`,
+                          borderRadius: 'var(--radius-md)', background: active ? meta.bg : 'var(--color-bg-card)',
+                          cursor: 'pointer', transition: 'all 0.15s',
+                        }}>
+                        <Icon size={16} style={{ color: meta.color }} />
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: active ? meta.color : 'var(--color-text)' }}>{label}</span>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--color-text-light)' }}>{desc}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">Proveedor / Lugar (Opcional)</label>
-                <input 
-                  type="text" className="form-input" placeholder="Ej: Supermercado Lider"
-                  value={purchaseForm.provider} onChange={e => setPurchaseForm(f => ({ ...f, provider: e.target.value }))}
+
+              {/* Cantidad */}
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">
+                  Cantidad ({showMovement.unit})
+                  {movType === 'adjustment' && <span style={{ fontWeight: 400, color: 'var(--color-text-light)', marginLeft: 6, fontSize: '0.78rem' }}>negativo para reducir</span>}
+                </label>
+                <input
+                  className="form-input"
+                  type="number"
+                  step="0.01"
+                  min={movType === 'usage' ? '0.01' : undefined}
+                  placeholder={movType === 'adjustment' ? 'ej: 5 o -2' : '0.00'}
+                  value={movForm.quantity}
+                  onChange={e => setMovForm(f => ({ ...f, quantity: e.target.value }))}
+                  autoFocus
                 />
               </div>
+
+              {/* Costo (solo compra) */}
+              {movType === 'purchase' && (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Costo total (opcional)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    placeholder="$0"
+                    value={movForm.cost}
+                    onChange={e => setMovForm(f => ({ ...f, cost: e.target.value }))}
+                  />
+                  {pricePerUnit && (
+                    <div style={{ marginTop: 6, fontSize: '0.8rem', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      Precio unitario: <strong style={{ color: 'var(--color-text)' }}>{formatCurrency(pricePerUnit)}/{showMovement.unit}</strong>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowPurchaseModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleRegisterPurchase}>Confirmar Compra</button>
+              <button className="btn btn-secondary" onClick={() => setShowMovement(null)}>Cancelar</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleMovement}
+                disabled={!movForm.quantity || parseFloat(movForm.quantity) === 0}
+              >
+                {movType === 'purchase' ? <ArrowDownToLine size={14} /> : movType === 'usage' ? <ArrowUpFromLine size={14} /> : <SlidersHorizontal size={14} />}
+                {MOVEMENT_META[movType].label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: HISTORIAL ────────────────────────────── */}
+      {showHistory && (
+        <div className="modal-overlay" onClick={() => setShowHistory(null)}>
+          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <History size={18} style={{ color: 'var(--color-primary)' }} />
+                <div>
+                  <h2 style={{ fontSize: '1rem' }}>Historial — {showHistory.name}</h2>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>
+                    Stock actual: <strong>{showHistory.current_stock} {showHistory.unit}</strong>
+                  </div>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setShowHistory(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body" style={{ padding: 0 }}>
+              {histLoading ? (
+                <div style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando…</div>
+              ) : history.length === 0 ? (
+                <div style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                  <History size={32} style={{ opacity: 0.3, marginBottom: 8, display: 'block', margin: '0 auto 8px' }} />
+                  Sin movimientos registrados
+                </div>
+              ) : (
+                <div className="table-wrapper" style={{ margin: 0, borderRadius: 0, boxShadow: 'none' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Fecha</th>
+                        <th>Tipo</th>
+                        <th>Cantidad</th>
+                        <th>Costo</th>
+                        <th>Precio/u</th>
+                        <th>Vendedor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map(m => {
+                        const meta = MOVEMENT_META[m.type] || MOVEMENT_META.adjustment;
+                        const Icon = meta.icon;
+                        const priceU = m.cost && m.quantity ? m.cost / m.quantity : null;
+                        const sign = m.type === 'usage' ? '−' : m.quantity < 0 ? '−' : '+';
+                        const signColor = m.type === 'usage' || m.quantity < 0 ? '#C0392B' : '#2E8B57';
+                        return (
+                          <tr key={m.id}>
+                            <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{formatDate(m.created_at)}</td>
+                            <td>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 99, background: meta.bg, color: meta.color, fontSize: '0.78rem', fontWeight: 600 }}>
+                                <Icon size={11} />{meta.label}
+                              </span>
+                            </td>
+                            <td style={{ fontWeight: 700, color: signColor }}>
+                              {sign}{Math.abs(m.quantity)} {showHistory.unit}
+                            </td>
+                            <td style={{ fontSize: '0.85rem' }}>
+                              {m.cost ? formatCurrency(m.cost) : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                            </td>
+                            <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>
+                              {priceU ? `${formatCurrency(priceU)}/${showHistory.unit}` : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                            </td>
+                            <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>
+                              {m.seller?.name ?? '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowHistory(null)}>Cerrar</button>
             </div>
           </div>
         </div>

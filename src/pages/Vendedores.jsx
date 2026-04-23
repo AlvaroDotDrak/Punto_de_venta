@@ -1,14 +1,12 @@
 /**
- * Vendedores — Admin dashboard for managing staff
- * Features: List sellers, Create/Edit with roles, View audit logs
+ * Vendedores — Admin dashboard para gestión de personal
+ * V3.0: consume FastAPI backend
  */
-import { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import db from '../db';
+import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
-import { logAction, ACTIONS } from '../utils/auditLog';
-import { Users, Plus, Edit, Shield, Trash2, Key, Activity, Search, X, CheckCircle, XCircle } from 'lucide-react';
+import api from '../utils/api';
+import { Users, Plus, Edit, Shield, Key, Activity, X, CheckCircle, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 const emptyForm = { name: '', pin: '', role: 'seller', active: true };
@@ -16,70 +14,68 @@ const emptyForm = { name: '', pin: '', role: 'seller', active: true };
 export default function Vendedores() {
   const toast = useToast();
   const { currentSeller } = useSeller();
-  
+
+  const [sellers, setSellers] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
-  const [showLogs, setShowLogs] = useState(null); // ID of seller to show logs for
 
-  // Load data
-  const sellers = useLiveQuery(() => db.sellers.toArray(), [], []);
-  
-  // Load audit logs for selected seller
-  const auditLogs = useLiveQuery(async () => {
-    if (!showLogs) return [];
-    return db.auditLog
-      .where('userId').equals(showLogs)
-      .reverse()
-      .limit(50)
-      .toArray();
-  }, [showLogs], []);
+  const loadSellers = async () => {
+    const data = await api.get('/sellers').catch(() => []);
+    setSellers(data);
+  };
 
-  // Form handlers
-  const updateField = (field, value) => setForm(f => ({ ...f, [field]: value }));
+  useEffect(() => { loadSellers(); }, []);
+
+  useEffect(() => {
+    if (!showLogs) { setAuditLogs([]); return; }
+    api.get(`/audit?seller_id=${showLogs}&limit=50`)
+      .then(setAuditLogs)
+      .catch(() => setAuditLogs([]));
+  }, [showLogs]);
+
+  const updateField = (f, v) => setForm(prev => ({ ...prev, [f]: v }));
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !form.pin.trim()) {
+    if (!form.name.trim() || (!editingId && !form.pin.trim())) {
       toast.error('Nombre y PIN son obligatorios');
       return;
     }
-    if (form.pin.length < 4) {
+    if (form.pin && form.pin.length < 4) {
       toast.error('El PIN debe tener al menos 4 dígitos');
       return;
     }
-
     try {
       if (editingId) {
-        await db.sellers.update(editingId, form);
+        const patch = { name: form.name, role: form.role, active: form.active };
+        if (form.pin) patch.pin = form.pin;
+        await api.patch(`/sellers/${editingId}`, patch);
         toast.success('Vendedor actualizado');
-        await logAction(ACTIONS.SELLER_UPDATE, currentSeller?.id, `Actualizó a ${form.name} (${form.role})`);
       } else {
-        await db.sellers.add(form);
+        await api.post('/sellers', { name: form.name, pin: form.pin, role: form.role });
         toast.success('Vendedor creado');
-        await logAction(ACTIONS.SELLER_CREATE, currentSeller?.id, `Creó a ${form.name} (${form.role})`);
       }
       setShowForm(false);
-      setForm(emptyForm);
       setEditingId(null);
-    } catch (err) {
-      toast.error('Error al guardar: ' + err.message);
-    }
+      setForm(emptyForm);
+      loadSellers();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
-  const editSeller = (seller) => {
-    setForm(seller);
+  const handleEdit = (seller) => {
     setEditingId(seller.id);
+    setForm({ name: seller.name, pin: '', role: seller.role, active: seller.active });
     setShowForm(true);
   };
 
-  const toggleActive = async (seller) => {
-    // Prevent deactivating yourself
-    if (seller.id === currentSeller?.id) {
-      toast.error('No puedes desactivar tu propio usuario');
-      return;
-    }
-    await db.sellers.update(seller.id, { active: !seller.active });
-    toast.info(`${seller.name} ${seller.active ? 'desactivado' : 'activado'}`);
+  const handleToggleActive = async (seller) => {
+    try {
+      await api.patch(`/sellers/${seller.id}`, { active: !seller.active });
+      toast.success(seller.active ? 'Vendedor desactivado' : 'Vendedor activado');
+      loadSellers();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   return (
@@ -87,61 +83,46 @@ export default function Vendedores() {
       <div className="page-header">
         <h1 className="page-title">
           <Users size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-          Gestión de Personal
+          Vendedores
         </h1>
-        <button className="btn btn-primary" onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm); }}>
-          <Plus size={18} /> Nuevo Vendedor
+        <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(emptyForm); setShowForm(true); }}>
+          <Plus size={16} /> Nuevo Vendedor
         </button>
       </div>
 
-      {/* Sellers List */}
       <div className="table-wrapper">
         <table>
           <thead>
-            <tr>
-              <th>Nombre</th>
-              <th>Rol</th>
-              <th>PIN</th>
-              <th>Estado</th>
-              <th>Acciones</th>
-            </tr>
+            <tr><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr>
           </thead>
           <tbody>
-            {sellers?.map(seller => (
-              <tr key={seller.id} style={{ opacity: seller.active ? 1 : 0.5 }}>
-                <td style={{ fontWeight: 500 }}>
-                  {seller.name}
-                  {seller.id === currentSeller?.id && <span className="badge badge-fresh" style={{ marginLeft: 8 }}>Tú</span>}
-                </td>
+            {sellers.map(s => (
+              <tr key={s.id}>
+                <td style={{ fontWeight: 600 }}>{s.name}</td>
                 <td>
-                  {seller.role === 'admin' ? (
-                    <span className="badge badge-warning"><Shield size={12} /> Admin</span>
-                  ) : (
-                    <span className="badge"><Users size={12} /> Vendedor</span>
-                  )}
-                </td>
-                <td>••••</td>
-                <td>
-                  <span className={`badge ${seller.active ? 'badge-success' : 'badge-danger'}`}>
-                    {seller.active ? 'Activo' : 'Inactivo'}
+                  <span className={`badge ${s.role === 'admin' ? 'badge-warning' : 'badge-info'}`}>
+                    <Shield size={12} /> {s.role === 'admin' ? 'Admin' : 'Vendedor'}
                   </span>
                 </td>
                 <td>
+                  {s.active
+                    ? <span className="badge badge-fresh"><CheckCircle size={12} /> Activo</span>
+                    : <span className="badge badge-danger"><XCircle size={12} /> Inactivo</span>}
+                </td>
+                <td>
                   <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => editSeller(seller)} title="Editar">
-                      <Edit size={14} />
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(s)}>
+                      <Edit size={14} /> Editar
                     </button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setShowLogs(seller.id)} title="Ver Actividad">
-                      <Activity size={14} />
+                    <button className="btn btn-ghost btn-sm" onClick={() => setShowLogs(showLogs === s.id ? null : s.id)}>
+                      <Activity size={14} /> Logs
                     </button>
-                    <button 
-                      className="btn btn-ghost btn-sm" 
-                      onClick={() => toggleActive(seller)}
-                      disabled={seller.id === currentSeller?.id}
-                      title={seller.active ? 'Desactivar' : 'Activar'}
-                    >
-                      {seller.active ? <XCircle size={14} /> : <CheckCircle size={14} />}
-                    </button>
+                    {s.id !== currentSeller?.id && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => handleToggleActive(s)}>
+                        {s.active ? <XCircle size={14} /> : <CheckCircle size={14} />}
+                        {s.active ? 'Desactivar' : 'Activar'}
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -150,35 +131,31 @@ export default function Vendedores() {
         </table>
       </div>
 
-      {/* Audit Logs Modal */}
-      {showLogs && (
-        <div className="modal-overlay" onClick={() => setShowLogs(null)}>
-          <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Actividad Reciente</h2>
-              <button className="modal-close" onClick={() => setShowLogs(null)}><X size={20} /></button>
-            </div>
-            <div className="modal-body">
-              {auditLogs?.length === 0 ? (
-                <p style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>Sin actividad registrada</p>
-              ) : (
-                <ul className="audit-list">
-                  {auditLogs?.map(log => (
-                    <li key={log.id} className="audit-item">
-                      <div className="audit-date">{format(new Date(log.createdAt), 'dd/MM HH:mm')}</div>
-                      <div className="audit-action">
-                        <strong>{log.action}</strong>: {log.details}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+      {showLogs && auditLogs.length > 0 && (
+        <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
+          <div className="card-header">
+            <h3 className="card-title"><Activity size={16} /> Actividad reciente — {sellers.find(s => s.id === showLogs)?.name}</h3>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowLogs(null)}><X size={14} /></button>
+          </div>
+          <div className="table-wrapper">
+            <table>
+              <thead><tr><th>Fecha</th><th>Acción</th><th>Detalle</th></tr></thead>
+              <tbody>
+                {auditLogs.map(log => (
+                  <tr key={log.id}>
+                    <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                      {format(new Date(log.created_at), 'dd/MM/yy HH:mm')}
+                    </td>
+                    <td><span className="badge badge-info">{log.action}</span></td>
+                    <td style={{ fontSize: '0.85rem' }}>{log.details}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
-      {/* Create/Edit Modal */}
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
@@ -189,71 +166,30 @@ export default function Vendedores() {
             <div className="modal-body">
               <div className="form-group">
                 <label className="form-label">Nombre</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={form.name} 
-                  onChange={e => updateField('name', e.target.value)} 
-                  placeholder="Ej: Juan Pérez"
-                  autoFocus
-                />
+                <input className="form-input" value={form.name} onChange={e => updateField('name', e.target.value)} autoFocus />
               </div>
-              
               <div className="form-group">
-                <label className="form-label">PIN de Acceso (4 dígitos)</label>
-                <div style={{ position: 'relative' }}>
-                  <Key size={16} style={{ position: 'absolute', left: 10, top: 12, color: 'var(--color-text-secondary)' }} />
-                  <input 
-                    type="tel" 
-                    className="form-input" 
-                    style={{ paddingLeft: 35 }}
-                    value={form.pin} 
-                    onChange={e => updateField('pin', e.target.value)} 
-                    placeholder="Ej: 1234"
-                    maxLength={6}
-                  />
-                </div>
+                <label className="form-label">{editingId ? 'Nuevo PIN (dejar vacío para no cambiar)' : 'PIN'}</label>
+                <input className="form-input" type="password" inputMode="numeric"
+                  value={form.pin} onChange={e => updateField('pin', e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder={editingId ? 'Sin cambios' : '4-6 dígitos'} />
               </div>
-
               <div className="form-group">
-                <label className="form-label">Rol de Usuario</label>
-                <div className="role-selector">
-                  <label className={`role-option ${form.role === 'seller' ? 'selected' : ''}`}>
-                    <input 
-                      type="radio" 
-                      name="role" 
-                      value="seller" 
-                      checked={form.role === 'seller'} 
-                      onChange={() => updateField('role', 'seller')} 
-                    />
-                    <Users size={20} />
-                    <div>
-                      <strong>Vendedor</strong>
-                      <small>Solo Vender y Caja</small>
-                    </div>
-                  </label>
-
-                  <label className={`role-option ${form.role === 'admin' ? 'selected' : ''}`}>
-                    <input 
-                      type="radio" 
-                      name="role" 
-                      value="admin" 
-                      checked={form.role === 'admin'} 
-                      onChange={() => updateField('role', 'admin')} 
-                    />
-                    <Shield size={20} />
-                    <div>
-                      <strong>Administrador</strong>
-                      <small>Acceso Total</small>
-                    </div>
-                  </label>
+                <label className="form-label">Rol</label>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  {['seller', 'admin'].map(r => (
+                    <button key={r} className={`btn ${form.role === r ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => updateField('role', r)}>
+                      <Shield size={14} /> {r === 'admin' ? 'Admin' : 'Vendedor'}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleSubmit}>
-                {editingId ? 'Actualizar' : 'Crear Usuario'}
+                {editingId ? 'Guardar' : 'Crear'}
               </button>
             </div>
           </div>

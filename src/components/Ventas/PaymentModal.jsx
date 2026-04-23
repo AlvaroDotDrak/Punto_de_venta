@@ -1,55 +1,65 @@
 import { X, Banknote, CreditCard, Smartphone } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
+const METHODS = [
+  { id: 'efectivo',      label: 'Efectivo',      Icon: Banknote },
+  { id: 'tarjeta',       label: 'Tarjeta',        Icon: CreditCard },
+  { id: 'transferencia', label: 'Transferencia',  Icon: Smartphone },
+];
+
 export default function PaymentModal({
-  show, cartTotal, paymentMethod, cashReceived, change, processingPayment,
-  onPaymentMethodChange, onCashReceivedChange, onConfirm, onClose,
+  total,
+  paymentMethod,
+  cashReceived,
+  change,
+  processing,
+  onMethodChange,
+  onCashChange,
+  onConfirm,
+  onClose,
 }) {
-  if (!show) return null;
+  const cashOk = paymentMethod !== 'efectivo' || (cashReceived && parseInt(cashReceived) >= total);
 
   return (
-    <div className="modal-overlay" onClick={() => !processingPayment && onClose()}>
+    <div className="modal-overlay" onClick={() => !processing && onClose()}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        {processingPayment && (
+        {processing && (
           <div className="loading-overlay">
             <div className="spinner" />
             <span>Procesando venta...</span>
           </div>
         )}
+
         <div className="modal-header">
           <h2>Cobrar Venta</h2>
-          <button className="modal-close" onClick={() => !processingPayment && onClose()}>
+          <button className="modal-close" onClick={() => !processing && onClose()}>
             <X size={20} />
           </button>
         </div>
+
         <div className="modal-body">
+          {/* Total */}
           <div className="payment-total">
             <div className="label">Total a cobrar</div>
-            <div className="amount">{formatCurrency(cartTotal)}</div>
+            <div className="amount">{formatCurrency(total)}</div>
           </div>
 
+          {/* Método */}
           <label className="form-label">Método de pago</label>
           <div className="payment-methods">
-            <button
-              className={`payment-method-btn ${paymentMethod === 'efectivo' ? 'selected' : ''}`}
-              onClick={() => onPaymentMethodChange('efectivo')}
-            >
-              <Banknote className="icon" /> Efectivo
-            </button>
-            <button
-              className={`payment-method-btn ${paymentMethod === 'tarjeta' ? 'selected' : ''}`}
-              onClick={() => onPaymentMethodChange('tarjeta')}
-            >
-              <CreditCard className="icon" /> Tarjeta
-            </button>
-            <button
-              className={`payment-method-btn ${paymentMethod === 'transferencia' ? 'selected' : ''}`}
-              onClick={() => onPaymentMethodChange('transferencia')}
-            >
-              <Smartphone className="icon" /> Transfer.
-            </button>
+            {METHODS.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                className={`payment-method-btn ${paymentMethod === id ? 'selected' : ''}`}
+                onClick={() => onMethodChange(id)}
+              >
+                <Icon size={20} className="icon" />
+                {label}
+              </button>
+            ))}
           </div>
 
+          {/* Efectivo: monto recibido y vuelto */}
           {paymentMethod === 'efectivo' && (
             <div>
               <div className="form-group">
@@ -59,35 +69,39 @@ export default function PaymentModal({
                   className="form-input"
                   placeholder="Ingrese monto..."
                   value={cashReceived}
-                  onChange={e => onCashReceivedChange(e.target.value)}
+                  onChange={e => onCashChange(e.target.value)}
                   autoFocus
                 />
               </div>
-              {cashReceived && parseInt(cashReceived) >= cartTotal && (
+              {cashReceived && parseInt(cashReceived) >= total && (
                 <div className="change-calculator">
                   <div className="change-result">
                     <span>Vuelto:</span>
-                    <span>{formatCurrency(change)}</span>
+                    <span style={{ color: 'var(--color-success)', fontWeight: 700 }}>
+                      {formatCurrency(change)}
+                    </span>
                   </div>
+                </div>
+              )}
+              {cashReceived && parseInt(cashReceived) < total && (
+                <div style={{ color: 'var(--color-danger)', fontSize: '0.85rem', marginTop: 4 }}>
+                  Monto insuficiente (faltan {formatCurrency(total - parseInt(cashReceived))})
                 </div>
               )}
             </div>
           )}
         </div>
+
         <div className="modal-footer">
-          <button
-            className="btn btn-secondary"
-            onClick={() => !processingPayment && onClose()}
-            disabled={processingPayment}
-          >
+          <button className="btn btn-secondary" onClick={() => !processing && onClose()} disabled={processing}>
             Cancelar
           </button>
           <button
-            className={`btn btn-primary btn-lg ${processingPayment ? 'btn-loading' : ''}`}
+            className={`btn btn-primary btn-lg ${processing ? 'btn-loading' : ''}`}
             onClick={onConfirm}
-            disabled={processingPayment || (paymentMethod === 'efectivo' && (!cashReceived || parseInt(cashReceived) < cartTotal))}
+            disabled={processing || !cashOk}
           >
-            {processingPayment ? 'Procesando...' : `Confirmar Venta — ${formatCurrency(cartTotal)}`}
+            {processing ? 'Procesando...' : `Confirmar — ${formatCurrency(total)}`}
           </button>
         </div>
       </div>

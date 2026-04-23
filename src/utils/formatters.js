@@ -69,6 +69,7 @@ export function minutesElapsed(date) {
  * @returns 'fresh' | 'warning' | 'danger'
  */
 export function getFreshnessStatus(placedAt, maxHours = 48) {
+  if (!maxHours) return 'none';                      // Sin control de tiempo
   const hours = hoursElapsed(placedAt);
   if (hours < maxHours * 0.5) return 'fresh';     // Verde: primera mitad del tiempo
   if (hours < maxHours) return 'warning';           // Amarillo: segunda mitad

@@ -1,844 +1,760 @@
 /**
- * Vitrina — Dual showcase system (Enteros / Trozados)
- *
- * FEATURES:
- * - Grouped view by product with freshness semaphore + progress bar
- * - Time remaining displayed (instead of elapsed)
- * - Search/filter within active showcase
- * - Daily KPIs: vendidos, retirados, ingresados hoy
- * - Historial del día: collapsible movement log
- * - Restock alert: products that ran out today
- * - [ADMIN] Anular ingreso: cancel items without counting as merma
- * - [ADMIN] Extender tiempo: increase max showcase hours per item batch
+ * Vitrina — Sistema dual enteros/trozados
+ * V3.2: CSS vt-* añadidos, bugs corregidos, mejoras UX
  */
 import { useState, useEffect, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import db from '../db';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
-import { logAction, ACTIONS } from '../utils/auditLog';
+import api from '../utils/api';
 import {
-  formatCurrency, formatElapsedTime, getFreshnessStatus,
-  hoursElapsed, minutesElapsed, formatTimeRemaining,
+  formatCurrency, getFreshnessStatus,
+  minutesElapsed, formatElapsedTime, formatTimeRemaining,
 } from '../utils/formatters';
 import {
-  Plus, Trash2, AlertTriangle, Store, Scissors, Package, Eye,
-  Search, ShoppingCart, RefreshCw, ChevronDown, ChevronUp, Clock,
+  Plus, Trash2, AlertTriangle, Store, Search, Clock,
+  Timer, CheckCircle2, X, Package, Layers, Hash, Scissors
 } from 'lucide-react';
-import { format, startOfDay, endOfDay } from 'date-fns';
-import AddModal from '../components/Vitrina/AddModal';
-import SliceModal from '../components/Vitrina/SliceModal';
-import DetailModal from '../components/Vitrina/DetailModal';
-import RemoveModal from '../components/Vitrina/RemoveModal';
-import ExtendModal from '../components/Vitrina/ExtendModal';
+
+const FRESHNESS_META = {
+  fresh:   { label: 'Fresco',      color: '#2E8B57', bg: 'rgba(46,139,87,0.06)',  border: 'rgba(46,139,87,0.25)',  icon: CheckCircle2 },
+  warning: { label: 'Próximo',     color: '#C8820A', bg: 'rgba(200,130,10,0.06)', border: 'rgba(200,130,10,0.3)',  icon: Timer },
+  danger:  { label: 'Vencido',     color: '#C0392B', bg: 'rgba(192,57,43,0.06)',  border: 'rgba(192,57,43,0.35)', icon: AlertTriangle },
+  none:    { label: 'Sin control', color: '#7A8B9A', bg: 'rgba(122,139,154,0.04)', border: 'rgba(122,139,154,0.2)', icon: Package },
+};
 
 export default function Vitrina() {
   const toast = useToast();
   const { currentSeller } = useSeller();
   const isAdmin = currentSeller?.role === 'admin';
 
-  // UI state
-  const [showcaseTab, setShowcaseTab] = useState('enteros');
-  const [vitrineSearch, setVitrinaSearch] = useState('');
-  const [showHistory, setShowHistory] = useState(false);
+  const [showcaseItems, setShowcaseItems] = useState([]);
+  const [products, setProducts]           = useState([]);
+  const [showcaseTab, setShowcaseTab]     = useState('enteros');
+  const [search, setSearch]               = useState('');
+  const [, setTick]                       = useState(0);
 
-  // Modal visibility
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showSliceModal, setShowSliceModal] = useState(false);
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showRemoveModal, setShowRemoveModal] = useState(false);
-  const [showExtendModal, setShowExtendModal] = useState(false);
+  const [showAddModal,  setShowAddModal]  = useState(false);
+  const [addProductId,  setAddProductId]  = useState('');
+  const [addSearch,     setAddSearch]     = useState('');
+  const [addDropOpen,   setAddDropOpen]   = useState(false);
+  const [addType,       setAddType]       = useState('entero');
+  const [addQuantity,   setAddQuantity]   = useState(1);
+  const [addLoading,    setAddLoading]    = useState(false);
 
-  // Batch remove state
-  const [removeGroup, setRemoveGroup] = useState(null);
-  const [removeQty, setRemoveQty] = useState('1');
-  const [removeReason, setRemoveReason] = useState('Vencido');
+  const [removeTarget,  setRemoveTarget]  = useState(null); // group
+  const [extendTarget,  setExtendTarget]  = useState(null); // group
+  const [extendHours,   setExtendHours]   = useState(2);
+  const [sliceTarget,   setSliceTarget]   = useState(null); // group (entero a trozar)
+  const [sliceQty,      setSliceQty]      = useState(8);
+  const [slicePrice,    setSlicePrice]    = useState('');
+  const [sliceLoading,  setSliceLoading]  = useState(false);
 
-  // Detail modal state
-  const [detailGroup, setDetailGroup] = useState(null);
-  const [selectedDetailItems, setSelectedDetailItems] = useState([]);
-  const [removeDetailReason, setRemoveDetailReason] = useState('Vencido');
+  const loadData = async () => {
+    const [active, prods] = await Promise.all([
+      api.get('/showcase?status=active'),
+      api.get('/products'),
+    ]);
+    setShowcaseItems(active);
+    setProducts(prods);
+  };
 
-  // Slice modal state
-  const [sliceTarget, setSliceTarget] = useState(null);
-  const [sliceCount, setSliceCount] = useState('6');
-  const [slicePrice, setSlicePrice] = useState('');
+  useEffect(() => { loadData(); }, []);
 
-  // Extend modal state
-  const [extendTarget, setExtendTarget] = useState(null);
-  const [extendHours, setExtendHours] = useState(2);
-
-  // Search in AddModal
-  const [searchProduct, setSearchProduct] = useState('');
-
-  const [, setTick] = useState(0);
-
-  // Auto-update freshness every 60 seconds
+  // Actualiza el reloj cada minuto
   useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 60000);
-    return () => clearInterval(interval);
+    const id = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(id);
   }, []);
 
-  // === Queries ===
+  const productMap = useMemo(() =>
+    Object.fromEntries(products.map(p => [p.id, p])), [products]);
 
-  const allShowcaseItems = useLiveQuery(async () => {
-    const items = await db.showcaseItems.where('status').anyOf(['active']).toArray();
-    const productIds = [...new Set(items.map(i => i.productId))];
-    const products = await db.products.where('id').anyOf(productIds).toArray();
-    const productMap = Object.fromEntries(products.map(p => [p.id, p]));
-    return items.map(item => ({
-      ...item,
-      product: productMap[item.productId] || { name: 'Desconocido', price: 0, maxShowcaseHours: 48 },
-    })).sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
-  }, [], []);
+  const enteros  = useMemo(() => showcaseItems.filter(i => i.showcase_type === 'entero' || !i.showcase_type), [showcaseItems]);
+  const trozados = useMemo(() => showcaseItems.filter(i => i.showcase_type === 'trozado'), [showcaseItems]);
+  const current  = showcaseTab === 'enteros' ? enteros : trozados;
 
-  const allProducts = useLiveQuery(() => db.products.toArray(), [], []);
-  const productMap = useMemo(
-    () => Object.fromEntries(allProducts.map(p => [p.id, p])),
-    [allProducts]
-  );
-
-  const todayActivity = useLiveQuery(async () => {
-    const start = startOfDay(new Date()).toISOString();
-    const end = endOfDay(new Date()).toISOString();
-    const placed = await db.showcaseItems
-      .where('placedAt').between(start, end, true, true).toArray();
-    const removed = await db.showcaseItems
-      .where('removedAt').between(start, end, true, true).toArray();
-    return { placed, removed };
-  }, [], { placed: [], removed: [] });
-
-  const availableProducts = useLiveQuery(
-    () => db.products.filter(p => p.active !== false && p.category !== 'encargo').toArray(),
-    [], []
-  );
-
-  // === Derived data ===
-
-  const enteros = useMemo(
-    () => allShowcaseItems.filter(i => !i.showcaseType || i.showcaseType === 'entero'),
-    [allShowcaseItems]
-  );
-  const trozados = useMemo(
-    () => allShowcaseItems.filter(i => i.showcaseType === 'trozado'),
-    [allShowcaseItems]
-  );
-  const currentItems = showcaseTab === 'enteros' ? enteros : trozados;
-
-  const groupedItems = useMemo(() => {
-    const grouped = currentItems.reduce((acc, item) => {
-      const key = item.productId;
-      if (!acc[key]) {
-        acc[key] = {
-          productId: item.productId,
-          product: item.product,
-          showcaseType: item.showcaseType || 'entero',
-          items: [],
-          count: 0,
-        };
-      }
-      acc[key].items.push(item);
-      acc[key].count++;
-      return acc;
-    }, {});
-
-    return Object.values(grouped).map(group => {
-      group.items.sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
-      const oldestItem = group.items[0];
-      const effectiveTime = group.showcaseType === 'trozado' && oldestItem.slicedAt
-        ? oldestItem.slicedAt
-        : oldestItem.placedAt;
-
-      // Extension: add extendedHours from the oldest item (same value applied to all)
-      const baseMaxH = group.product.maxShowcaseHours || 48;
-      const extraH = oldestItem.extendedHours || 0;
-      const maxH = baseMaxH + extraH;
-
-      group.oldestItem = oldestItem;
-      group.effectiveTime = effectiveTime;
-      group.freshnessStatus = getFreshnessStatus(effectiveTime, maxH);
-      group.oldestHours = hoursElapsed(effectiveTime);
-      group.oldestElapsed = formatElapsedTime(effectiveTime);
-      group.timeRemaining = formatTimeRemaining(effectiveTime, maxH);
-      group.freshnessPct = Math.min(100, (minutesElapsed(effectiveTime) / (maxH * 60)) * 100);
-      group.maxH = maxH;
-      group.baseMaxH = baseMaxH;
-      group.extendedHours = extraH;
-      group.isExtended = extraH > 0;
-      return group;
+  const groups = useMemo(() => {
+    const map = {};
+    for (const item of current) {
+      const k = item.product_id;
+      if (!map[k]) map[k] = {
+        product_id: k,
+        product: productMap[k],
+        showcase_type: item.showcase_type || 'entero',
+        items: [],
+      };
+      map[k].items.push(item);
+    }
+    return Object.values(map).map(g => {
+      g.items.sort((a, b) => new Date(a.placed_at) - new Date(b.placed_at));
+      const oldest = g.items[0];
+      const refDate = g.showcase_type === 'trozado' && oldest.sliced_at
+        ? oldest.sliced_at
+        : oldest.placed_at;
+      const maxH = g.product?.max_showcase_hours ?? null;
+      const freshness = getFreshnessStatus(refDate, maxH);
+      return {
+        ...g,
+        count: g.items.length,
+        oldest,
+        freshness,
+        elapsed:   formatElapsedTime(refDate),
+        remaining: maxH ? formatTimeRemaining(refDate, maxH) : null,
+        pct:       maxH ? Math.min(100, (minutesElapsed(refDate) / (maxH * 60)) * 100) : null,
+      };
     }).sort((a, b) => {
-      const order = { danger: 0, warning: 1, fresh: 2 };
-      return (order[a.freshnessStatus] || 2) - (order[b.freshnessStatus] || 2);
+      const o = { danger: 0, warning: 1, fresh: 2 };
+      return (o[a.freshness] ?? 2) - (o[b.freshness] ?? 2);
     });
-  }, [currentItems]);
+  }, [current, productMap]);
 
-  const filteredGroups = useMemo(() => {
-    if (!vitrineSearch.trim()) return groupedItems;
-    const term = vitrineSearch.toLowerCase();
-    return groupedItems.filter(g => g.product.name.toLowerCase().includes(term));
-  }, [groupedItems, vitrineSearch]);
+  const filtered = useMemo(() => {
+    if (!search.trim()) return groups;
+    const q = search.toLowerCase();
+    return groups.filter(g => g.product?.name?.toLowerCase().includes(q));
+  }, [groups, search]);
 
-  const dangerCount = useMemo(() => allShowcaseItems.filter(item => {
-    const effectiveTime = item.showcaseType === 'trozado' && item.slicedAt
-      ? item.slicedAt : item.placedAt;
-    const baseMaxH = item.product?.maxShowcaseHours || 48;
-    const maxH = baseMaxH + (item.extendedHours || 0);
-    return getFreshnessStatus(effectiveTime, maxH) === 'danger';
-  }).length, [allShowcaseItems]);
+  const dangerCount  = groups.filter(g => g.freshness === 'danger').length;
+  const warningCount = groups.filter(g => g.freshness === 'warning').length;
 
-  // Daily stats — 'cancelled' excluded from merma intentionally
-  const dailyStats = useMemo(() => {
-    const { placed, removed } = todayActivity;
-    return {
-      addedToday: placed.filter(i => i.showcaseType === 'entero').length,
-      soldToday: removed.filter(i => i.status === 'sold').length,
-      mermaToday: removed.filter(i => i.status === 'removed').length,
-    };
-  }, [todayActivity]);
+  const available = useMemo(() =>
+    products.filter(p => p.active && !['encargo', 'bebidas', 'cafe'].includes(p.category)), [products]);
 
-  const restockNeeded = useMemo(() => {
-    const { placed } = todayActivity;
-    const activeProductIds = new Set(allShowcaseItems.map(i => i.productId));
-    const todayProductIds = new Set(
-      placed.filter(i => i.showcaseType === 'entero').map(i => i.productId)
-    );
-    return [...todayProductIds]
-      .filter(id => !activeProductIds.has(id))
-      .map(id => productMap[id])
-      .filter(Boolean);
-  }, [todayActivity, allShowcaseItems, productMap]);
+  const addFiltered = useMemo(() => {
+    if (!addSearch.trim()) return available;
+    const q = addSearch.toLowerCase();
+    return available.filter(p => p.name.toLowerCase().includes(q));
+  }, [available, addSearch]);
 
-  const todayMovementsLog = useMemo(() => {
-    const { placed, removed } = todayActivity;
-    const entries = {};
+  const selectedProduct = useMemo(() =>
+    available.find(p => p.id === parseInt(addProductId)) ?? null, [available, addProductId]);
 
-    const add = (key, obj) => {
-      if (!entries[key]) entries[key] = { ...obj, count: 0 };
-      entries[key].count++;
-    };
+  const selectProduct = (p) => {
+    setAddProductId(String(p.id));
+    setAddSearch(p.name);
+    setAddDropOpen(false);
+  };
 
-    placed.forEach(item => {
-      if (item.showcaseType === 'entero') {
-        add(`add-${item.productId}-${item.placedAt}`, {
-          productId: item.productId, time: item.placedAt, type: 'added',
-        });
-      } else if (item.showcaseType === 'trozado') {
-        const t = item.slicedAt || item.placedAt;
-        add(`slice-${item.productId}-${t}`, {
-          productId: item.productId, time: t, type: 'sliced',
+  // ── HANDLERS ───────────────────────────────────────
+  const handleAdd = async () => {
+    if (!addProductId) { toast.error('Selecciona un producto'); return; }
+    setAddLoading(true);
+    try {
+      // Agregar N unidades en secuencia
+      for (let i = 0; i < addQuantity; i++) {
+        await api.post('/showcase', {
+          product_id: parseInt(addProductId),
+          showcase_type: addType,
         });
       }
-    });
-
-    removed.forEach(item => {
-      if (item.status === 'sliced') return;
-      const type = item.status === 'sold' ? 'sold'
-        : item.status === 'cancelled' ? 'cancelled'
-        : 'removed';
-      const key = `${type}-${item.productId}-${item.removedAt}-${item.removeReason || ''}`;
-      add(key, {
-        productId: item.productId,
-        time: item.removedAt,
-        type,
-        reason: item.removeReason,
-      });
-    });
-
-    return Object.values(entries).sort((a, b) => new Date(b.time) - new Date(a.time));
-  }, [todayActivity]);
-
-  const filteredAvailable = useMemo(() => {
-    if (!searchProduct) return availableProducts;
-    const term = searchProduct.toLowerCase();
-    return availableProducts.filter(p => p.name.toLowerCase().includes(term));
-  }, [availableProducts, searchProduct]);
-
-  // === Handlers ===
-
-  const addToShowcase = async (product, qty = 1) => {
-    try {
-      const now = new Date().toISOString();
-      const items = Array.from({ length: qty }, () => ({
-        productId: product.id,
-        placedAt: now,
-        removedAt: null,
-        status: 'active',
-        showcaseType: 'entero',
-        parentId: null,
-        slicedAt: null,
-      }));
-      await db.showcaseItems.bulkAdd(items);
-      toast.success(`${qty}x ${product.name} agregado(s) a vitrina`);
+      const prod = available.find(p => p.id === parseInt(addProductId));
+      toast.success(`${addQuantity} ${addType}${addQuantity > 1 ? 's' : ''} de "${prod?.name}" agregado${addQuantity > 1 ? 's' : ''}`);
       setShowAddModal(false);
-      setSearchProduct('');
+      setAddProductId('');
+      setAddQuantity(1);
+      loadData();
     } catch (err) {
-      toast.error('Error al agregar a vitrina: ' + err.message);
+      toast.error('Error al agregar: ' + err.message);
+    } finally {
+      setAddLoading(false);
     }
   };
 
-  const openSliceModal = (group) => {
-    setSliceTarget({ ...group.oldestItem, product: group.product });
-    setSliceCount('6');
-    setSlicePrice(Math.round(group.product.price / 6).toString());
-    setShowSliceModal(true);
+  // Retira UN item del grupo (el más antiguo)
+  const handleRemoveOne = async (group) => {
+    try {
+      await api.post(`/showcase/${group.oldest.id}/remove`);
+      toast.success('Item retirado de vitrina');
+      setRemoveTarget(null);
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
+  };
+
+  // Retira TODOS los items del grupo
+  const handleRemoveAll = async (group) => {
+    try {
+      for (const item of group.items) {
+        await api.post(`/showcase/${item.id}/remove`);
+      }
+      toast.success(`${group.count} item${group.count > 1 ? 's' : ''} retirado${group.count > 1 ? 's' : ''}`);
+      setRemoveTarget(null);
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
   const handleSlice = async () => {
     if (!sliceTarget) return;
-    const count = parseInt(sliceCount);
-    const price = parseInt(slicePrice);
-    if (isNaN(count) || count < 2) { toast.error('Mínimo 2 trozos'); return; }
-    if (isNaN(price) || price <= 0) { toast.error('El precio por trozo debe ser mayor a 0'); return; }
+    const price = parseFloat(slicePrice);
+    if (!price || price <= 0) { toast.error('Ingresa un precio válido para el trozo'); return; }
+    setSliceLoading(true);
     try {
-      const now = new Date().toISOString();
-      await db.showcaseItems.update(sliceTarget.id, { status: 'sliced', removedAt: now });
-      const slices = Array.from({ length: count }, () => ({
-        productId: sliceTarget.productId,
-        placedAt: sliceTarget.placedAt,
-        removedAt: null,
-        status: 'active',
-        showcaseType: 'trozado',
-        parentId: sliceTarget.id,
-        slicedAt: now,
-        slicePrice: price,
-      }));
-      await db.showcaseItems.bulkAdd(slices);
-      toast.success(`${sliceTarget.product.name} trozado en ${count} porciones a ${formatCurrency(price)} c/u`);
-      setShowSliceModal(false);
+      // Guardar precio del trozo en el producto si cambió
+      if (price !== sliceTarget.product?.slice_price) {
+        await api.patch(`/products/${sliceTarget.product_id}`, { slice_price: price });
+      }
+      await api.post(`/showcase/${sliceTarget.oldest.id}/slice?slices=${sliceQty}`);
+      toast.success(`"${sliceTarget.product?.name}" trozado en ${sliceQty} trozos a ${formatCurrency(price)} c/u`);
       setSliceTarget(null);
       setShowcaseTab('trozados');
-    } catch (err) {
-      toast.error('Error al trozar: ' + err.message);
-    }
-  };
-
-  const openRemoveModal = (group) => {
-    setRemoveGroup(group);
-    setRemoveQty('1');
-    setRemoveReason('Vencido');
-    setShowRemoveModal(true);
-  };
-
-  const handleBatchRemove = async () => {
-    if (!removeGroup) return;
-    const qty = parseInt(removeQty);
-    if (isNaN(qty) || qty <= 0 || qty > removeGroup.count) {
-      toast.error(`Ingrese una cantidad entre 1 y ${removeGroup.count}`);
-      return;
-    }
-    try {
-      const now = new Date().toISOString();
-      const itemsToRemove = removeGroup.items.slice(0, qty);
-      for (const item of itemsToRemove) {
-        await db.showcaseItems.update(item.id, { status: 'removed', removedAt: now, removeReason });
-      }
-      toast.success(`${qty}x ${removeGroup.product.name} retirado(s). Motivo: ${removeReason}`);
-      setShowRemoveModal(false);
-      setRemoveGroup(null);
-    } catch (err) {
-      toast.error('Error al retirar: ' + err.message);
-    }
-  };
-
-  const openDetailModal = (group) => {
-    setDetailGroup(group);
-    setSelectedDetailItems([]);
-    setRemoveDetailReason('Vencido');
-    setShowDetailModal(true);
-  };
-
-  /** Retiro como merma: cuenta en estadísticas de waste */
-  const handleRemoveSelected = async () => {
-    if (selectedDetailItems.length === 0) return;
-    try {
-      const now = new Date().toISOString();
-      for (const id of selectedDetailItems) {
-        await db.showcaseItems.update(id, {
-          status: 'removed',
-          removedAt: now,
-          removeReason: removeDetailReason,
-        });
-      }
-      toast.success(`${selectedDetailItems.length} item(s) retirado(s) como merma. Motivo: ${removeDetailReason}`);
-      setSelectedDetailItems([]);
-      if (detailGroup && selectedDetailItems.length >= detailGroup.count) {
-        setShowDetailModal(false);
-        setDetailGroup(null);
-      }
+      loadData();
     } catch (err) {
       toast.error('Error: ' + err.message);
+    } finally {
+      setSliceLoading(false);
     }
   };
 
-  /**
-   * Anulación de ingreso (admin only):
-   * status 'cancelled' — NO cuenta como merma en ninguna estadística.
-   * Usar cuando se ingresó el producto equivocado.
-   */
-  const handleCancelSelected = async () => {
-    if (!isAdmin || selectedDetailItems.length === 0) return;
-    try {
-      const now = new Date().toISOString();
-      for (const id of selectedDetailItems) {
-        await db.showcaseItems.update(id, {
-          status: 'cancelled',
-          removedAt: now,
-        });
-      }
-      await logAction(
-        ACTIONS.SHOWCASE_CANCEL,
-        currentSeller.id,
-        `${selectedDetailItems.length}x ${detailGroup?.product.name} — ingreso anulado (corrección)`
-      );
-      toast.success(`${selectedDetailItems.length} ingreso(s) anulado(s). No contarán como merma.`);
-      setSelectedDetailItems([]);
-      if (detailGroup && selectedDetailItems.length >= detailGroup.count) {
-        setShowDetailModal(false);
-        setDetailGroup(null);
-      }
-    } catch (err) {
-      toast.error('Error al anular: ' + err.message);
-    }
-  };
-
-  /** Abrir modal de extensión de tiempo (admin only) */
-  const openExtendModal = (group) => {
-    setExtendTarget(group);
-    setExtendHours(2);
-    setShowExtendModal(true);
-  };
-
-  /**
-   * Extensión de tiempo (admin only):
-   * Suma extendedHours a todos los items del grupo.
-   * Cap: no puede superar la duración original del producto.
-   */
   const handleExtend = async () => {
-    if (!extendTarget || !isAdmin) return;
-    const hours = parseInt(extendHours) || 0;
-    if (hours <= 0) { toast.error('Ingrese una cantidad válida de horas'); return; }
-
-    const baseMaxH = extendTarget.product.maxShowcaseHours || 48;
-    const currentExtra = extendTarget.oldestItem.extendedHours || 0;
-    if (currentExtra + hours > baseMaxH) {
-      toast.error(`Extensión máxima permitida: +${baseMaxH - currentExtra}h más`);
-      return;
-    }
-
+    if (!extendTarget) return;
     try {
-      const newExtra = currentExtra + hours;
-      for (const item of extendTarget.items) {
-        await db.showcaseItems.update(item.id, { extendedHours: newExtra });
-      }
-      await logAction(
-        ACTIONS.SHOWCASE_EXTEND,
-        currentSeller.id,
-        `${extendTarget.product.name}: +${hours}h (máx total ${baseMaxH + newExtra}h)`
-      );
-      toast.success(`⏱ Tiempo extendido +${hours}h para ${extendTarget.product.name}. Nuevo máximo: ${baseMaxH + newExtra}h`);
-      setShowExtendModal(false);
+      // Extender el item más antiguo del grupo
+      await api.post(`/showcase/${extendTarget.oldest.id}/extend?extra_hours=${extendHours}`);
+      toast.success(`Tiempo extendido +${extendHours}h`);
       setExtendTarget(null);
-    } catch (err) {
-      toast.error('Error al extender: ' + err.message);
-    }
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
   };
 
-  // === Render ===
-
-  const MOVEMENT_CONFIG = {
-    added:     { label: 'Ingreso',          color: 'var(--color-success)',        emoji: '✅' },
-    sliced:    { label: 'Trozado',           color: 'var(--color-info)',           emoji: '✂️' },
-    sold:      { label: 'Vendido',           color: 'var(--color-primary)',        emoji: '🛒' },
-    removed:   { label: 'Retirado (merma)', color: 'var(--color-danger)',         emoji: '🗑️' },
-    cancelled: { label: 'Anulado',          color: 'var(--color-text-secondary)', emoji: '🔄' },
-  };
-
+  // ── RENDER ─────────────────────────────────────────
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <h1 className="page-title">
-          <Store size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />
-          Control de Vitrina
+          <Store size={26} style={{ verticalAlign: 'middle', marginRight: 10 }} />
+          Vitrina
         </h1>
-        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-          <Plus size={18} /> Agregar a Vitrina
+        <button className="btn btn-primary" onClick={() => { setAddProductId(''); setAddSearch(''); setAddDropOpen(false); setAddType('entero'); setAddQuantity(1); setShowAddModal(true); }}>
+          <Plus size={16} /> Agregar
         </button>
       </div>
 
-      {/* Alert: expired items */}
+      {/* Stats */}
+      <div className="vt-stats">
+        <div className="vt-stat">
+          <div className="vt-stat-value">{showcaseItems.length}</div>
+          <div className="vt-stat-label">Total en vitrina</div>
+        </div>
+        <div className="vt-stat">
+          <div className="vt-stat-value">{enteros.length}</div>
+          <div className="vt-stat-label">Enteros</div>
+        </div>
+        <div className="vt-stat">
+          <div className="vt-stat-value">{trozados.length}</div>
+          <div className="vt-stat-label">Trozos</div>
+        </div>
+        {warningCount > 0 && (
+          <div className="vt-stat vt-stat-warning">
+            <div className="vt-stat-value">{warningCount}</div>
+            <div className="vt-stat-label">Próximos a vencer</div>
+          </div>
+        )}
+        {dangerCount > 0 && (
+          <div className="vt-stat vt-stat-danger">
+            <div className="vt-stat-value">{dangerCount}</div>
+            <div className="vt-stat-label">Vencido{dangerCount > 1 ? 's' : ''}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Alert banner */}
       {dangerCount > 0 && (
-        <div className="alert-banner">
-          <AlertTriangle className="icon" size={20} />
-          <span>
-            <strong>{dangerCount} producto(s)</strong> han superado su tiempo máximo en vitrina.
-            Se recomienda retirarlos.
-          </span>
+        <div className="vt-alert">
+          <AlertTriangle size={16} />
+          <strong>{dangerCount} producto{dangerCount > 1 ? 's' : ''}</strong>
+          {dangerCount > 1 ? ' han' : ' ha'} superado el tiempo máximo de exposición. Retíralos o extiende su tiempo.
         </div>
       )}
 
-      {/* Alert: restock needed */}
-      {restockNeeded.length > 0 && (
-        <div className="alert-banner" style={{
-          background: 'var(--color-info-bg)',
-          borderColor: 'var(--color-info)',
-          color: 'var(--color-info)',
-          marginTop: dangerCount > 0 ? 'var(--space-sm)' : 0,
-        }}>
-          <RefreshCw size={20} />
-          <span>
-            <strong>Restock pendiente:</strong>{' '}
-            {restockNeeded.map(p => p.name).join(', ')} — agotados en vitrina hoy.
-          </span>
+      {/* Toolbar: tabs + búsqueda */}
+      <div className="vt-toolbar">
+        <div className="tabs" style={{ marginBottom: 0 }}>
+          <button className={`tab ${showcaseTab === 'enteros' ? 'active' : ''}`} onClick={() => setShowcaseTab('enteros')}>
+            <Layers size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+            Enteros
+            <span className="vt-tab-count">{enteros.length}</span>
+          </button>
+          <button className={`tab ${showcaseTab === 'trozados' ? 'active' : ''}`} onClick={() => setShowcaseTab('trozados')}>
+            <Package size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+            Trozados
+            <span className="vt-tab-count">{trozados.length}</span>
+          </button>
         </div>
-      )}
-
-      {/* KPI Cards */}
-      <div className="kpi-grid">
-        <div className="kpi-card">
-          <div className="kpi-icon primary"><Store size={22} /></div>
-          <div className="kpi-content">
-            <div className="kpi-value">{allShowcaseItems.length}</div>
-            <div className="kpi-label">Total en vitrina</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon primary"><Package size={22} /></div>
-          <div className="kpi-content">
-            <div className="kpi-value">{enteros.length}</div>
-            <div className="kpi-label">Enteros</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon success"><Scissors size={22} /></div>
-          <div className="kpi-content">
-            <div className="kpi-value">{trozados.length}</div>
-            <div className="kpi-label">Trozados</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon danger"><AlertTriangle size={22} /></div>
-          <div className="kpi-content">
-            <div className="kpi-value">{dangerCount}</div>
-            <div className="kpi-label">Retirar urgente</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Daily activity strip */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)',
-      }}>
-        {[
-          { value: dailyStats.soldToday,  label: 'Vendidos hoy',   color: 'var(--color-success)', bg: 'var(--color-success-bg)', Icon: ShoppingCart },
-          { value: dailyStats.mermaToday, label: 'Retirados hoy',  color: 'var(--color-danger)',  bg: 'var(--color-danger-bg)',  Icon: Trash2 },
-          { value: dailyStats.addedToday, label: 'Ingresados hoy', color: 'var(--color-primary)', bg: 'var(--color-primary-bg)', Icon: Plus },
-        ].map(({ value, label, color, bg, Icon }) => (
-          <div key={label} style={{
-            background: bg, border: `1px solid ${color}`,
-            borderRadius: 'var(--radius-md)', padding: 'var(--space-md)',
-            display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
-          }}>
-            <Icon size={20} color={color} />
-            <div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>{label}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Tabs */}
-      <div className="showcase-tabs">
-        <button
-          className={`showcase-tab ${showcaseTab === 'enteros' ? 'active' : ''}`}
-          onClick={() => setShowcaseTab('enteros')}
-        >
-          <Package size={16} /> Enteros ({enteros.length})
-        </button>
-        <button
-          className={`showcase-tab ${showcaseTab === 'trozados' ? 'active' : ''}`}
-          onClick={() => setShowcaseTab('trozados')}
-        >
-          <Scissors size={16} /> Trozados ({trozados.length})
-        </button>
-      </div>
-
-      {/* Search */}
-      <div style={{ marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 320 }}>
-          <Search size={15} style={{
-            position: 'absolute', left: 11, top: '50%',
-            transform: 'translateY(-50%)', color: 'var(--color-text-secondary)',
-          }} />
+        <div className="search-bar" style={{ flex: 1, minWidth: 180, maxWidth: 320, marginBottom: 0 }}>
+          <Search className="search-icon" size={15} />
           <input
-            type="text" className="form-input"
-            placeholder="Buscar producto en vitrina..."
-            value={vitrineSearch}
-            onChange={e => setVitrinaSearch(e.target.value)}
-            style={{ paddingLeft: 34 }}
+            type="text" placeholder="Buscar producto…"
+            value={search} onChange={e => setSearch(e.target.value)}
           />
+          {search && (
+            <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}>
+              <X size={13} />
+            </button>
+          )}
         </div>
-        {vitrineSearch && (
-          <button className="btn btn-ghost btn-sm" onClick={() => setVitrinaSearch('')}>Limpiar</button>
-        )}
-        {vitrineSearch && (
-          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
-            {filteredGroups.length} resultado(s)
-          </span>
-        )}
       </div>
 
-      {/* Showcase grid */}
-      {filteredGroups.length === 0 ? (
+      {/* Grid de cards */}
+      {filtered.length === 0 ? (
         <div className="empty-state">
-          <Store size={48} />
-          <h3>
-            {vitrineSearch
-              ? `Sin resultados para "${vitrineSearch}"`
-              : showcaseTab === 'enteros' ? 'Sin productos enteros' : 'Sin trozos en vitrina'}
+          <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--color-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 'var(--space-md)' }}>
+            <Store size={28} style={{ color: 'var(--color-text-light)' }} />
+          </div>
+          <h3 style={{ fontFamily: 'var(--font-body)', fontWeight: 600 }}>
+            {search ? 'Sin resultados' : `No hay ${showcaseTab} en vitrina`}
           </h3>
-          <p>
-            {vitrineSearch ? 'Probá con otro nombre'
-              : showcaseTab === 'enteros'
-                ? 'Agrega productos para comenzar a trackear su frescura'
-                : 'Troza un producto entero para crear porciones'}
+          <p style={{ fontSize: '0.875rem' }}>
+            {search ? 'Ningún producto coincide con la búsqueda.' : 'Agrega productos para comenzar.'}
           </p>
-          {showcaseTab === 'enteros' && !vitrineSearch && (
-            <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ marginTop: 'var(--space-md)' }}>
-              <Plus size={18} /> Agregar Producto
+          {!search && (
+            <button className="btn btn-primary" style={{ marginTop: 'var(--space-md)' }}
+              onClick={() => { setAddType(showcaseTab === 'enteros' ? 'entero' : 'trozado'); setShowAddModal(true); }}>
+              <Plus size={15} /> Agregar {showcaseTab === 'enteros' ? 'entero' : 'trozado'}
             </button>
           )}
         </div>
       ) : (
-        <div className="showcase-grid">
-          {filteredGroups.map(group => (
-            <div key={group.productId} className={`showcase-group-card freshness-${group.freshnessStatus}`}>
-              {/* Header */}
-              <div className="group-card-header">
-                {group.product?.photo ? (
-                  <img src={group.product.photo} alt={group.product.name} className="group-product-photo" />
-                ) : (
-                  <div className="group-product-emoji">
-                    {group.showcaseType === 'trozado' ? '🔪' : '🍰'}
+        <div className="vt-grid">
+          {filtered.map(group => {
+            const meta  = FRESHNESS_META[group.freshness] || FRESHNESS_META.fresh;
+            const FIcon = meta.icon;
+            const photo = group.product?.photo;
+            const emoji = group.product?.category === 'salados' ? '🥪' : group.showcase_type === 'trozado' ? '🍰' : '🎂';
+
+            return (
+              <div
+                key={group.product_id}
+                className="vt-card"
+                style={{ borderColor: meta.border, background: meta.bg }}
+              >
+                {/* Barra lateral de color */}
+                <div className="vt-card-accent" style={{ background: meta.color }} />
+
+                {/* Thumbnail */}
+                <div className="vt-card-thumb">
+                  {photo ? <img src={photo} alt={group.product?.name} /> : <span>{emoji}</span>}
+                </div>
+
+                {/* Contenido */}
+                <div className="vt-card-body">
+                  {/* Nombre + badge */}
+                  <div className="vt-card-top">
+                    <div>
+                      <div className="vt-card-name">{group.product?.name || 'Producto'}</div>
+                      <div className="vt-card-sub">
+                        <Hash size={10} style={{ verticalAlign: 'middle', marginRight: 2 }} />
+                        <strong>{group.count}</strong> {group.showcase_type === 'trozado' ? 'trozo' : 'unidad'}{group.count !== 1 ? 's' : ''}
+                        {group.product?.price && (
+                          <> · {formatCurrency(group.product.price)}</>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      className="vt-badge"
+                      style={{ background: meta.color + '18', color: meta.color, borderColor: meta.color + '40' }}
+                    >
+                      <FIcon size={11} />
+                      {meta.label}
+                    </div>
                   </div>
-                )}
-                <div className="group-info">
-                  <h3 className="group-product-name">{group.product.name}</h3>
-                  <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span className="showcase-type-badge">
-                      {group.showcaseType === 'trozado' ? '✂️ Trozado' : '🎂 Entero'}
-                    </span>
-                    {group.isExtended && (
-                      <span style={{
-                        fontSize: '0.7rem', fontWeight: 700, padding: '1px 6px',
-                        borderRadius: 4, background: 'var(--color-primary-bg)',
-                        color: 'var(--color-primary)', border: '1px solid var(--color-primary)',
-                      }}>
-                        ⏱ +{group.extendedHours}h
-                      </span>
+
+                  {/* Barra de progreso de frescura (solo si tiene control de tiempo) */}
+                  {group.freshness !== 'none' ? (
+                    <div className="vt-progress-wrap">
+                      <div className="vt-progress-bar">
+                        <div
+                          className="vt-progress-fill"
+                          style={{ width: `${group.pct}%`, background: meta.color }}
+                        />
+                      </div>
+                      <div className="vt-progress-labels">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <Clock size={10} /> {group.elapsed}
+                        </span>
+                        <span style={{ color: group.freshness === 'danger' ? meta.color : undefined }}>
+                          {group.pct >= 100 ? '¡Vencido!' : group.remaining}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-light)', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                      <Clock size={10} /> En vitrina desde {group.elapsed}
+                    </div>
+                  )}
+
+                  {/* Acciones */}
+                  <div className="vt-card-actions">
+                    {isAdmin && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => { setExtendTarget(group); setExtendHours(2); }}
+                        title="Extender tiempo de exposición"
+                      >
+                        <Timer size={12} /> +Tiempo
+                      </button>
                     )}
+                    {group.showcase_type === 'entero' && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => {
+                        setSliceTarget(group);
+                        setSliceQty(group.product?.slices ?? 8);
+                        setSlicePrice(group.product?.slice_price ?? 3000);
+                      }}
+                        title="Trozar pastel"
+                      >
+                        <Scissors size={12} /> Trozar
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-danger btn-sm"
+                      style={{ fontSize: '0.78rem' }}
+                      onClick={() => setRemoveTarget(group)}
+                      title="Retirar de vitrina"
+                    >
+                      <Trash2 size={12} /> Retirar
+                    </button>
                   </div>
                 </div>
-                <span className={`semaphore semaphore-${group.freshnessStatus}`}></span>
               </div>
-
-              {/* Quantity */}
-              <div className="quantity-display">
-                <div className="quantity-number">{group.count}</div>
-                <div className="quantity-label">
-                  {group.showcaseType === 'trozado' ? 'trozos disponibles' : 'unidades en vitrina'}
-                </div>
-              </div>
-
-              {/* Freshness + time remaining */}
-              <div className={`freshness-indicator freshness-${group.freshnessStatus}`}>
-                <span className="freshness-icon">
-                  {group.freshnessStatus === 'fresh' && '🟢'}
-                  {group.freshnessStatus === 'warning' && '🟡'}
-                  {group.freshnessStatus === 'danger' && '🔴'}
-                </span>
-                <span className="freshness-text">
-                  {group.freshnessStatus === 'fresh' && 'Fresco'}
-                  {group.freshnessStatus === 'warning' && 'Próximo a vencer'}
-                  {group.freshnessStatus === 'danger' && 'RETIRAR'}
-                </span>
-                <span className="freshness-time" style={{ fontWeight: 600 }}>
-                  {group.timeRemaining}
-                </span>
-              </div>
-
-              {/* Progress bar */}
-              <div style={{ background: 'rgba(0,0,0,0.08)', borderRadius: 4, height: 5, margin: '6px 0 4px' }}>
-                <div style={{
-                  width: `${group.freshnessPct}%`, height: '100%', borderRadius: 4,
-                  background: group.freshnessStatus === 'fresh' ? 'var(--color-success)'
-                    : group.freshnessStatus === 'warning' ? 'var(--color-warning)'
-                    : 'var(--color-danger)',
-                  transition: 'width 0.5s ease',
-                }} />
-              </div>
-
-              {/* Actions */}
-              <div className="group-card-actions">
-                <button className="btn btn-secondary btn-sm" onClick={() => openDetailModal(group)}>
-                  <Eye size={14} /> Detalle ({group.count})
-                </button>
-                {group.showcaseType !== 'trozado' && (
-                  <button className="btn btn-secondary btn-sm" onClick={() => openSliceModal(group)}>
-                    <Scissors size={14} /> Trozar
-                  </button>
-                )}
-                {isAdmin && (
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => openExtendModal(group)}
-                    title="Extender tiempo máximo en vitrina (solo admin)"
-                    disabled={group.extendedHours >= group.baseMaxH}
-                  >
-                    <Clock size={14} /> Extender
-                  </button>
-                )}
-                <button className="btn btn-danger btn-sm" onClick={() => openRemoveModal(group)}>
-                  <Trash2 size={14} /> Retirar
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Daily movements history */}
-      <div style={{ marginTop: 'var(--space-xl)' }}>
-        <button
-          className="btn btn-ghost"
-          style={{
-            width: '100%', justifyContent: 'space-between',
-            borderBottom: '1px solid var(--color-border)', borderRadius: 0, paddingLeft: 0,
-          }}
-          onClick={() => setShowHistory(h => !h)}
-        >
-          <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>
-            <Clock size={15} style={{ verticalAlign: 'middle', marginRight: 6 }} />
-            Historial del día ({todayMovementsLog.length} movimiento{todayMovementsLog.length !== 1 ? 's' : ''})
-          </span>
-          {showHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
+      {/* ── MODAL: AGREGAR ──────────────────────────── */}
+      {showAddModal && (
+        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 'var(--radius-md)', background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Store size={16} style={{ color: 'var(--color-primary)' }} />
+                </div>
+                <h2 style={{ fontSize: '1rem' }}>Agregar a Vitrina</h2>
+              </div>
+              <button className="modal-close" onClick={() => setShowAddModal(false)}><X size={18} /></button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+              {/* Producto — buscador */}
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Producto</label>
+                <div style={{ position: 'relative' }}>
+                  {/* Input de búsqueda */}
+                  <div style={{ position: 'relative' }}>
+                    <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-light)', pointerEvents: 'none' }} />
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ paddingLeft: 34, paddingRight: addProductId ? 34 : undefined }}
+                      placeholder="Buscar producto…"
+                      value={addSearch}
+                      autoFocus
+                      onChange={e => { setAddSearch(e.target.value); setAddProductId(''); setAddDropOpen(true); }}
+                      onFocus={() => setAddDropOpen(true)}
+                      onBlur={() => setTimeout(() => setAddDropOpen(false), 150)}
+                    />
+                    {addProductId && (
+                      <button
+                        onClick={() => { setAddSearch(''); setAddProductId(''); setAddDropOpen(true); }}
+                        style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}
+                      ><X size={14} /></button>
+                    )}
+                  </div>
 
-        {showHistory && (
-          <div style={{
-            marginTop: 'var(--space-sm)',
-            background: 'var(--color-bg-card)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--color-border)',
-            overflow: 'hidden',
-          }}>
-            {todayMovementsLog.length === 0 ? (
-              <p style={{ padding: 'var(--space-lg)', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-                Sin movimientos registrados hoy
-              </p>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead>
-                  <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-                    {['Hora', 'Producto', 'Movimiento', 'Cant.', 'Motivo'].map(h => (
-                      <th key={h} style={{
-                        padding: '10px 14px', textAlign: h === 'Cant.' ? 'center' : 'left',
-                        color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.8rem',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {todayMovementsLog.map((entry, i) => {
-                    const cfg = MOVEMENT_CONFIG[entry.type] || MOVEMENT_CONFIG.added;
-                    return (
-                      <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                        <td style={{ padding: '8px 14px', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-                          {format(new Date(entry.time), 'HH:mm')}
-                        </td>
-                        <td style={{ padding: '8px 14px', fontWeight: 500 }}>
-                          {productMap[entry.productId]?.name || `ID ${entry.productId}`}
-                        </td>
-                        <td style={{ padding: '8px 14px' }}>
-                          <span style={{ color: cfg.color, fontWeight: 500 }}>
-                            {cfg.emoji} {cfg.label}
-                          </span>
-                        </td>
-                        <td style={{ padding: '8px 14px', textAlign: 'center', fontWeight: 700 }}>{entry.count}</td>
-                        <td style={{ padding: '8px 14px', color: 'var(--color-text-secondary)', fontSize: '0.8rem' }}>
-                          {entry.reason || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+                  {/* Dropdown */}
+                  {addDropOpen && (
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 200,
+                      background: 'var(--color-bg-card)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-md)',
+                      boxShadow: 'var(--shadow-md)',
+                      maxHeight: 240, overflowY: 'auto',
+                    }}>
+                      {addFiltered.length === 0 ? (
+                        <div style={{ padding: '14px 16px', fontSize: '0.85rem', color: 'var(--color-text-light)', textAlign: 'center' }}>
+                          Sin resultados
+                        </div>
+                      ) : addFiltered.map((p, idx) => (
+                        <button
+                          key={p.id}
+                          onMouseDown={() => selectProduct(p)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            width: '100%', padding: '9px 14px',
+                            background: addProductId === String(p.id) ? 'var(--color-primary-bg)' : 'transparent',
+                            border: 'none',
+                            borderBottom: idx < addFiltered.length - 1 ? '1px solid var(--color-border)' : 'none',
+                            cursor: 'pointer', textAlign: 'left',
+                          }}
+                        >
+                          {p.photo
+                            ? <img src={p.photo} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
+                            : <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0 }}>
+                                {p.category === 'vitrina' ? '🍰' : '🥪'}
+                              </div>
+                          }
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>{p.category}</div>
+                          </div>
+                          <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-primary)', flexShrink: 0 }}>
+                            {formatCurrency(p.price)}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Producto seleccionado */}
+                {selectedProduct && (
+                  <div style={{
+                    marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)',
+                    background: 'var(--color-primary-bg)', border: '1px solid var(--color-primary-light)',
+                    display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.85rem',
+                  }}>
+                    <CheckCircle2 size={15} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{selectedProduct.name}</span>
+                    <span style={{ color: 'var(--color-text-secondary)', marginLeft: 'auto' }}>{formatCurrency(selectedProduct.price)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Tipo */}
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Tipo</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
+                  {[['entero', '🎂 Entero'], ['trozado', '🍰 Trozado']].map(([val, lbl]) => (
+                    <button key={val}
+                      className={`btn ${addType === val ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setAddType(val)}
+                      style={{ justifyContent: 'center' }}
+                    >{lbl}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Cantidad */}
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Cantidad a agregar</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setAddQuantity(q => Math.max(1, q - 1))}>−</button>
+                  <span style={{ minWidth: 40, textAlign: 'center', fontWeight: 700, fontSize: '1.1rem' }}>{addQuantity}</span>
+                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setAddQuantity(q => Math.min(20, q + 1))}>+</button>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginLeft: 4 }}>
+                    {addType === 'entero' ? 'entero' : 'trozo'}{addQuantity > 1 ? 's' : ''}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleAdd} disabled={!addProductId || addLoading}>
+                {addLoading ? 'Agregando…' : `Agregar ${addQuantity > 1 ? addQuantity + ' ' : ''}${addType}${addQuantity > 1 ? 's' : ''}`}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Modals */}
-      <AddModal
-        show={showAddModal}
-        filteredAvailable={filteredAvailable}
-        searchProduct={searchProduct}
-        onSearchChange={setSearchProduct}
-        onAdd={addToShowcase}
-        onClose={() => { setShowAddModal(false); setSearchProduct(''); }}
-      />
+      {/* ── MODAL: RETIRAR ──────────────────────────── */}
+      {removeTarget && (
+        <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 'var(--radius-md)', background: 'var(--color-danger-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Trash2 size={16} style={{ color: 'var(--color-danger)' }} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1rem' }}>Retirar de Vitrina</h2>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>
+                    {removeTarget.product?.name} · {removeTarget.count} {removeTarget.showcase_type}{removeTarget.count > 1 ? 's' : ''} en vitrina
+                  </div>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setRemoveTarget(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+                ¿Cuántos ítems deseas retirar?
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => handleRemoveOne(removeTarget)}
+                  style={{ flexDirection: 'column', height: 'auto', padding: 'var(--space-md)', gap: 4 }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: '1.3rem' }}>1</span>
+                  <span style={{ fontSize: '0.78rem' }}>Solo el más antiguo</span>
+                  {removeTarget.count > 1 && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--color-text-light)' }}>Quedan {removeTarget.count - 1}</span>
+                  )}
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => handleRemoveAll(removeTarget)}
+                  style={{ flexDirection: 'column', height: 'auto', padding: 'var(--space-md)', gap: 4 }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: '1.3rem' }}>{removeTarget.count}</span>
+                  <span style={{ fontSize: '0.78rem' }}>Todos</span>
+                  <span style={{ fontSize: '0.72rem', opacity: 0.8 }}>Vaciar vitrina</span>
+                </button>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={() => setRemoveTarget(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <SliceModal
-        show={showSliceModal}
-        sliceTarget={sliceTarget}
-        sliceCount={sliceCount}
-        slicePrice={slicePrice}
-        onSliceCountChange={setSliceCount}
-        onSlicePriceChange={setSlicePrice}
-        onSlice={handleSlice}
-        onClose={() => setShowSliceModal(false)}
-      />
+      {/* ── MODAL: TROZAR ──────────────────────────── */}
+      {sliceTarget && (
+        <div className="modal-overlay" onClick={() => setSliceTarget(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 'var(--radius-md)', background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Scissors size={16} style={{ color: 'var(--color-primary)' }} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1rem' }}>Trozar Pastel</h2>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>
+                    {sliceTarget.product?.name}
+                  </div>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setSliceTarget(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+              <div style={{
+                background: 'var(--color-bg)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-md)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-md)',
+                fontSize: '0.875rem',
+              }}>
+                <span style={{ fontSize: '1.8rem' }}>🎂</span>
+                <span style={{ color: 'var(--color-text-secondary)' }}>→</span>
+                <span style={{ fontSize: '1.4rem' }}>🍰</span>
+                <span style={{ fontWeight: 600 }}>× {sliceQty} trozos</span>
+              </div>
 
-      <DetailModal
-        show={showDetailModal}
-        detailGroup={detailGroup}
-        selectedItems={selectedDetailItems}
-        removeDetailReason={removeDetailReason}
-        onDetailReasonChange={setRemoveDetailReason}
-        isAdmin={isAdmin}
-        onToggleAll={checked => {
-          if (checked) setSelectedDetailItems(detailGroup.items.map(i => i.id));
-          else setSelectedDetailItems([]);
-        }}
-        onToggleItem={(id, checked) => {
-          if (checked) setSelectedDetailItems(prev => [...prev, id]);
-          else setSelectedDetailItems(prev => prev.filter(x => x !== id));
-        }}
-        onRemoveSelected={handleRemoveSelected}
-        onCancelSelected={handleCancelSelected}
-        onClose={() => { setShowDetailModal(false); setDetailGroup(null); }}
-      />
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Cantidad de trozos</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginTop: 4 }}>
+                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setSliceQty(q => Math.max(1, q - 1))}>−</button>
+                  <span style={{ minWidth: 40, textAlign: 'center', fontWeight: 700, fontSize: '1.2rem' }}>{sliceQty}</span>
+                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setSliceQty(q => Math.min(30, q + 1))}>+</button>
+                </div>
+                {(sliceTarget.product?.slices ?? 8) !== sliceQty && (
+                  <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-text-light)' }}>
+                    Predeterminado: {sliceTarget.product?.slices ?? 8} trozos
+                    <button
+                      onClick={() => setSliceQty(sliceTarget.product?.slices ?? 8)}
+                      style={{ marginLeft: 6, padding: '1px 8px', border: '1px solid var(--color-border)', borderRadius: 99, background: 'transparent', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}
+                    >
+                      Restaurar
+                    </button>
+                  </div>
+                )}
+              </div>
 
-      <RemoveModal
-        show={showRemoveModal}
-        removeGroup={removeGroup}
-        removeQty={removeQty}
-        removeReason={removeReason}
-        onQtyChange={setRemoveQty}
-        onReasonChange={setRemoveReason}
-        onRemove={handleBatchRemove}
-        onClose={() => setShowRemoveModal(false)}
-      />
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Precio por trozo</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginTop: 4 }}>
+                  <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>$</span>
+                  <input
+                    type="number"
+                    className="form-input"
+                    style={{ maxWidth: 140 }}
+                    value={slicePrice}
+                    onChange={e => setSlicePrice(e.target.value)}
+                    min={1}
+                    step={100}
+                  />
+                </div>
+                {sliceTarget.product?.slice_price && sliceTarget.product.slice_price !== parseFloat(slicePrice) && (
+                  <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-text-light)' }}>
+                    Precio guardado: {formatCurrency(sliceTarget.product.slice_price)}
+                    <button
+                      onClick={() => setSlicePrice(sliceTarget.product.slice_price)}
+                      style={{ marginLeft: 6, padding: '1px 8px', border: '1px solid var(--color-border)', borderRadius: 99, background: 'transparent', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}
+                    >
+                      Restaurar
+                    </button>
+                  </div>
+                )}
+                <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-text-light)' }}>
+                  Se guardará como precio predeterminado para trozos de este producto.
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setSliceTarget(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleSlice} disabled={sliceLoading}>
+                <Scissors size={14} /> {sliceLoading ? 'Trozando…' : `Trozar en ${sliceQty}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <ExtendModal
-        show={showExtendModal}
-        extendTarget={extendTarget}
-        extendHours={extendHours}
-        onExtendHoursChange={setExtendHours}
-        onExtend={handleExtend}
-        onClose={() => setShowExtendModal(false)}
-      />
+      {/* ── MODAL: EXTENDER TIEMPO ──────────────────── */}
+      {extendTarget && (
+        <div className="modal-overlay" onClick={() => setExtendTarget(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 'var(--radius-md)', background: 'var(--color-warning-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Timer size={16} style={{ color: 'var(--color-warning)' }} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1rem' }}>Extender Tiempo</h2>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>
+                    {extendTarget.product?.name} · lleva {extendTarget.elapsed}
+                  </div>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setExtendTarget(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Horas adicionales de exposición</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginTop: 4 }}>
+                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setExtendHours(h => Math.max(1, h - 1))}>−</button>
+                  <span style={{ minWidth: 40, textAlign: 'center', fontWeight: 700, fontSize: '1.2rem' }}>{extendHours}</span>
+                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setExtendHours(h => Math.min(48, h + 1))}>+</button>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>hora{extendHours > 1 ? 's' : ''}</span>
+                </div>
+                <div style={{ marginTop: 'var(--space-sm)', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                  Atajos:
+                  {[1, 2, 4, 8].map(h => (
+                    <button key={h} onClick={() => setExtendHours(h)}
+                      style={{ marginLeft: 6, padding: '2px 10px', border: `1px solid var(--color-border)`, borderRadius: 99, background: extendHours === h ? 'var(--color-primary)' : 'transparent', color: extendHours === h ? '#fff' : 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}>
+                      {h}h
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setExtendTarget(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleExtend}>
+                <Timer size={14} /> Extender +{extendHours}h
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

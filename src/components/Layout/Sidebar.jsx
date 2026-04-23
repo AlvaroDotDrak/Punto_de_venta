@@ -5,12 +5,13 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import db from '../../db';
 import { useSeller } from '../../context/SellerContext';
-import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat } from 'lucide-react';
+import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat, Thermometer } from 'lucide-react';
 
 const navItems = [
   { section: 'Principal' },
   { path: '/', label: 'Punto de Venta', icon: ShoppingCart },
   { path: '/vitrina', label: 'Vitrina', icon: Store, badgeKey: 'vitrinaAlerts' },
+  { path: '/visicooler', label: 'Visicooler', icon: Thermometer },
   { path: '/caja', label: 'Control de Caja', icon: DollarSign },
   { section: 'Gestión' },
   { path: '/pedidos', label: 'Pedidos', icon: ClipboardList, badgeKey: 'pendingOrders' },
