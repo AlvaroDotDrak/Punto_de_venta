@@ -25,7 +25,9 @@ echo "Presiona Ctrl+C para detener"
 
 # Abrir browser automáticamente (si hay interfaz gráfica)
 if command -v xdg-open &> /dev/null; then
-    sleep 1.5 && xdg-open http://localhost:8000 &
+    (sleep 2 && xdg-open http://localhost:8000) &
+elif command -v gnome-open &> /dev/null; then
+    (sleep 2 && gnome-open http://localhost:8000) &
 fi
 
 uvicorn backend.main:app --host 0.0.0.0 --port 8000
