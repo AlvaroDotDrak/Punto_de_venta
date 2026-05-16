@@ -1,14 +1,28 @@
 /**
- * SellerSelect — Login screen with PIN authentication via API
- * Features: PIN input, 3-attempt lockout (en memoria)
+ * SellerSelect — Login screen with PIN authentication via API.
+ * Lockout state is persisted in localStorage to survive page refreshes.
  */
 import { useEffect, useState } from 'react';
 import { useSeller } from '../context/SellerContext';
 import api from '../utils/api';
-import { User, Lock, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { Lock, AlertTriangle, ArrowLeft } from 'lucide-react';
 
 const MAX_ATTEMPTS = 3;
-const LOCKOUT_DURATION = 5 * 60 * 1000;
+const LOCKOUT_KEY = 'pdv_lockouts'; // { sellerId: lockedUntilTimestamp }
+
+function loadStoredLockouts() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LOCKOUT_KEY) || '{}');
+    const now = Date.now();
+    const active = {};
+    for (const [id, until] of Object.entries(stored)) {
+      if (until > now) active[Number(id)] = until;
+    }
+    return active;
+  } catch {
+    return {};
+  }
+}
 
 export default function SellerSelect() {
   const [sellers, setSellers] = useState([]);
@@ -17,9 +31,21 @@ export default function SellerSelect() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [attempts, setAttempts] = useState({});
-  const [lockouts, setLockouts] = useState({});
+  const [lockouts, setLockouts] = useState(loadStoredLockouts);
   const [verifying, setVerifying] = useState(false);
+  const [, setTick] = useState(0);
   const { selectSeller } = useSeller();
+
+  // Tick cada segundo para actualizar el countdown en tiempo real
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Persistir lockouts en localStorage cada vez que cambian
+  useEffect(() => {
+    localStorage.setItem(LOCKOUT_KEY, JSON.stringify(lockouts));
+  }, [lockouts]);
 
   const loadSellers = () => {
     setLoadError(false);
@@ -31,18 +57,14 @@ export default function SellerSelect() {
   useEffect(() => { loadSellers(); }, []);
 
   const isLocked = (sellerId) => {
-    const lockTime = lockouts[sellerId];
-    if (!lockTime) return false;
-    if (Date.now() - lockTime < LOCKOUT_DURATION) return true;
-    setLockouts(prev => { const n = { ...prev }; delete n[sellerId]; return n; });
-    setAttempts(prev => { const n = { ...prev }; delete n[sellerId]; return n; });
-    return false;
+    const until = lockouts[sellerId];
+    return !!until && until > Date.now();
   };
 
   const getRemainingLockout = (sellerId) => {
-    const lockTime = lockouts[sellerId];
-    if (!lockTime) return 0;
-    return Math.max(0, Math.ceil((LOCKOUT_DURATION - (Date.now() - lockTime)) / 1000));
+    const until = lockouts[sellerId];
+    if (!until) return 0;
+    return Math.max(0, Math.ceil((until - Date.now()) / 1000));
   };
 
   const handleSellerClick = (seller) => {
@@ -65,22 +87,31 @@ export default function SellerSelect() {
         pin,
       });
       setAttempts(prev => { const n = { ...prev }; delete n[selectedSeller.id]; return n; });
+      setLockouts(prev => { const n = { ...prev }; delete n[selectedSeller.id]; return n; });
       selectSeller(seller, access_token);
-    } catch {
-      const newAttempts = (attempts[selectedSeller.id] || 0) + 1;
-      setAttempts(prev => ({ ...prev, [selectedSeller.id]: newAttempts }));
-
-      if (newAttempts >= MAX_ATTEMPTS) {
-        setLockouts(prev => ({ ...prev, [selectedSeller.id]: Date.now() }));
-        setError('🔒 Cuenta bloqueada por 5 minutos');
+    } catch (err) {
+      if (err.status === 429) {
+        const remaining = err.data?.detail?.remaining_seconds ?? 300;
+        const until = Date.now() + remaining * 1000;
+        setLockouts(prev => ({ ...prev, [selectedSeller.id]: until }));
+        setAttempts(prev => { const n = { ...prev }; delete n[selectedSeller.id]; return n; });
         setSelectedSeller(null);
+        setError('');
       } else {
+        const newAttempts = (attempts[selectedSeller.id] || 0) + 1;
+        setAttempts(prev => ({ ...prev, [selectedSeller.id]: newAttempts }));
         setError(`PIN incorrecto (intento ${newAttempts}/${MAX_ATTEMPTS})`);
       }
       setPin('');
     } finally {
       setVerifying(false);
     }
+  };
+
+  const formatCountdown = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   if (selectedSeller) {
@@ -175,7 +206,7 @@ export default function SellerSelect() {
       <div className="seller-grid">
         {sellers.map(seller => {
           const locked = isLocked(seller.id);
-          const remaining = getRemainingLockout(seller.id);
+          const remaining = locked ? getRemainingLockout(seller.id) : 0;
           return (
             <button key={seller.id}
               className={`seller-btn ${locked ? 'locked' : ''}`}
@@ -185,12 +216,11 @@ export default function SellerSelect() {
                 {locked ? <Lock size={24} /> : seller.name.charAt(0).toUpperCase()}
               </div>
               <span className="seller-name">{seller.name}</span>
-              {locked && (
+              {locked ? (
                 <span className="lockout-notice">
-                  Bloqueado ({Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, '0')})
+                  Bloqueado — {formatCountdown(remaining)}
                 </span>
-              )}
-              {!locked && (
+              ) : (
                 <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>
                   🔒 PIN requerido
                 </span>

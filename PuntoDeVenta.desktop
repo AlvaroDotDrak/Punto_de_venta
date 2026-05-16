@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Punto de Venta
+Comment=Sistema POS Pasteleria
+Exec=bash -c "cd RUTA_DEL_PROYECTO && bash inicio.sh"
+Icon=RUTA_DEL_PROYECTO/src/assets/icon.png
+Terminal=true
+Categories=Office;

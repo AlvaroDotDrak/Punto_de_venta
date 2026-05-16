@@ -20,6 +20,9 @@ import Configuracion from './pages/Configuracion';
 import HistorialVentas from './pages/HistorialVentas';
 import Vendedores from './pages/Vendedores';
 import SellerSelect from './pages/SellerSelect';
+import Gastos from './pages/Gastos';
+import Contabilidad from './pages/Contabilidad';
+import Facturas from './pages/Facturas';
 
 // Layout
 import Sidebar from './components/Layout/Sidebar';
@@ -78,6 +81,10 @@ export default function App() {
             <Route path="/visicooler" element={<Visicooler />} />
             <Route path="/pedidos" element={<Pedidos />} />
             <Route path="/caja" element={<Caja />} />
+
+            <Route path="/gastos" element={<Gastos />} />
+            <Route path="/contabilidad" element={<AdminRoute><Contabilidad /></AdminRoute>} />
+            <Route path="/facturas" element={<AdminRoute><Facturas /></AdminRoute>} />
 
             <Route path="/productos" element={<AdminRoute><Productos /></AdminRoute>} />
             <Route path="/insumos" element={<AdminRoute><Insumos /></AdminRoute>} />

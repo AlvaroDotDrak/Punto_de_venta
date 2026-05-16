@@ -19,6 +19,11 @@ __pycache__/
 *.pyo
 pasteleria.db
 
+# Secrets — nunca commitear el .env real
+.env
+.env.local
+.env.*.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -6,7 +6,8 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2 } from 'lucide-react';
+import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2, BarChart2 } from 'lucide-react';
+import ProductStatsModal from '../components/ProductStatsModal';
 
 const categories = [
   { value: 'vitrina', label: 'Vitrina 🍰' },
@@ -52,6 +53,7 @@ export default function Productos() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [statsProduct, setStatsProduct] = useState(null);
 
   const loadProducts = async () => {
     const data = await api.get('/products?active_only=false').catch(() => []);
@@ -171,6 +173,7 @@ export default function Productos() {
               )}
             </div>
             <div className="product-card-actions">
+              <button className="btn btn-ghost btn-sm" title="Estadísticas" onClick={() => setStatsProduct(p)}><BarChart2 size={14} /></button>
               <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
               {p.active && (
                 <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p)}>
@@ -181,6 +184,10 @@ export default function Productos() {
           </div>
         ))}
       </div>
+
+      {statsProduct && (
+        <ProductStatsModal product={statsProduct} onClose={() => setStatsProduct(null)} />
+      )}
 
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>

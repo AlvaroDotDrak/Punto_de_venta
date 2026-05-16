@@ -30,8 +30,21 @@ async function request(method, path, body = undefined) {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    const message = data?.detail || `Error ${res.status}`;
-    throw new Error(Array.isArray(message) ? message.map(e => e.msg).join(', ') : message);
+    const detail = data?.detail;
+    let message;
+    if (typeof detail === 'string') {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      message = detail.map(e => e.msg).join(', ');
+    } else if (detail && typeof detail === 'object') {
+      message = detail.message || `Error ${res.status}`;
+    } else {
+      message = `Error ${res.status}`;
+    }
+    const err = new Error(message);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
 
   return data;

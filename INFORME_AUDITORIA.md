@@ -1,5 +1,13 @@
 # INFORME DE AUDITORÍA TÉCNICA
 
+> **⚠️ DOCUMENTO HISTÓRICO — versión 1.0.0 (febrero 2026)**
+>
+> Este informe describe la arquitectura **original** del sistema, que usaba React + Dexie.js (IndexedDB) sin servidor.
+> El sistema fue migrado a **FastAPI + SQLite** (v2.0.0). La información de stack, módulos y estructura de datos
+> ya **no refleja el estado actual** del código. Consultar `CLAUDE.md` y `README.md` para documentación vigente.
+
+---
+
 ## Sistema de Punto de Venta — Pastelería Familiar
 
 **Fecha del informe:** 15 de febrero de 2026  

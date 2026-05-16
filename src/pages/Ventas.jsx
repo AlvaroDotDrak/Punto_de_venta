@@ -29,6 +29,7 @@ export default function Ventas() {
   const [showPayment, setShowPayment] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
   const [cashReceived, setCashReceived] = useState('');
+  const [hasReceipt, setHasReceipt] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
@@ -130,6 +131,7 @@ export default function Ventas() {
       const sale = await api.post('/sales', {
         total: cartTotal,
         payment_method: paymentMethod,
+        has_receipt: paymentMethod === 'tarjeta' ? true : hasReceipt,
         items: cart.map(i => ({
           product_id: i.product_id,
           product_name: i.product_name,
@@ -155,6 +157,7 @@ export default function Ventas() {
       setShowPayment(false);
       setCashReceived('');
       setPaymentMethod('efectivo');
+      setHasReceipt(false);
       setShowReceipt(true);
       toast.success(`Venta #${sale.id} completada — ${formatCurrency(cartTotal)}`);
       loadData(); // refrescar stock
@@ -327,9 +330,11 @@ export default function Ventas() {
           paymentMethod={paymentMethod}
           cashReceived={cashReceived}
           change={change}
+          hasReceipt={hasReceipt}
           processing={processingPayment}
           onMethodChange={setPaymentMethod}
           onCashChange={setCashReceived}
+          onReceiptChange={setHasReceipt}
           onConfirm={completeSale}
           onClose={() => setShowPayment(false)}
         />

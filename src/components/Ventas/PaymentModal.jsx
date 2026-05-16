@@ -12,13 +12,17 @@ export default function PaymentModal({
   paymentMethod,
   cashReceived,
   change,
+  hasReceipt,
   processing,
   onMethodChange,
   onCashChange,
+  onReceiptChange,
   onConfirm,
   onClose,
 }) {
   const cashOk = paymentMethod !== 'efectivo' || (cashReceived && parseInt(cashReceived) >= total);
+  // Tarjeta siempre emite boleta (Mercado Pago)
+  const receiptForced = paymentMethod === 'tarjeta';
 
   return (
     <div className="modal-overlay" onClick={() => !processing && onClose()}>
@@ -57,6 +61,26 @@ export default function PaymentModal({
                 {label}
               </button>
             ))}
+          </div>
+
+          {/* Boleta */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'var(--space-md)' }}>
+            <input
+              id="has-receipt"
+              type="checkbox"
+              checked={receiptForced || hasReceipt}
+              onChange={e => !receiptForced && onReceiptChange(e.target.checked)}
+              disabled={receiptForced}
+              style={{ width: 16, height: 16, cursor: receiptForced ? 'default' : 'pointer' }}
+            />
+            <label htmlFor="has-receipt" style={{ fontSize: '0.875rem', cursor: receiptForced ? 'default' : 'pointer', userSelect: 'none' }}>
+              Emitir boleta
+              {receiptForced && (
+                <span style={{ marginLeft: 6, fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+                  (automático — tarjeta Mercado Pago)
+                </span>
+              )}
+            </label>
           </div>
 
           {/* Efectivo: monto recibido y vuelto */}

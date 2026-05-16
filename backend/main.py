@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # Cargar .env antes de importar cualquier módulo del backend
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -5,66 +8,55 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from .database import Base, SessionLocal, engine
 from .seed import seed_database
 from .backup import check_and_run_backup
 from .routers import auth, sellers, products, sales, showcase, cash, orders, ingredients, audit, config
+from .routers import expenses, invoices, accounting
+
+
+def _add_column_if_missing(conn, sql: str) -> None:
+    """Ejecuta un ALTER TABLE ADD COLUMN ignorando solo el error de columna duplicada."""
+    try:
+        conn.execute(text(sql))
+        conn.commit()
+    except OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            pass  # columna ya existe — esperado en DBs existentes
+        else:
+            raise  # cualquier otro error es crítico (tabla no existe, SQL inválido, etc.)
 
 
 def _run_migrations():
     """Migraciones manuales para columnas nuevas en tablas existentes."""
     with engine.connect() as conn:
-        # v2.1: columna stock en products (bebidas/café)
-        try:
-            conn.execute(__import__("sqlalchemy").text(
-                "ALTER TABLE products ADD COLUMN stock INTEGER"
-            ))
-            conn.commit()
-        except Exception:
-            pass  # ya existe
-
+        # v2.1: stock físico para bebidas
+        _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN stock INTEGER")
         # v2.2: umbral de alerta semáforo para visicooler
-        try:
-            conn.execute(__import__("sqlalchemy").text(
-                "ALTER TABLE products ADD COLUMN min_stock_cooler INTEGER"
-            ))
-            conn.commit()
-        except Exception:
-            pass  # ya existe
-
+        _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN min_stock_cooler INTEGER")
         # v2.3: precio por trozo configurable
-        try:
-            conn.execute(__import__("sqlalchemy").text(
-                "ALTER TABLE products ADD COLUMN slice_price REAL"
-            ))
-            conn.commit()
-        except Exception:
-            pass  # ya existe
-
-        # v2.4: notas al cerrar caja + método de pago en movimientos manuales
-        try:
-            conn.execute(__import__("sqlalchemy").text(
-                "ALTER TABLE cash_register ADD COLUMN notes TEXT"
-            ))
-            conn.commit()
-        except Exception:
-            pass
-        try:
-            conn.execute(__import__("sqlalchemy").text(
-                "ALTER TABLE cash_movements ADD COLUMN seller_id INTEGER"
-            ))
-            conn.commit()
-        except Exception:
-            pass
+        _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN slice_price REAL")
+        # v2.4: notas al cerrar caja + vendedor en movimientos manuales
+        _add_column_if_missing(conn, "ALTER TABLE cash_register ADD COLUMN notes TEXT")
+        _add_column_if_missing(conn, "ALTER TABLE cash_movements ADD COLUMN seller_id INTEGER")
+        # v2.5: campo has_receipt en sales (módulo contabilidad)
+        _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN has_receipt BOOLEAN DEFAULT 0")
+        # v2.6: bloqueo de PIN persistido en DB (sobrevive reinicios del servidor)
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN locked_until DATETIME")
+        # v2.7: tipo de documento en gastos (necesario para crédito fiscal IVA)
+        _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN document_type TEXT DEFAULT 'boleta'")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Crear tablas si no existen
+    # Crear tablas si no existen (incluye las nuevas: expense_categories, expenses, invoices)
     Base.metadata.create_all(bind=engine)
 
-    # Migraciones incrementales
+    # Migraciones incrementales para columnas nuevas en tablas existentes
     _run_migrations()
 
     # Seed y backup automático al iniciar
@@ -105,6 +97,9 @@ app.include_router(orders.router, prefix="/api")
 app.include_router(ingredients.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
+app.include_router(expenses.router, prefix="/api")
+app.include_router(invoices.router, prefix="/api")
+app.include_router(accounting.router, prefix="/api")
 
 
 @app.get("/api/health")
@@ -115,7 +110,6 @@ def health():
 # Servir el frontend React — debe ir AL FINAL para no capturar rutas /api
 dist_path = Path(__file__).parent.parent / "dist"
 if dist_path.exists():
-    # Archivos estáticos con nombre explícito (JS, CSS, iconos, sw.js, etc.)
     app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
 
     @app.get("/{full_path:path}")

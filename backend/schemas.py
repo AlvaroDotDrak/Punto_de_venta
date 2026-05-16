@@ -119,6 +119,7 @@ class SaleCreate(BaseModel):
     total: float
     payment_method: str
     order_id: Optional[int] = None
+    has_receipt: Optional[bool] = False
     items: list[SaleItemIn]
 
 class SaleItemOut(BaseModel):
@@ -141,6 +142,7 @@ class SaleOut(BaseModel):
     status: str
     voided_at: Optional[datetime]
     void_reason: Optional[str]
+    has_receipt: bool = False
     created_at: datetime
     items: list[SaleItemOut] = []
     seller: Optional[SellerOut] = None
@@ -296,6 +298,119 @@ class IngredientMovementOut(BaseModel):
     seller: Optional[SellerOut] = None
 
     model_config = {"from_attributes": True}
+
+
+# ── Expense Categories ────────────────────────────────────────────────────────
+
+class ExpenseCategoryCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class ExpenseCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    active: Optional[bool] = None
+
+class ExpenseCategoryOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Expenses ──────────────────────────────────────────────────────────────────
+
+class ExpenseCreate(BaseModel):
+    category_id: int
+    amount: float
+    description: Optional[str] = None
+    receipt_photo: Optional[str] = None  # base64
+    document_type: str = 'boleta'        # 'boleta' | 'factura'
+
+class ExpenseUpdate(BaseModel):
+    category_id: Optional[int] = None
+    amount: Optional[float] = None
+    description: Optional[str] = None
+    receipt_photo: Optional[str] = None
+    document_type: Optional[str] = None
+
+class ExpenseOut(BaseModel):
+    id: int
+    category_id: int
+    category_name: str
+    amount: float
+    description: Optional[str]
+    receipt_photo: Optional[str]
+    document_type: str
+    seller_id: int
+    seller_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Invoices ──────────────────────────────────────────────────────────────────
+
+class InvoiceCreate(BaseModel):
+    invoice_number: str
+    rut: str
+    business_name: str
+    net_amount: float
+    tax_amount: Optional[float] = None      # si None, se calcula como net_amount * 0.19
+    total_amount: Optional[float] = None    # si None, se calcula como net + tax
+    sale_id: Optional[int] = None
+    description: Optional[str] = None
+
+class InvoiceOut(BaseModel):
+    id: int
+    invoice_number: str
+    rut: str
+    business_name: str
+    net_amount: float
+    tax_amount: float
+    total_amount: float
+    sale_id: Optional[int]
+    description: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Accounting Summary ────────────────────────────────────────────────────────
+
+class ExpenseSummaryItem(BaseModel):
+    category_name: str
+    total: float
+    count: int
+
+class IncomeSummaryItem(BaseModel):
+    category_name: str
+    total: float
+    count: int   # unidades vendidas (sum de quantities)
+
+class AccountingSummary(BaseModel):
+    date_from: str
+    date_to: str
+    total_income: float
+    total_income_cash: float
+    total_income_card: float
+    total_income_transfer: float
+    total_expenses: float
+    net_profit: float
+    sales_count: int
+    sales_with_receipt: int
+    sales_without_receipt: int
+    expenses_by_category: list[ExpenseSummaryItem]
+    invoices_count: int
+    invoices_total: float
+    # IVA estimado (fórmula extracción 19/119 — precios incluyen IVA)
+    vat_debit: float
+    vat_credit: float
+    vat_balance: float
+    income_by_category: list[IncomeSummaryItem]
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────

@@ -15,11 +15,14 @@ class Seller(Base):
     pin = Column(String, nullable=False)          # SHA-256 hash
     role = Column(String, default="seller")       # 'admin' | 'seller'
     active = Column(Boolean, default=True)
+    failed_attempts = Column(Integer, default=0)
+    locked_until = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
     audit_logs = relationship("AuditLog", back_populates="seller")
     ingredient_movements = relationship("IngredientMovement", back_populates="seller")
+    expenses = relationship("Expense", back_populates="seller")
 
 
 class Product(Base):
@@ -70,6 +73,7 @@ class Sale(Base):
     status = Column(String, default="completed")     # 'completed' | 'voided'
     voided_at = Column(DateTime, nullable=True)
     void_reason = Column(String, nullable=True)
+    has_receipt = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
 
     seller = relationship("Seller", back_populates="sales")
@@ -186,6 +190,51 @@ class IngredientMovement(Base):
 
     ingredient = relationship("Ingredient", back_populates="movements")
     seller = relationship("Seller", back_populates="ingredient_movements")
+
+
+class ExpenseCategory(Base):
+    __tablename__ = "expense_categories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    expenses = relationship("Expense", back_populates="category")
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category_id = Column(Integer, ForeignKey("expense_categories.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    description = Column(String, nullable=True)
+    receipt_photo = Column(Text, nullable=True)      # base64, mismo patrón que products.photo
+    document_type = Column(String, default='boleta') # 'boleta' | 'factura'
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    category = relationship("ExpenseCategory", back_populates="expenses")
+    seller = relationship("Seller", back_populates="expenses")
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    invoice_number = Column(String, nullable=False)
+    rut = Column(String, nullable=False)
+    business_name = Column(String, nullable=False)
+    net_amount = Column(Float, nullable=False)
+    tax_amount = Column(Float, nullable=False)        # IVA 19%
+    total_amount = Column(Float, nullable=False)
+    sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    sale = relationship("Sale")
 
 
 class AuditLog(Base):

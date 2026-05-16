@@ -84,12 +84,15 @@ def create_sale(
     # Verificar caja abierta
     register = db.query(CashRegister).filter(CashRegister.status == "open").first()
 
+    has_receipt = True if payload.payment_method == "tarjeta" else bool(payload.has_receipt)
+
     sale = Sale(
         total=payload.total,
         payment_method=payload.payment_method,
         seller_id=seller.id,
         order_id=payload.order_id,
         status="completed",
+        has_receipt=has_receipt,
     )
     db.add(sale)
     db.flush()  # obtener sale.id antes de commit

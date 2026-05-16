@@ -1,11 +1,12 @@
 /**
  * Sidebar — Main navigation sidebar
  */
-import { NavLink, useLocation } from 'react-router-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
-import db from '../../db';
+import { useState, useEffect } from 'react';
+import { NavLink } from 'react-router-dom';
 import { useSeller } from '../../context/SellerContext';
-import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat, Thermometer } from 'lucide-react';
+import api from '../../utils/api';
+import { getFreshnessStatus } from '../../utils/formatters';
+import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat, Thermometer, TrendingDown, BookOpen, FileText } from 'lucide-react';
 
 const navItems = [
   { section: 'Principal' },
@@ -20,6 +21,10 @@ const navItems = [
   { section: 'Análisis' },
   { path: '/dashboard', label: 'Dashboard', icon: BarChart3, adminOnly: true },
   { path: '/historial', label: 'Historial Ventas', icon: History, adminOnly: true },
+  { section: 'Contabilidad' },
+  { path: '/gastos', label: 'Gastos', icon: TrendingDown },
+  { path: '/contabilidad', label: 'Contabilidad', icon: BookOpen, adminOnly: true },
+  { path: '/facturas', label: 'Facturas', icon: FileText, adminOnly: true },
   { section: 'Sistema' },
   { path: '/vendedores', label: 'Vendedores', icon: Users, adminOnly: true },
   { path: '/configuracion', label: 'Configuración', icon: Settings, adminOnly: true },
@@ -27,21 +32,43 @@ const navItems = [
 
 export default function Sidebar({ open, onClose }) {
   const { currentSeller } = useSeller();
+  const [vitrinaAlerts, setVitrinaAlerts] = useState(0);
+  const [pendingOrders, setPendingOrders] = useState(0);
 
-  // Live badges counts
-  const vitrinaAlerts = useLiveQuery(async () => {
-    // Logic for vitrina alerts (unchanged)
-    const items = await db.showcaseItems.where('status').equals('active').toArray();
-    return items.length; // Simplified for brevity in this edit
-  }, [], 0);
+  useEffect(() => {
+    if (!currentSeller) return;
 
-  const pendingOrders = useLiveQuery(async () => {
-    return db.orders.where('status').anyOf(['pendiente', 'en_produccion', 'listo']).count();
-  }, [], 0);
+    const loadBadges = async () => {
+      try {
+        const [showcase, orders] = await Promise.all([
+          api.get('/showcase?status=active'),
+          api.get('/orders'),
+        ]);
+
+        // Contar items en vitrina con alerta de frescura (warning o danger)
+        const alerts = showcase.filter(item =>
+          item.product?.max_showcase_hours &&
+          getFreshnessStatus(item.placed_at, item.product.max_showcase_hours) !== 'fresh'
+        ).length;
+        setVitrinaAlerts(alerts);
+
+        // Contar pedidos activos (sin incluir entregados)
+        const pending = orders.filter(o =>
+          ['pendiente', 'en_produccion', 'listo'].includes(o.status)
+        ).length;
+        setPendingOrders(pending);
+      } catch {
+        // Los badges son informativos; falla silenciosamente
+      }
+    };
+
+    loadBadges();
+    const interval = setInterval(loadBadges, 60_000);
+    return () => clearInterval(interval);
+  }, [currentSeller]);
 
   const badges = { vitrinaAlerts, pendingOrders };
-  // CAMBIO CLAVE: Ahora valida por ROL, no por nombre
-  const isAdmin = currentSeller?.role === 'admin'; 
+  const isAdmin = currentSeller?.role === 'admin';
 
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`}>

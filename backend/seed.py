@@ -3,7 +3,7 @@ Puebla la base de datos con datos de demo si está vacía.
 Equivalente a src/utils/seedData.js
 """
 from .auth import hash_pin
-from .models import Ingredient, Product, Seller
+from .models import ExpenseCategory, Ingredient, Product, Seller
 from sqlalchemy.orm import Session
 
 
@@ -45,6 +45,24 @@ INGREDIENTES_DEMO = [
 
 def seed_database(db: Session) -> None:
     """Puebla la DB si está vacía. Solo corre una vez."""
+
+    # Siempre asegurar categorías de gasto, independiente del estado de la DB
+    if db.query(ExpenseCategory).count() == 0:
+        default_categories = [
+            ExpenseCategory(name="Insumos", description="Materias primas y productos para elaboración"),
+            ExpenseCategory(name="Arriendo", description="Arriendo del local"),
+            ExpenseCategory(name="Electricidad", description="Cuenta de luz"),
+            ExpenseCategory(name="Gas", description="Gas para hornos y cocina"),
+            ExpenseCategory(name="Agua", description="Cuenta de agua"),
+            ExpenseCategory(name="Sueldos", description="Remuneraciones del personal"),
+            ExpenseCategory(name="Transporte", description="Fletes, combustible, despachos"),
+            ExpenseCategory(name="Mantención", description="Reparaciones y mantención de equipos"),
+            ExpenseCategory(name="Marketing", description="Publicidad, redes sociales, packaging"),
+            ExpenseCategory(name="Otros", description="Gastos no categorizados"),
+        ]
+        db.add_all(default_categories)
+        db.commit()
+
     if db.query(Seller).count() > 0:
         return
 
