@@ -312,6 +312,35 @@ class IngredientMovementOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LossSummaryItem(BaseModel):
+    ingredient_id: int
+    name: str
+    quantity: float
+    unit: str
+    total_cost: float
+
+class LossReasonItem(BaseModel):
+    notes: str
+    total_cost: float
+    count: int
+
+class LossesReport(BaseModel):
+    date_from: str
+    date_to: str
+    total_loss_cost: float
+    by_ingredient: list[LossSummaryItem]
+    by_reason: list[LossReasonItem]
+
+class RestockSuggestion(BaseModel):
+    ingredient_id: int
+    name: str
+    current_stock: float
+    min_stock: float
+    unit: str
+    suggested_qty: float
+    estimated_cost: float
+
+
 # ── Expense Categories ────────────────────────────────────────────────────────
 
 class ExpenseCategoryCreate(BaseModel):

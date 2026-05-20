@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { TrendingUp, TrendingDown, DollarSign, FileDown, Receipt, Scale, AlertCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, FileDown, Receipt, Scale, AlertCircle, Trash2 } from 'lucide-react';
 import {
   Chart as ChartJS,
   ArcElement, Tooltip, Legend,
@@ -53,6 +53,10 @@ export default function Contabilidad() {
   const [profitability, setProfitability] = useState(null);
   const [profLoading, setProfLoading] = useState(false);
 
+  // Estados para pérdidas por mermas
+  const [lossesReport, setLossesReport] = useState(null);
+  const [lossesLoading, setLossesLoading] = useState(false);
+
   const loadSummary = async (from, to) => {
     setLoading(true);
     try {
@@ -77,6 +81,18 @@ export default function Contabilidad() {
     }
   };
 
+  const loadLosses = async (from = dateFrom, to = dateTo) => {
+    setLossesLoading(true);
+    try {
+      const res = await api.get(`/accounting/losses?date_from=${from}&date_to=${to}`);
+      setLossesReport(res);
+    } catch (err) {
+      toast.error('Error al cargar reporte de mermas: ' + err.message);
+    } finally {
+      setLossesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadSummary(dateFrom, dateTo);
   }, []);
@@ -84,6 +100,7 @@ export default function Contabilidad() {
   useEffect(() => {
     if (activeView === 'profitability') {
       loadProfitability(dateFrom, dateTo);
+      loadLosses(dateFrom, dateTo);
     }
   }, [activeView]);
 
@@ -94,6 +111,7 @@ export default function Contabilidad() {
     loadSummary(preset.from, preset.to);
     if (activeView === 'profitability') {
       loadProfitability(preset.from, preset.to);
+      loadLosses(preset.from, preset.to);
     }
   };
 
@@ -102,6 +120,7 @@ export default function Contabilidad() {
     loadSummary(dateFrom, dateTo);
     if (activeView === 'profitability') {
       loadProfitability(dateFrom, dateTo);
+      loadLosses(dateFrom, dateTo);
     }
   };
 
@@ -279,7 +298,7 @@ export default function Contabilidad() {
         ) : profitability && (
           <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
             {/* KPIs de Rentabilidad */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-md)' }}>
               <SummaryCard
                 icon={<TrendingUp size={22} />}
                 label="Venta Total (Productos)"
@@ -295,10 +314,17 @@ export default function Contabilidad() {
                 color="#C0392B"
               />
               <SummaryCard
+                icon={<Trash2 size={22} />}
+                label="Pérdidas por Merma"
+                value={lossesReport ? formatCurrency(lossesReport.total_loss_cost) : '$0'}
+                sub="Insumos perdidos/desechados"
+                color="#C0392B"
+              />
+              <SummaryCard
                 icon={<DollarSign size={22} />}
-                label="Utilidad Bruta"
-                value={formatCurrency(profitability.total_profit)}
-                sub="Venta − Costo Insumos"
+                label="Utilidad Real"
+                value={lossesReport ? formatCurrency(profitability.total_profit - lossesReport.total_loss_cost) : formatCurrency(profitability.total_profit)}
+                sub="Utilidad bruta − Mermas"
                 color="var(--color-primary)"
                 highlight
               />
@@ -414,6 +440,89 @@ export default function Contabilidad() {
                 </tbody>
               </table>
             </div>
+
+            {/* Reporte de Mermas */}
+            {lossesReport && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-md)', marginTop: 'var(--space-sm)' }}>
+                {/* Tabla Insumos Perdidos */}
+                <div className="card animate-fade-in">
+                  <h3 style={{ margin: '0 0 var(--space-md)', fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Trash2 size={16} style={{ color: '#C0392B' }} /> Insumos Desechados (Mermas)
+                  </h3>
+                  {lossesLoading ? (
+                    <div style={{ padding: 'var(--space-md)', textAlign: 'center', color: 'var(--color-text-secondary)', fontSize: '0.85rem' }}>
+                      Cargando mermas...
+                    </div>
+                  ) : lossesReport.by_ingredient.length === 0 ? (
+                    <div style={{ padding: 'var(--space-md)', textAlign: 'center', color: 'var(--color-text-secondary)', fontSize: '0.85rem' }}>
+                      No se registraron mermas en este período.
+                    </div>
+                  ) : (
+                    <div className="table-wrapper" style={{ margin: 0, boxShadow: 'none', border: '1px solid var(--color-border)' }}>
+                      <table style={{ fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr>
+                            <th>Insumo</th>
+                            <th style={{ textAlign: 'right' }}>Cantidad</th>
+                            <th style={{ textAlign: 'right' }}>Costo de Pérdida</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lossesReport.by_ingredient.map((item, idx) => (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 600 }}>{item.name}</td>
+                              <td style={{ textAlign: 'right' }}>{item.quantity} {item.unit}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 700, color: '#C0392B' }}>
+                                {formatCurrency(item.total_cost)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tabla Motivos de Merma */}
+                <div className="card animate-fade-in">
+                  <h3 style={{ margin: '0 0 var(--space-md)', fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <AlertCircle size={16} style={{ color: '#C8820A' }} /> Motivos de Pérdida
+                  </h3>
+                  {lossesLoading ? (
+                    <div style={{ padding: 'var(--space-md)', textAlign: 'center', color: 'var(--color-text-secondary)', fontSize: '0.85rem' }}>
+                      Cargando motivos...
+                    </div>
+                  ) : lossesReport.by_reason.length === 0 ? (
+                    <div style={{ padding: 'var(--space-md)', textAlign: 'center', color: 'var(--color-text-secondary)', fontSize: '0.85rem' }}>
+                      No se especificaron motivos en este período.
+                    </div>
+                  ) : (
+                    <div className="table-wrapper" style={{ margin: 0, boxShadow: 'none', border: '1px solid var(--color-border)' }}>
+                      <table style={{ fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr>
+                            <th>Motivo / Nota</th>
+                            <th style={{ textAlign: 'right' }}>Ocurrencias</th>
+                            <th style={{ textAlign: 'right' }}>Costo Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lossesReport.by_reason.map((item, idx) => (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 600 }}>{item.notes}</td>
+                              <td style={{ textAlign: 'right' }}>{item.count}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 700, color: '#C0392B' }}>
+                                {formatCurrency(item.total_cost)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )
       ) : (

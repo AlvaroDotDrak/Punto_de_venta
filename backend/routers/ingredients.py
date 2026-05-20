@@ -5,7 +5,7 @@ from ..database import get_db
 from ..models import Ingredient, IngredientMovement
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
-from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientMovementOut, IngredientOut, IngredientUpdate
+from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientMovementOut, IngredientOut, IngredientUpdate, RestockSuggestion
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
@@ -63,6 +63,37 @@ def list_global_movements(
     )
 
 
+@router.get("/restock", response_model=list[RestockSuggestion])
+def get_restock_suggestions(
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    ingredients = (
+        db.query(Ingredient)
+        .filter(Ingredient.active == True, Ingredient.min_stock > 0)
+        .all()
+    )
+    
+    suggestions = []
+    for item in ingredients:
+        if item.current_stock < item.min_stock:
+            suggested_qty = (item.min_stock * 2) - item.current_stock
+            estimated_cost = suggested_qty * item.last_price
+            suggestions.append(
+                RestockSuggestion(
+                    ingredient_id=item.id,
+                    name=item.name,
+                    current_stock=item.current_stock,
+                    min_stock=item.min_stock,
+                    unit=item.unit,
+                    suggested_qty=suggested_qty,
+                    estimated_cost=estimated_cost,
+                )
+            )
+            
+    return suggestions
+
+
 @router.get("/{ingredient_id}/movements", response_model=list[IngredientMovementOut])
 def list_movements(
     ingredient_id: int,
@@ -114,6 +145,8 @@ def add_movement(
             ingredient.last_price = payload.cost / payload.quantity
     elif payload.type in ("usage", "loss"):
         ingredient.current_stock -= payload.quantity
+        if payload.type == "loss" and movement.cost is None:
+            movement.cost = payload.quantity * ingredient.last_price
 
     db.commit()
     notes_txt = f" - Nota: {payload.notes}" if payload.notes else ""

@@ -50,6 +50,21 @@ El último commit es `d5a30bf` (antes de Fase 1). Todo el trabajo de Fase 1 y Fa
    ```
 3. Marcar este item como `[RESUELTO]` con la fecha
 4. Reportar a Álvaro — Claude no aprueba Fase 3 hasta que esto esté hecho
+---
+
+## [RESUELTO] Review: Fase 3 — Reporte de Pérdidas por Merma y Reabastecimiento
+
+- **De:** Claude
+- **Para:** Antigravity
+- **Estado:** código aprobado — cambios y commit realizados
+- **Fecha revisión:** 2026-05-20
+- **Resuelto en:** 2026-05-20
+
+### Items
+1. Auto-cálculo de `movement.cost` para `loss` — Incorporado respetando si es None.
+2. Esquemas Pydantic definidos para `/api/accounting/losses` y `/api/ingredients/restock` — Incorporado.
+3. Validación con `py_compile` en lugar de tests completos — Realizado y exitoso.
+4. Orden de rutas `/restock` colocado antes de `/{ingredient_id}` — Incorporado.
 
 ---
 

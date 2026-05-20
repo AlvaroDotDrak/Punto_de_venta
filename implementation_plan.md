@@ -1,165 +1,108 @@
-# Plan de Implementación: Gestión de Inventario - Bitácora, Compras, Mermas y Rentabilidad (Fase 2 - Revisado)
+# Plan de Implementación: Reporte de Pérdidas por Merma y Sugerencias de Reabastecimiento (Fase 3 - Revisado)
 
-Este plan detalla la ampliación del sistema de insumos para permitir el control operativo de bodega y la visualización de la rentabilidad real del negocio en la pastelería, resolviendo los puntos críticos identificados en la revisión de arquitectura.
+Este plan detalla el diseño e implementación de las herramientas de optimización de bodega y control de pérdidas financieras, incorporando las observaciones técnicas del revisor y las decisiones de negocio.
 
-## Decisiones de Diseño Clave (User Review Required)
+---
+
+## Decisiones de Diseño & Negocio
 
 > [!IMPORTANT]
-> **1. Asociación de Movimientos a Productos (`product_id`):**
-> Para permitir calcular la rentabilidad a nivel de producto individual de manera directa y óptima, se agrega la columna `product_id` a la tabla `ingredient_movements` vinculando cada descuento de bodega (`usage`) con el producto vendido. Esto se ejecutará mediante la **migración v2.10**.
+> **1. Valorización de Mermas (`loss`) con Histórico:**
+> Al registrar una merma, el backend calculará automáticamente y guardará el costo real en el momento del registro (`cost = quantity * ingredient.last_price`). De esta forma, el historial captura el valor exacto del insumo y no depende de variaciones de precios futuras.
 >
-> **2. Migración Doble de Base de Datos (v2.9 y v2.10):**
-> *   **v2.9:** Agrega la columna `notes` (`TEXT`, nullable) a `ingredient_movements` para descripciones de mermas y ajustes.
-> *   **v2.10:** Agrega la columna `product_id` (`INTEGER`, nullable) a `ingredient_movements` vinculada a `products.id`.
+> **2. Ubicación en la Interfaz:**
+> El Reporte de Mermas se integrará en la sección de **Contabilidad** (Opción A), dado su impacto directo en los costos y flujo de caja del negocio.
 >
-> **3. Validación de Negocios para Mermas (`loss`):**
-> El backend validará de manera estricta mediante Pydantic que cualquier movimiento de tipo `"loss"` obligatoriamente contenga una nota explicativa (`notes`), previniendo registros sin descripción desde la UI o API directa.
+> **3. Exportación Contable:**
+> Se agregará una cuarta pestaña llamada `"Detalle Mermas"` al archivo Excel generado en `/api/accounting/export` para facilitarle el trabajo al contador.
 >
-> **4. Exposición de Atributos de Insumos vía @property:**
-> En lugar de crear esquemas adicionales redundantes, el modelo `IngredientMovement` implementará propiedades lazy-loading (`ingredient_name` e `ingredient_unit`) para que Pydantic las serialice de forma transparente en el listado de movimientos globales de bodega.
+> **4. Lógica de Sugerencia de Recompra:**
+> Se utilizará la fórmula simple de reposición: `Cantidad Sugerida = (min_stock * 2) - current_stock`, lo que evita agregar columnas adicionales a la base de datos y mantiene la lógica ligera.
 
 ---
 
 ## Cambios Propuestos
 
-### 1. Base de Datos & Backend (FastAPI)
-
-#### [MODIFY] [models.py](file:///home/alvaro/punto_de_venta/backend/models.py)
-*   Añadir la columna `notes` y `product_id`, la relación con `Product` y las propiedades auxiliares al modelo `IngredientMovement`:
-    ```python
-    class IngredientMovement(Base):
-        # ... columnas existentes ...
-        notes = Column(Text, nullable=True)  # Descripción para mermas o motivos de ajuste
-        product_id = Column(Integer, ForeignKey("products.id"), nullable=True)  # Producto que causó el consumo
-
-        # Relaciones
-        product = relationship("Product")
-        
-        # Propiedades auxiliares expuestas a esquemas Pydantic
-        @property
-        def ingredient_name(self) -> str:
-            return self.ingredient.name if self.ingredient else ""
-
-        @property
-        def ingredient_unit(self) -> str:
-            return self.ingredient.unit if self.ingredient else ""
-    ```
-
-#### [MODIFY] [main.py](file:///home/alvaro/punto_de_venta/backend/main.py)
-*   En `_run_migrations()`, agregar las migraciones v2.9 y v2.10:
-    ```python
-    _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN notes TEXT")
-    _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN product_id INTEGER")
-    ```
-
-#### [MODIFY] [schemas.py](file:///home/alvaro/punto_de_venta/backend/schemas.py)
-*   Actualizar `IngredientMovementCreate` con validador de modelo para obligar el uso de `notes` cuando es de tipo `loss`:
-    ```python
-    from pydantic import BaseModel, model_validator
-    # ...
-    class IngredientMovementCreate(BaseModel):
-        type: str         # 'purchase' | 'adjustment' | 'usage' | 'loss'
-        quantity: float
-        cost: Optional[float] = None
-        notes: Optional[str] = None
-
-        @model_validator(mode='after')
-        def notes_required_for_loss(self):
-            if self.type == 'loss' and not self.notes:
-                raise ValueError("Las mermas requieren una nota descriptiva")
-            return self
-    ```
-*   Actualizar `IngredientMovementOut` para exponer la información extendida requerida por la bitácora:
-    ```python
-    class IngredientMovementOut(BaseModel):
-        id: int
-        ingredient_id: int
-        ingredient_name: Optional[str] = None
-        ingredient_unit: Optional[str] = None
-        type: str
-        quantity: float
-        cost: Optional[float]
-        notes: Optional[str]
-        seller_id: Optional[int]
-        sale_id: Optional[int]
-        product_id: Optional[int]
-        created_at: datetime
-        seller: Optional[SellerOut] = None
-
-        model_config = {"from_attributes": True}
-    ```
+### 1. Backend (FastAPI)
 
 #### [MODIFY] [ingredients.py](file:///home/alvaro/punto_de_venta/backend/routers/ingredients.py)
-*   **Orden de rutas:** Declarar el endpoint global **antes** del endpoint dinámico por ingrediente:
-    1.  `GET /api/ingredients/movements/global`:
-        Retorna movimientos globales ordenados de forma descendente, aplicando `joinedload(IngredientMovement.ingredient)`.
-    2.  `GET /api/ingredients/{ingredient_id}/movements`:
-        Retorna movimientos específicos del insumo indicado.
 *   **En la creación de movimientos (`add_movement`):**
-    *   Validar que `payload.type` esté en `("purchase", "adjustment", "usage", "loss")`.
-    *   Si es `loss`, descontar del inventario: `ingredient.current_stock -= payload.quantity`.
-    *   Guardar `notes=payload.notes`.
+    *   Si el tipo es `"loss"`, calcular y persistir el costo histórico:
+        ```python
+        elif payload.type in ("usage", "loss"):
+            ingredient.current_stock -= payload.quantity
+            if payload.type == "loss":
+                movement.cost = payload.quantity * ingredient.last_price
+        ```
 
-#### [MODIFY] [sales.py](file:///home/alvaro/punto_de_venta/backend/routers/sales.py)
-*   Al registrar el movimiento de consumo (`usage`) de insumos por receta:
-    *   Guardar el costo del insumo consumido al momento de la venta (`cost = qty_used * r.ingredient.last_price`).
-    *   Vincular el ID de producto vendido en el campo `product_id=item_in.product_id`.
+*   **Endpoint `/api/ingredients/restock`:**
+    *   Retorna los insumos cuyo stock es inferior al `min_stock`.
+    *   Aplica la fórmula `suggested = (item.min_stock * 2) - item.current_stock`.
+    *   Mapea y retorna la lista usando un esquema Pydantic para mantener coherencia en las firmas de la API.
+
+#### [MODIFY] [schemas.py](file:///home/alvaro/punto_de_venta/backend/schemas.py)
+*   Definir los esquemas Pydantic para el reporte de mermas y la lista de reabastecimiento:
     ```python
-    movement = IngredientMovement(
-        ingredient_id=r.ingredient_id,
-        type="usage",
-        quantity=qty_used,
-        cost=qty_used * r.ingredient.last_price,  # Costo real de venta
-        seller_id=seller.id,
-        sale_id=sale.id,
-        product_id=item_in.product_id  # Enlace crítico para rentabilidad
-    )
+    class LossSummaryItem(BaseModel):
+        ingredient_id: int
+        name: str
+        quantity: float
+        unit: str
+        total_cost: float
+
+    class LossReasonItem(BaseModel):
+        notes: str
+        total_cost: float
+        count: int
+
+    class LossesReport(BaseModel):
+        date_from: str
+        date_to: str
+        total_loss_cost: float
+        by_ingredient: list[LossSummaryItem]
+        by_reason: list[LossReasonItem]
+
+    class RestockSuggestion(BaseModel):
+        ingredient_id: int
+        name: str
+        current_stock: float
+        min_stock: float
+        unit: str
+        suggested_qty: float
+        estimated_cost: float
     ```
 
 #### [MODIFY] [accounting.py](file:///home/alvaro/punto_de_venta/backend/routers/accounting.py)
-*   **Añadir endpoint de Rentabilidad Real:**
-    *   `GET /api/accounting/profitability?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`
-    *   Lógica:
-        *   Obtener todas las ventas completadas del período.
-        *   Obtener todos los movimientos de consumo (`usage`) vinculados a ventas de ese rango.
-        *   Agrupar los consumos (`IngredientMovement`) por `product_id`.
-        *   El costo de ingredientes (COGS) por producto se calcula sumando `movement.cost` (con fallback de `qty * ingredient.last_price` si `cost` es `None`).
-        *   Cruzar los ingresos generados por producto (`sum(item.quantity * item.price)`) con su respectivo COGS para deducir el margen bruto (%) y beneficio neto.
-        *   Retornar la agregación total, por categoría del producto y por producto individual.
+*   **`GET /api/accounting/losses` (con response_model `LossesReport`):**
+    *   Calcula el total financiero de pérdidas filtrando `IngredientMovement` por tipo `"loss"` en el rango de fechas.
+    *   Construye las listas agrupadas por insumo y por descripción/nota de merma.
+*   **`GET /api/accounting/export`:**
+    *   Modificar la exportación a Excel para añadir la pestaña `"Detalle Mermas"` listando: Fecha, Insumo, Cantidad, Unidad, Costo de Pérdida, Motivo y Operador.
 
 ---
 
 ### 2. Frontend (React)
 
-#### [MODIFY] [Insumos.jsx](file:///home/alvaro/punto_de_venta/src/pages/Insumos.jsx)
-*   **Alerta de Stock Mínimo:**
-    *   Destacar en color de advertencia (rojo/naranja) las filas de insumos donde `current_stock <= min_stock`.
-*   **UI de Compras e Ingreso de Stock:**
-    *   Agregar un botón "Registrar Compra" en la tarjeta de cada insumo.
-    *   Modal interactivo que solicite cantidad y costo total de compra. Llama a `POST /movements` con `type: 'purchase'`.
-*   **UI de Mermas / Ajuste Manual:**
-    *   Agregar botón "Registrar Merma" (o "Ajustar Stock") que despliegue un modal.
-    *   El usuario selecciona el tipo (`loss` para merma física / `adjustment` para corrección) e ingresa la cantidad y un motivo/nota obligatorio. Llama a `POST /movements`.
-*   **Vista de Bitácora de Bodega:**
-    *   Pestaña "Historial de Bodega" para visualizar la bitácora global de movimientos, mostrando columnas de Fecha, Insumo, Tipo de Operación, Cantidad, Operador, Notas y Costo (si aplica).
-
 #### [MODIFY] [Contabilidad.jsx](file:///home/alvaro/punto_de_venta/src/pages/Contabilidad.jsx)
-*   Agregar una sección o sub-pestaña "Rentabilidad Real (COGS)" que cargue los datos de `/api/accounting/profitability`.
-*   Mostrar indicadores clave (Venta total, Costo total de materia prima, Margen de ganancia bruta).
-*   Mostrar un listado interactivo con barras de progreso del margen por producto, permitiendo identificar cuáles son los alfajores, tortas o pasteles más rentables.
+*   Añadir una sección o tarjeta en la pestaña de **Rentabilidad Real** para desplegar el resumen financiero de mermas.
+*   Mostrar tablas/gráficos que ilustren qué insumos se pierden más y las razones de las pérdidas (mermas).
+
+#### [MODIFY] [Insumos.jsx](file:///home/alvaro/punto_de_venta/src/pages/Insumos.jsx)
+*   Agregar un panel dinámico de **Sugerencias de Pedido** cuando haya ingredientes bajo el mínimo.
+*   Permitir copiar el listado de compras sugerido en formato texto plano al portapapeles para uso rápido.
 
 ---
 
 ## Plan de Verificación
 
-### Pruebas Automatizadas
-*   Ejecutar compilación en backend y frontend para asegurar consistencia de imports y tipos:
-    *   `npm run build`
-    *   `.venv/bin/python -m py_compile backend/routers/ingredients.py backend/routers/accounting.py`
+### Validación de Código y Sintaxis
+*   Verificar que no haya errores de compilación de Python en los routers mediante:
+    `python3 -m py_compile backend/routers/accounting.py backend/routers/ingredients.py`
+*   Verificar que el bundle frontend se compile exitosamente usando:
+    `npm run build`
 
-### Pruebas Manuales
-1.  **Migración:** Iniciar el backend y verificar en la base de datos sqlite que las columnas `notes` y `product_id` se hayan creado en la tabla `ingredient_movements`.
-2.  **Validación de Notas en Mermas:** Intentar enviar un POST de movimiento tipo `loss` sin notas a través de la API y comprobar que el backend retorna un error 422.
-3.  **Compras (POST /purchase):** Registrar una compra de un insumo ingresando costo y cantidad, comprobar que el stock sube y que `last_price` se recalcula correctamente.
-4.  **Bitácora Global:** Entrar a la pestaña de historial en la interfaz de insumos y constatar que los movimientos registrados (compras, mermas y consumos de ventas) se listan de forma descendente con sus nombres de ingredientes y notas.
-5.  **Cálculo de Rentabilidad por Producto:** Realizar una venta de un producto con receta, verificar en la base de datos sqlite que el `IngredientMovement` tiene `product_id` y `cost` correspondientes, y corroborar en la UI de contabilidad del frontend que la rentabilidad de ese producto se calcula correctamente.
+### Pruebas Manuales (Base de Datos Real)
+1.  **Registro de Mermas:** Registrar una merma (ej. 2 unidades de huevo) y verificar en la base de datos que `cost` se complete automáticamente en el registro de movimiento con el costo histórico correspondiente.
+2.  **Reporte de Mermas:** Abrir la pantalla de Contabilidad, ir al rango de fechas respectivo y corroborar que los costos por merma coincidan.
+3.  **Excel Export:** Generar el reporte Excel y validar que la pestaña `"Detalle Mermas"` tenga el formato y registros correctos.
+4.  **Reabastecimiento:** Configurar un ingrediente bajo stock mínimo, abrir la vista de Insumos y verificar que la lista sugiera la cantidad calculada por la fórmula y el costo estimado.

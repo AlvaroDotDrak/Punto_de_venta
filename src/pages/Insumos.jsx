@@ -64,9 +64,18 @@ export default function Insumos() {
   const [globalHistory, setGlobalHistory] = useState([]);
   const [globalLoading, setGlobalLoading] = useState(false);
 
+  const [restockSuggestions, setRestockSuggestions] = useState([]);
+  const [showRestockPanel, setShowRestockPanel] = useState(false);
+
   const loadData = async () => {
     const data = await api.get('/ingredients').catch(() => []);
     setIngredients(data);
+    try {
+      const restockData = await api.get('/ingredients/restock');
+      setRestockSuggestions(restockData);
+    } catch (err) {
+      console.error('Error al cargar sugerencias de reabastecimiento:', err);
+    }
   };
 
   const loadGlobalHistory = async () => {
@@ -168,7 +177,37 @@ export default function Insumos() {
       if (activeTab === 'history') {
         loadGlobalHistory();
       }
-    } catch (err) { toast.error('Error: ' + err.message); }
+    } catch (err) {
+      toast.error('Error: ' + err.message);
+    }
+  };
+
+  const handleCopyRestockList = () => {
+    if (restockSuggestions.length === 0) return;
+    
+    let text = `📋 LISTA DE REABASTECIMIENTO SUGERIDA - Pastelería Tía Julia\n`;
+    text += `Fecha: ${new Date().toLocaleDateString('es-CL')}\n\n`;
+    
+    let totalEst = 0;
+    restockSuggestions.forEach(item => {
+      text += `- ${item.name}: pedir ${item.suggested_qty} ${item.unit} (Stock actual: ${item.current_stock} / Mínimo: ${item.min_stock})\n`;
+      if (item.estimated_cost > 0) {
+        text += `  Costo estimado: ${formatCurrency(item.estimated_cost)}\n`;
+        totalEst += item.estimated_cost;
+      }
+    });
+    
+    if (totalEst > 0) {
+      text += `\nPresupuesto total estimado: ${formatCurrency(totalEst)}\n`;
+    }
+    
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        toast.success('Lista de compras copiada al portapapeles');
+      })
+      .catch(() => {
+        toast.error('No se pudo copiar al portapapeles');
+      });
   };
 
   const openHistory = async (ing) => {
@@ -264,6 +303,88 @@ export default function Insumos() {
 
       {activeTab === 'stock' ? (
         <>
+          {/* Panel de Reabastecimiento Sugerido */}
+          {restockSuggestions.length > 0 && (
+            <div style={{
+              background: 'var(--color-bg-card)',
+              border: '1.5px solid var(--color-primary)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-md)',
+              marginBottom: 'var(--space-md)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
+              position: 'relative'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    background: 'rgba(219, 107, 57, 0.1)',
+                    color: 'var(--color-primary)',
+                    padding: 8,
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <SlidersHorizontal size={18} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>Sugerencia de Reabastecimiento</h3>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+                      Hay <strong>{restockSuggestions.length}</strong> insumo(s) bajo el stock mínimo.
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowRestockPanel(!showRestockPanel)}>
+                    {showRestockPanel ? 'Ocultar Detalle' : 'Ver Detalle'}
+                  </button>
+                  <button className="btn btn-primary btn-sm" onClick={handleCopyRestockList}>
+                    Copiar Lista
+                  </button>
+                </div>
+              </div>
+
+              {showRestockPanel && (
+                <div style={{ marginTop: 'var(--space-md)', borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-sm)' }}>
+                  <div className="table-wrapper" style={{ margin: 0, boxShadow: 'none', border: '1px solid var(--color-border)' }}>
+                    <table style={{ fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Insumo</th>
+                          <th>Stock Actual</th>
+                          <th>Stock Mínimo</th>
+                          <th>Sugerido a Comprar</th>
+                          <th>Costo Est.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {restockSuggestions.map(item => (
+                          <tr key={item.ingredient_id}>
+                            <td style={{ fontWeight: 600 }}>{item.name}</td>
+                            <td style={{ color: '#C0392B', fontWeight: 600 }}>{item.current_stock} {item.unit}</td>
+                            <td>{item.min_stock} {item.unit}</td>
+                            <td style={{ color: '#2E8B57', fontWeight: 700 }}>+{item.suggested_qty.toFixed(2)} {item.unit}</td>
+                            <td style={{ fontWeight: 600 }}>
+                              {item.estimated_cost > 0 ? formatCurrency(item.estimated_cost) : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: 'var(--color-bg-card)', fontWeight: 700 }}>
+                          <td colSpan={4} style={{ textAlign: 'right', padding: '10px 14px' }}>Presupuesto Total Estimado:</td>
+                          <td style={{ color: 'var(--color-primary)', fontSize: '0.9rem', padding: '10px 14px' }}>
+                            {formatCurrency(restockSuggestions.reduce((acc, curr) => acc + (curr.estimated_cost || 0), 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Toolbar */}
           <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)', flexWrap: 'wrap', alignItems: 'center' }}>
             <div className="search-bar" style={{ flex: 1, minWidth: 180 }}>

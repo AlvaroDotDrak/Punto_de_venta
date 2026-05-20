@@ -10,7 +10,7 @@ from ..database import get_db
 from ..models import Expense, ExpenseCategory, Invoice, Sale, SaleItem, Seller, Product, IngredientMovement, ProductRecipe
 from ..auth import require_admin
 from ..audit import ACTIONS, log_action
-from ..schemas import AccountingSummary, ExpenseSummaryItem, IncomeSummaryItem
+from ..schemas import AccountingSummary, ExpenseSummaryItem, IncomeSummaryItem, LossesReport, LossSummaryItem, LossReasonItem
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
 
@@ -263,6 +263,40 @@ def export_report(
     for col, width in [("A", 18), ("B", 12), ("C", 12), ("D", 18), ("E", 30), ("F", 18)]:
         ws3.column_dimensions[col].width = width
 
+    # ── Hoja 4: Detalle Mermas ────────────────────────────────────────────────
+    ws4 = wb.create_sheet("Detalle Mermas")
+    ws4.append(["Fecha", "Insumo", "Cantidad", "Unidad", "Costo Pérdida", "Motivo / Notas", "Registrado por"])
+    style_header_row(ws4)
+
+    mermas = db.query(IngredientMovement).options(
+        joinedload(IngredientMovement.ingredient)
+    ).filter(
+        IngredientMovement.type == "loss",
+        IngredientMovement.created_at >= dt_from,
+        IngredientMovement.created_at <= dt_to,
+    ).all()
+
+    for m in sorted(mermas, key=lambda x: x.created_at):
+        if m.seller_id and m.seller_id not in seller_cache:
+            sel = db.query(Seller).filter(Seller.id == m.seller_id).first()
+            seller_cache[m.seller_id] = sel.name if sel else "Desconocido"
+        
+        cost_loss = m.cost if m.cost is not None else (m.quantity * (m.ingredient.last_price if m.ingredient else 0.0))
+        ing_name = m.ingredient.name if m.ingredient else f"Insumo #{m.ingredient_id}"
+        ing_unit = m.ingredient.unit if m.ingredient else ""
+
+        ws4.append([
+            m.created_at.strftime("%d/%m/%Y %H:%M"),
+            ing_name,
+            m.quantity,
+            ing_unit,
+            round(cost_loss, 2),
+            m.notes or "",
+            seller_cache.get(m.seller_id, "Desconocido") if m.seller_id else "Desconocido",
+        ])
+    for col, width in [("A", 18), ("B", 20), ("C", 12), ("D", 12), ("E", 14), ("F", 30), ("G", 18)]:
+        ws4.column_dimensions[col].width = width
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -399,3 +433,95 @@ def get_profitability(
         "categories": category_list,
         "products": sorted(product_list, key=lambda x: x["revenue"], reverse=True)
     }
+
+
+@router.get("/losses", response_model=LossesReport)
+def get_losses_report(
+    date_from: str = Query(...),
+    date_to: str = Query(...),
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    dt_from = datetime.fromisoformat(date_from)
+    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+
+    # Obtener todos los movimientos de tipo "loss"
+    movements = (
+        db.query(IngredientMovement)
+        .options(joinedload(IngredientMovement.ingredient))
+        .filter(
+            IngredientMovement.type == "loss",
+            IngredientMovement.created_at >= dt_from,
+            IngredientMovement.created_at <= dt_to,
+        )
+        .all()
+    )
+
+    # Agrupar por ingrediente
+    by_ing = {}
+    # Agrupar por motivo (notes)
+    by_reason = {}
+    
+    total_loss_cost = 0.0
+
+    for m in movements:
+        # Si no tiene costo histórico, usar el fallback del last_price
+        cost = m.cost if m.cost is not None else (m.quantity * (m.ingredient.last_price if m.ingredient else 0.0))
+        total_loss_cost += cost
+        
+        # Agrupar ingrediente
+        ing_id = m.ingredient_id
+        ing_name = m.ingredient.name if m.ingredient else f"Insumo #{ing_id}"
+        ing_unit = m.ingredient.unit if m.ingredient else ""
+        if ing_id not in by_ing:
+            by_ing[ing_id] = {
+                "ingredient_id": ing_id,
+                "name": ing_name,
+                "quantity": 0.0,
+                "unit": ing_unit,
+                "total_cost": 0.0
+            }
+        by_ing[ing_id]["quantity"] += m.quantity
+        by_ing[ing_id]["total_cost"] += cost
+
+        # Agrupar motivo (normalizar a "Sin descripción" si es vacío)
+        reason = m.notes.strip() if m.notes else "Sin descripción"
+        if reason not in by_reason:
+            by_reason[reason] = {
+                "notes": reason,
+                "total_cost": 0.0,
+                "count": 0
+            }
+        by_reason[reason]["total_cost"] += cost
+        by_reason[reason]["count"] += 1
+
+    # Convertir dicts a listas y ordenar por costo descendente
+    by_ingredient_list = [
+        LossSummaryItem(
+            ingredient_id=item["ingredient_id"],
+            name=item["name"],
+            quantity=round(item["quantity"], 2),
+            unit=item["unit"],
+            total_cost=round(item["total_cost"], 2)
+        )
+        for item in by_ing.values()
+    ]
+    by_ingredient_list.sort(key=lambda x: x.total_cost, reverse=True)
+
+    by_reason_list = [
+        LossReasonItem(
+            notes=item["notes"],
+            total_cost=round(item["total_cost"], 2),
+            count=item["count"]
+        )
+        for item in by_reason.values()
+    ]
+    by_reason_list.sort(key=lambda x: x.total_cost, reverse=True)
+
+    return LossesReport(
+        date_from=date_from,
+        date_to=date_to,
+        total_loss_cost=round(total_loss_cost, 2),
+        by_ingredient=by_ingredient_list,
+        by_reason=by_reason_list
+    )
