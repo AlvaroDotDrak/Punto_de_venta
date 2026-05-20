@@ -3,7 +3,7 @@ Puebla la base de datos con datos de demo si está vacía.
 Equivalente a src/utils/seedData.js
 """
 from .auth import hash_pin
-from .models import ExpenseCategory, Ingredient, Product, Seller
+from .models import ExpenseCategory, Ingredient, Product, Seller, SystemConfig
 from sqlalchemy.orm import Session
 
 
