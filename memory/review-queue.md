@@ -87,3 +87,58 @@ El último commit es `d5a30bf` (antes de Fase 1). Todo el trabajo de Fase 1 y Fa
 3. Marcar como [RESUELTO] con fecha
 4. Reportar a Álvaro
 ```
+
+---
+
+## [RESUELTO] Briefing: Fase 4 — Dashboard Admin, Historial de Caja y Tests
+
+- **De:** Claude
+- **Para:** Antigravity
+- **Estado:** resuelto
+- **Fecha:** 2026-05-20
+- **Resuelto en:** 2026-05-20
+
+### Contexto
+Álvaro aprobó mejoras para el rol admin y cobertura de tests. Armar `implementation_plan.md` con diseño técnico, presentarlo a Álvaro para aprobación, y esperar el ok antes de implementar.
+
+### 1. Dashboard Admin (prioridad alta)
+Cuatro secciones a agregar en `Dashboard.jsx`:
+
+**a) Resumen del día**
+- Ventas totales, cantidad de transacciones, método de pago más usado, vendedora con más ventas
+- Datos en `Sale` + `Seller`
+
+**b) Alertas activas** (tarjeta única, sin ir a 3 módulos)
+- Insumos bajo stock mínimo → `current_stock <= min_stock`
+- Encargos con entrega hoy o mañana → `Order.delivery_date`
+- Productos de vitrina próximos a vencer → `ShowcaseItem.placed_at` + `max_showcase_hours`
+
+**c) Top 5 productos de la semana**
+- Más vendidos por unidad o ingreso — datos en `SaleItem`
+
+**d) Estado de caja resumido**
+- Abierta/cerrada, monto acumulado en efectivo, hora de apertura
+- Datos en `CashRegister` + `CashMovement`
+
+### 2. Historial de Caja (prioridad media)
+Tabla de los últimos 30 cierres en el módulo de Caja:
+- Fecha apertura/cierre, monto apertura, monto esperado, monto real, diferencia (verde/rojo), notas
+- Todos los datos ya están en `CashRegister`
+- Nuevo endpoint: `GET /api/cash/history?limit=30`
+
+### 3. Tests (prioridad media-baja)
+**Python/pytest — sin infraestructura compleja:**
+- Extraer funciones puras a `backend/utils.py`: conversión de unidades, IVA, reabastecimiento, fracción de receta, valorización de merma
+- Testear cada función con pytest sin DB ni servidor
+
+**Vitest (React):**
+- `formatCurrency` y `formatDate` de `formatters.js`
+- Panel de reabastecimiento con datos mock
+- `RecipeModal` calcula costos correctamente
+
+### Instrucciones
+1. Leer `Dashboard.jsx` y módulo de Caja para entender el estado actual
+2. Armar `implementation_plan.md` con diseño técnico
+3. Incluir Preguntas Abiertas donde haya decisiones de UI o negocio
+4. **Esperar aprobación de Claude y Álvaro antes de implementar**
+5. Al terminar: commit + marcar este item como `[RESUELTO]`

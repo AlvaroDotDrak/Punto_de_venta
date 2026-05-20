@@ -63,6 +63,11 @@ def seed_database(db: Session) -> None:
         db.add_all(default_categories)
         db.commit()
 
+    # Siempre asegurar configuraciones por defecto
+    if db.query(SystemConfig).filter(SystemConfig.key == "showcase_alert_hours").count() == 0:
+        db.add(SystemConfig(key="showcase_alert_hours", value="24"))
+        db.commit()
+
     if db.query(Seller).count() > 0:
         return
 

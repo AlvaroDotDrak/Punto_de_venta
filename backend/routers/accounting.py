@@ -12,11 +12,10 @@ from ..auth import require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import AccountingSummary, ExpenseSummaryItem, IncomeSummaryItem, LossesReport, LossSummaryItem, LossReasonItem
 
+from ..utils import calculate_vat
+
 router = APIRouter(prefix="/accounting", tags=["accounting"])
 
-# Tasa de extracción de IVA: los precios en el POS ya incluyen IVA.
-# IVA contenido = total × 19/119  (≠ total × 0.19)
-_VAT_RATE = 19 / 119
 
 MONTH_NAMES = [
     "", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -91,11 +90,11 @@ def get_summary(
     # ── IVA estimado (extracción 19/119 — precios incluyen IVA) ──────────────
     # Débito Fiscal: IVA cobrado en ventas con boleta + IVA de facturas emitidas
     sales_with_receipt_total = sum(s.total for s in sales if s.has_receipt)
-    vat_debit = sales_with_receipt_total * _VAT_RATE + invoices_tax_total
+    vat_debit = calculate_vat(sales_with_receipt_total) + invoices_tax_total
 
     # Crédito Fiscal: IVA en compras donde el proveedor emitió factura
     expenses_factura_total = sum(e.amount for e in expenses if (e.document_type or 'boleta') == 'factura')
-    vat_credit = expenses_factura_total * _VAT_RATE
+    vat_credit = calculate_vat(expenses_factura_total)
 
     vat_balance = vat_debit - vat_credit
 
@@ -181,8 +180,8 @@ def export_report(
 
     sales_with_receipt_total = sum(s.total for s in sales if s.has_receipt)
     invoices_tax_total = sum(i.tax_amount for i in invoices)
-    vat_debit = sales_with_receipt_total * _VAT_RATE + invoices_tax_total
-    vat_credit = sum(e.amount for e in expenses if (e.document_type or 'boleta') == 'factura') * _VAT_RATE
+    vat_debit = calculate_vat(sales_with_receipt_total) + invoices_tax_total
+    vat_credit = calculate_vat(sum(e.amount for e in expenses if (e.document_type or 'boleta') == 'factura'))
     vat_balance = vat_debit - vat_credit
 
     header_font = Font(bold=True, color="FFFFFF")

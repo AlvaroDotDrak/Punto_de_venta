@@ -6,6 +6,7 @@ from ..models import Ingredient, IngredientMovement
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientMovementOut, IngredientOut, IngredientUpdate, RestockSuggestion
+from ..utils import calculate_suggested_restock, calculate_loss_valuation
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
@@ -76,9 +77,9 @@ def get_restock_suggestions(
     
     suggestions = []
     for item in ingredients:
-        if item.current_stock < item.min_stock:
-            suggested_qty = (item.min_stock * 2) - item.current_stock
-            estimated_cost = suggested_qty * item.last_price
+        suggested_qty = calculate_suggested_restock(item.current_stock, item.min_stock)
+        if suggested_qty > 0:
+            estimated_cost = suggested_qty * (item.last_price or 0.0)
             suggestions.append(
                 RestockSuggestion(
                     ingredient_id=item.id,
@@ -146,7 +147,7 @@ def add_movement(
     elif payload.type in ("usage", "loss"):
         ingredient.current_stock -= payload.quantity
         if payload.type == "loss" and movement.cost is None:
-            movement.cost = payload.quantity * ingredient.last_price
+            movement.cost = calculate_loss_valuation(payload.quantity, ingredient.last_price or 0.0)
 
     db.commit()
     notes_txt = f" - Nota: {payload.notes}" if payload.notes else ""

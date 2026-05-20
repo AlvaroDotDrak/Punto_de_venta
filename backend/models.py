@@ -288,3 +288,11 @@ class AuditLog(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     seller = relationship("Seller", back_populates="audit_logs")
+
+
+class SystemConfig(Base):
+    __tablename__ = "system_config"
+
+    key = Column(String, primary_key=True, unique=True, index=True)
+    value = Column(String, nullable=False)
+

@@ -69,13 +69,14 @@ export default function RecipeModal({ product, onClose }) {
           const mapped = recipeData.map(item => {
             const baseUnit = item.ingredient_unit || 'unidad';
             const ing = ingData.find(i => i.id === item.ingredient_id);
+            const ingBase = ing ? (FRIENDLY_UNIT_MAP[ing.unit.toLowerCase().trim()] || ing.unit) : baseUnit;
             // Por defecto, mostramos al usuario en la misma unidad que está el insumo
             return {
               ingredient_id: item.ingredient_id,
               name: item.ingredient_name,
               quantity: item.quantity,
               unit: baseUnit,
-              base_unit: baseUnit,
+              base_unit: ingBase,
               last_price: ing?.last_price || 0
             };
           });

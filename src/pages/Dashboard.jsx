@@ -5,6 +5,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
+import { useSeller } from '../context/SellerContext';
 import {
   BarChart3, TrendingUp, ShoppingCart, DollarSign, Package,
   ArrowUpRight, ArrowDownRight, CreditCard, Calendar, Users,
@@ -78,6 +79,7 @@ function KpiDelta({ current, prev }) {
 }
 
 export default function Dashboard() {
+  const { currentSeller } = useSeller();
   const [dateRange, setDateRange] = useState('7d');
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -87,6 +89,13 @@ export default function Dashboard() {
   const [recentSales, setRecentSales] = useState([]);
   const [sellers, setSellers] = useState([]);
   const [products, setProducts] = useState([]);
+
+  // Admin dynamic config / operational state
+  const [restockSuggestions, setRestockSuggestions] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [showcaseItems, setShowcaseItems] = useState([]);
+  const [currentCash, setCurrentCash] = useState(null);
+  const [systemConfig, setSystemConfig] = useState({});
 
   // Top Products State
   const [topSortBy, setTopSortBy] = useState('revenue'); // 'revenue' | 'qty'
@@ -102,25 +111,111 @@ export default function Dashboard() {
 
   useEffect(() => {
     const { prevStart, prevEnd } = getPrevPeriod(startDate, endDate);
-    Promise.all([
+    const isAdmin = currentSeller?.role === 'admin';
+    const promises = [
       api.get(`/sales?limit=2000&date_from=${startDate}&date_to=${endDate}`),
       api.get(`/sales?limit=2000&date_from=${prevStart}&date_to=${prevEnd}`),
       api.get(`/sales?limit=2000&date_from=${format(subDays(new Date(), 180), 'yyyy-MM-dd')}`),
       api.get('/sellers'),
       api.get('/products?active_only=false'),
-    ]).then(([cur, prev, recent, sel, prods]) => {
+    ];
+
+    if (isAdmin) {
+      promises.push(api.get('/ingredients/restock').catch(() => []));
+      promises.push(api.get('/orders').catch(() => []));
+      promises.push(api.get('/showcase?status=active').catch(() => []));
+      promises.push(api.get('/cash/current').catch(() => null));
+      promises.push(api.get('/config').catch(() => ({})));
+    }
+
+    Promise.all(promises).then(([cur, prev, recent, sel, prods, restock, ords, showcase, cash, conf]) => {
       setCurrentSales(cur.filter(s => s.status !== 'voided'));
       setPrevSales(prev.filter(s => s.status !== 'voided'));
       setRecentSales(recent.filter(s => s.status !== 'voided'));
       setSellers(sel);
       setProducts(prods);
+
+      if (isAdmin) {
+        setRestockSuggestions(restock || []);
+        setOrders(ords || []);
+        setShowcaseItems(showcase || []);
+        setCurrentCash(cash || null);
+        setSystemConfig(conf || {});
+      }
     }).catch(() => {});
-  }, [startDate, endDate]);
+  }, [startDate, endDate, currentSeller]);
 
   const sellerMap  = useMemo(() => Object.fromEntries(sellers.map(s => [s.id, s])), [sellers]);
   const productMap = useMemo(() => Object.fromEntries(products.map(p => [p.id, p])), [products]);
   const currentItems = useMemo(() => currentSales.flatMap(s => s.items || []), [currentSales]);
   const prevItems = useMemo(() => prevSales.flatMap(s => s.items || []), [prevSales]);
+
+  // Admin memoized metrics
+  const todayStr = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []);
+  const todaySales = useMemo(() => {
+    return currentSales.filter(s => s.created_at.startsWith(todayStr));
+  }, [currentSales, todayStr]);
+
+  const todayRevenue = useMemo(() => todaySales.reduce((s, v) => s + v.total, 0), [todaySales]);
+  const todaySalesCount = todaySales.length;
+
+  const todayPaymentMethod = useMemo(() => {
+    const counts = {};
+    todaySales.forEach(s => {
+      counts[s.payment_method] = (counts[s.payment_method] || 0) + s.total;
+    });
+    let dominant = '';
+    let maxVal = -1;
+    Object.entries(counts).forEach(([method, val]) => {
+      if (val > maxVal) {
+        maxVal = val;
+        dominant = method;
+      }
+    });
+    return dominant;
+  }, [todaySales]);
+
+  const lowStockIngredients = useMemo(() => {
+    return restockSuggestions.map(item => ({
+      name: item.name,
+      current: item.current_stock,
+      min: item.min_stock,
+      unit: item.unit
+    }));
+  }, [restockSuggestions]);
+
+  const ordersTodayTomorrow = useMemo(() => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const tomorrow = format(subDays(new Date(), -1), 'yyyy-MM-dd');
+    return orders.filter(o => 
+      o.status !== 'entregado' && 
+      (o.delivery_date === today || o.delivery_date === tomorrow)
+    );
+  }, [orders]);
+
+  const expiringShowcaseItems = useMemo(() => {
+    const alertHours = parseInt(systemConfig.showcase_alert_hours || 24, 10);
+    const now = new Date();
+    return showcaseItems.filter(item => {
+      if (item.status !== 'active') return false;
+      const placedAt = new Date(item.placed_at);
+      const maxHours = item.product?.max_showcase_hours || 48;
+      const limitTime = new Date(placedAt.getTime() + maxHours * 60 * 60 * 1000);
+      const diffHours = (limitTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+      return diffHours > 0 && diffHours <= alertHours;
+    }).map(item => {
+      const placedAt = new Date(item.placed_at);
+      const maxHours = item.product?.max_showcase_hours || 48;
+      const limitTime = new Date(placedAt.getTime() + maxHours * 60 * 60 * 1000);
+      const diffHours = (limitTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+      return {
+        id: item.id,
+        productName: item.product?.name || 'Producto',
+        type: item.showcase_type,
+        hoursLeft: diffHours
+      };
+    });
+  }, [showcaseItems, systemConfig]);
 
   // KPIs
   const totalRevenue = currentSales.reduce((s, v) => s + v.total, 0);
@@ -277,6 +372,168 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      {/* Secciones de Administración */}
+      {currentSeller?.role === 'admin' && (
+        <div className="chart-grid" style={{ marginBottom: 'var(--space-2xl)' }}>
+          {/* Tarjeta 1: Resumen de Hoy y Estado de Caja */}
+          <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none' }}>
+            <div className="chart-card-title text-display">
+              <span style={{ background: 'var(--color-primary-bg)', padding: 8, borderRadius: 'var(--radius-md)' }}>📊</span>
+              Operaciones de Hoy
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', padding: 'var(--space-sm) 0' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
+                <div style={{ background: 'var(--color-bg)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Ventas Hoy</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, marginTop: 4, color: 'var(--color-primary)' }}>{formatCurrency(todayRevenue)}</div>
+                </div>
+                <div style={{ background: 'var(--color-bg)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Transacciones</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, marginTop: 4 }}>{todaySalesCount}</div>
+                </div>
+              </div>
+              
+              <div style={{ background: 'var(--color-bg)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Pago Predominante</span>
+                <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{PAYMENT_LABELS[todayPaymentMethod] || todayPaymentMethod || 'Ninguno'}</span>
+              </div>
+
+              {/* Estado de Caja */}
+              <div style={{ background: 'var(--color-bg)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-sm)' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Estado de Caja</span>
+                  <span className={`badge ${currentCash ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.75rem', padding: '2px 8px' }}>
+                    {currentCash ? 'Abierta' : 'Cerrada'}
+                  </span>
+                </div>
+                {currentCash ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.85rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Monto Inicial:</span>
+                      <span style={{ fontWeight: 600 }}>{formatCurrency(currentCash.initial_cash)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Efectivo Actual:</span>
+                      <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>{formatCurrency(currentCash.current_cash)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: 4 }}>
+                      <span>Apertura:</span>
+                      <span>{new Date(currentCash.opened_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: 0 }}>La caja se encuentra cerrada actualmente.</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Tarjeta 2: Alertas Activas */}
+          <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none', gridColumn: 'span 2' }}>
+            <div className="chart-card-title text-display" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ background: 'var(--color-danger-bg)', padding: '6px 10px', borderRadius: 'var(--radius-md)', color: 'var(--color-danger)' }}>⚠️</span>
+              Alertas Activas
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)', maxHeight: '330px', overflowY: 'auto' }}>
+              
+              {/* Columna Insumos Bajos */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <h4 style={{ fontSize: '0.9rem', borderBottom: '1px solid rgba(0,0,0,0.05)', paddingBottom: 6, marginBottom: 4, fontWeight: 700 }}>🌾 Insumos Bajos</h4>
+                {lowStockIngredients.length > 0 ? (
+                  lowStockIngredients.map(ing => (
+                    <div key={ing.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--color-danger-bg)', borderRadius: 'var(--radius-md)', borderLeft: '3px solid var(--color-danger)' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{ing.name}</span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-danger)' }}>
+                        {ing.current}/{ing.min} {ing.unit}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-success)', fontWeight: 600 }}>✓ Todos los insumos al día</p>
+                )}
+              </div>
+
+              {/* Columna Encargos Hoy/Mañana */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <h4 style={{ fontSize: '0.9rem', borderBottom: '1px solid rgba(0,0,0,0.05)', paddingBottom: 6, marginBottom: 4, fontWeight: 700 }}>🎂 Encargos de Hoy/Mañana</h4>
+                {ordersTodayTomorrow.length > 0 ? (
+                  ordersTodayTomorrow.map(o => {
+                    const isToday = o.delivery_date === todayStr;
+                    return (
+                      <div key={o.id} style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '8px 12px', background: isToday ? 'rgba(245, 166, 35, 0.1)' : 'var(--color-bg)', borderRadius: 'var(--radius-md)', borderLeft: isToday ? '3px solid #F5A623' : '3px solid #ccc' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>{o.client_name}</span>
+                          <span className={`badge badge-info`} style={{ fontSize: '0.7rem', padding: '1px 6px' }}>{o.status}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+                          <span>{isToday ? 'Hoy' : 'Mañana'} a las {o.delivery_hour || '—'}</span>
+                          <span>{formatCurrency(o.total)}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>Sin encargos para hoy o mañana</p>
+                )}
+              </div>
+
+              {/* Columna Vencimiento Vitrina */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <h4 style={{ fontSize: '0.9rem', borderBottom: '1px solid rgba(0,0,0,0.05)', paddingBottom: 6, marginBottom: 4, fontWeight: 700 }}>⏰ Vencimiento en Vitrina</h4>
+                {expiringShowcaseItems.length > 0 ? (
+                  expiringShowcaseItems.map(item => (
+                    <div key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '8px 12px', background: 'var(--color-danger-bg)', borderRadius: 'var(--radius-md)', borderLeft: '3px solid var(--color-danger)' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>{item.productName}</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--color-danger)', fontWeight: 600 }}>
+                        <span>{item.type === 'trozado' ? 'Trozado' : 'Entero'}</span>
+                        <span>Vence en {item.hoursLeft.toFixed(1)} h</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-success)', fontWeight: 600 }}>✓ Todo fresco en vitrina</p>
+                )}
+              </div>
+
+            </div>
+          </div>
+
+          {/* Tarjeta 3: Top 5 de la Semana */}
+          <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none' }}>
+            <div className="chart-card-title text-display">
+              <span style={{ background: 'var(--color-primary-bg)', padding: 8, borderRadius: 'var(--radius-md)' }}>🎖️</span>
+              Top 5 Semanal
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+              {topProductsData.slice(0, 5).length > 0 ? (
+                topProductsData.slice(0, 5).map(([name, d], idx) => {
+                  const maxVal = topProductsData[0] ? (topSortBy === 'revenue' ? topProductsData[0][1].revenue : topProductsData[0][1].qty) : 1;
+                  const currentVal = topSortBy === 'revenue' ? d.revenue : d.qty;
+                  const pct = Math.round((currentVal / maxVal) * 100);
+                  return (
+                    <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ fontWeight: 600 }}>{idx + 1}. {name}</span>
+                        <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>
+                          {topSortBy === 'revenue' ? formatCurrency(d.revenue) : `${d.qty} u`}
+                        </span>
+                      </div>
+                      <div style={{ width: '100%', height: 6, background: 'rgba(0,0,0,0.05)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: chartColors[idx % chartColors.length], borderRadius: 3 }} />
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="empty-state"><Package className="icon" size={32} /><p>Sin datos</p></div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      )}
 
       {/* Main Charts Row */}
       <div className="chart-grid">

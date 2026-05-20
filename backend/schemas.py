@@ -488,3 +488,17 @@ class ProductRecipeOut(BaseModel):
     ingredient_unit: str
 
     model_config = {"from_attributes": True}
+
+
+# ── System Config ─────────────────────────────────────────────────────────────
+
+class SystemConfigOut(BaseModel):
+    key: str
+    value: str
+
+    model_config = {"from_attributes": True}
+
+
+class SystemConfigUpdate(BaseModel):
+    value: str
+

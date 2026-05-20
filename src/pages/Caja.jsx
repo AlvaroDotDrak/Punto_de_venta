@@ -106,7 +106,7 @@ export default function Caja() {
 
   const loadHistory = async () => {
     try {
-      const data = await api.get('/cash/history');
+      const data = await api.get('/cash/history?limit=30');
       setHistory(data);
     } catch {
       setHistory([]);
@@ -538,6 +538,7 @@ function HistoryList({ history, onSelect }) {
               <th style={{ textAlign: 'right' }}>Contado</th>
               <th style={{ textAlign: 'right' }}>Esperado</th>
               <th style={{ textAlign: 'right' }}>Diferencia</th>
+              <th>Notas</th>
               <th></th>
             </tr>
           </thead>
@@ -554,6 +555,9 @@ function HistoryList({ history, onSelect }) {
                   <td style={{ textAlign: 'right' }}>{reg.expected_amount != null ? formatCurrency(reg.expected_amount) : '—'}</td>
                   <td style={{ textAlign: 'right', fontWeight: 600, color: dif == null ? undefined : Math.abs(dif) < 500 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                     {dif != null ? `${dif >= 0 ? '+' : ''}${formatCurrency(dif)}` : '—'}
+                  </td>
+                  <td style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={reg.notes}>
+                    {reg.notes || '—'}
                   </td>
                   <td><ChevronRight size={16} style={{ color: 'var(--color-text-light)' }} /></td>
                 </tr>

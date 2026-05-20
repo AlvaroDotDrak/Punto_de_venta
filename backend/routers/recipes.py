@@ -6,56 +6,10 @@ from ..models import Product, Ingredient, ProductRecipe
 from ..auth import require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import ProductRecipeSave, ProductRecipeOut
+from ..utils import convert_unit
 
 router = APIRouter(prefix="/products", tags=["recipes"])
 
-CONVERSION_FACTORS = {
-    # Masa/Peso
-    ("kg", "g"): 1000.0,
-    ("g", "kg"): 0.001,
-    # Volumen
-    ("l", "ml"): 1000.0,
-    ("ml", "l"): 0.001,
-    # Unidades
-    ("docena", "unidad"): 12.0,
-    ("unidad", "docena"): 1.0 / 12.0,
-}
-
-def convert_unit(value: float, from_unit: str, to_unit: str) -> float:
-    from_unit = from_unit.lower().strip()
-    to_unit = to_unit.lower().strip()
-    
-    # Mapeo amistoso de abreviaciones comunes
-    map_units = {
-        "gr": "g",
-        "grs": "g",
-        "gramos": "g",
-        "kilo": "kg",
-        "kilos": "kg",
-        "kg": "kg",
-        "litro": "l",
-        "litros": "l",
-        "l": "l",
-        "ml": "ml",
-        "cc": "ml",
-        "unid": "unidad",
-        "unidades": "unidad",
-        "unidad": "unidad",
-        "docena": "docena",
-        "docenas": "docena",
-    }
-    
-    from_unit = map_units.get(from_unit, from_unit)
-    to_unit = map_units.get(to_unit, to_unit)
-    
-    if from_unit == to_unit:
-        return value
-        
-    pair = (from_unit, to_unit)
-    if pair in CONVERSION_FACTORS:
-        return value * CONVERSION_FACTORS[pair]
-        
-    raise ValueError(f"Unidades incompatibles: no se puede convertir de '{from_unit}' a '{to_unit}'")
 
 
 @router.get("/{product_id}/recipe", response_model=list[ProductRecipeOut])

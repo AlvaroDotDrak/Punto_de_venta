@@ -8,6 +8,7 @@ from ..models import CashMovement, CashRegister, Sale, SaleItem, ShowcaseItem, P
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
+from ..utils import calculate_recipe_fraction
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
@@ -152,11 +153,8 @@ def create_sale(
             recipes = db.query(ProductRecipe).filter(ProductRecipe.product_id == item_in.product_id).all()
             if recipes:
                     # Calcular la fracción de la receta consumida
-                    if item_in.showcase_type == "trozado":
-                        slices_count = product.slices if (product and product.slices) else 8
-                        fraction = item_in.quantity / slices_count
-                    else:
-                        fraction = item_in.quantity
+                    slices_count = product.slices if (product and product.slices) else 8
+                    fraction = calculate_recipe_fraction(item_in.quantity, item_in.showcase_type, slices_count)
 
                     for r in recipes:
                         qty_used = (fraction * r.quantity) / r.yield_qty
