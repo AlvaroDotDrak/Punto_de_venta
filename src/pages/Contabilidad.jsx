@@ -73,7 +73,7 @@ export default function Contabilidad() {
     setProfLoading(true);
     try {
       const res = await api.get(`/accounting/profitability?date_from=${from}&date_to=${to}`);
-      setProfitability(res.data);
+      setProfitability(res);
     } catch (err) {
       toast.error('Error al cargar rentabilidad: ' + err.message);
     } finally {
