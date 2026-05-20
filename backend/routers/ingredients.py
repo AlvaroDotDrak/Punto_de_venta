@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import Ingredient, IngredientMovement
@@ -48,6 +48,21 @@ def update_ingredient(
     return ingredient
 
 
+@router.get("/movements/global", response_model=list[IngredientMovementOut])
+def list_global_movements(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    return (
+        db.query(IngredientMovement)
+        .options(joinedload(IngredientMovement.ingredient), joinedload(IngredientMovement.seller))
+        .order_by(IngredientMovement.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 @router.get("/{ingredient_id}/movements", response_model=list[IngredientMovementOut])
 def list_movements(
     ingredient_id: int,
@@ -60,6 +75,7 @@ def list_movements(
         raise HTTPException(status_code=404, detail="Insumo no encontrado")
     return (
         db.query(IngredientMovement)
+        .options(joinedload(IngredientMovement.ingredient))
         .filter(IngredientMovement.ingredient_id == ingredient_id)
         .order_by(IngredientMovement.created_at.desc())
         .limit(limit)
@@ -78,11 +94,15 @@ def add_movement(
     if not ingredient:
         raise HTTPException(status_code=404, detail="Insumo no encontrado")
 
+    if payload.type not in ("purchase", "adjustment", "usage", "loss"):
+        raise HTTPException(status_code=400, detail="Tipo de movimiento no válido")
+
     movement = IngredientMovement(
         ingredient_id=ingredient_id,
         type=payload.type,
         quantity=payload.quantity,
         cost=payload.cost,
+        notes=payload.notes,
         seller_id=seller.id,
     )
     db.add(movement)
@@ -90,12 +110,13 @@ def add_movement(
     # Actualizar stock
     if payload.type in ("purchase", "adjustment"):
         ingredient.current_stock += payload.quantity
-        if payload.cost:
+        if payload.type == "purchase" and payload.cost:
             ingredient.last_price = payload.cost / payload.quantity
-    elif payload.type == "usage":
+    elif payload.type in ("usage", "loss"):
         ingredient.current_stock -= payload.quantity
 
     db.commit()
+    notes_txt = f" - Nota: {payload.notes}" if payload.notes else ""
     log_action(db, ACTIONS.INGREDIENT_MOVEMENT, seller.id,
-               f"Insumo {ingredient.name}: {payload.type} {payload.quantity}{ingredient.unit}")
+               f"Insumo {ingredient.name}: {payload.type} {payload.quantity}{ingredient.unit}{notes_txt}")
     return {"ok": True}

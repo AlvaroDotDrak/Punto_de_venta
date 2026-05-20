@@ -6,8 +6,9 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2, BarChart2 } from 'lucide-react';
+import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2, BarChart2, ChefHat } from 'lucide-react';
 import ProductStatsModal from '../components/ProductStatsModal';
+import RecipeModal from '../components/Productos/RecipeModal';
 
 const categories = [
   { value: 'vitrina', label: 'Vitrina 🍰' },
@@ -54,6 +55,7 @@ export default function Productos() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [statsProduct, setStatsProduct] = useState(null);
+  const [recipeProduct, setRecipeProduct] = useState(null);
 
   const loadProducts = async () => {
     const data = await api.get('/products?active_only=false').catch(() => []);
@@ -174,6 +176,7 @@ export default function Productos() {
             </div>
             <div className="product-card-actions">
               <button className="btn btn-ghost btn-sm" title="Estadísticas" onClick={() => setStatsProduct(p)}><BarChart2 size={14} /></button>
+              <button className="btn btn-ghost btn-sm" title="Receta (Insumos)" onClick={() => setRecipeProduct(p)}><ChefHat size={14} /></button>
               <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
               {p.active && (
                 <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p)}>
@@ -187,6 +190,10 @@ export default function Productos() {
 
       {statsProduct && (
         <ProductStatsModal product={statsProduct} onClose={() => setStatsProduct(null)} />
+      )}
+
+      {recipeProduct && (
+        <RecipeModal product={recipeProduct} onClose={() => setRecipeProduct(null)} />
       )}
 
       {showForm && (

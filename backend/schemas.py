@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 # ── Sellers ──────────────────────────────────────────────────────────────────
@@ -270,9 +270,16 @@ class IngredientUpdate(BaseModel):
     active: Optional[bool] = None
 
 class IngredientMovementCreate(BaseModel):
-    type: str         # 'purchase' | 'adjustment' | 'usage'
+    type: str         # 'purchase' | 'adjustment' | 'usage' | 'loss'
     quantity: float
     cost: Optional[float] = None
+    notes: Optional[str] = None
+
+    @model_validator(mode='after')
+    def notes_required_for_loss(self):
+        if self.type == 'loss' and not self.notes:
+            raise ValueError("Las mermas requieren una nota descriptiva")
+        return self
 
 class IngredientOut(BaseModel):
     id: int
@@ -290,10 +297,15 @@ class IngredientOut(BaseModel):
 class IngredientMovementOut(BaseModel):
     id: int
     ingredient_id: int
+    ingredient_name: Optional[str] = None
+    ingredient_unit: Optional[str] = None
     type: str
     quantity: float
     cost: Optional[float]
+    notes: Optional[str] = None
     seller_id: Optional[int]
+    sale_id: Optional[int] = None
+    product_id: Optional[int] = None
     created_at: datetime
     seller: Optional[SellerOut] = None
 
@@ -422,5 +434,28 @@ class AuditLogOut(BaseModel):
     details: Optional[str]
     created_at: datetime
     seller: Optional[SellerOut] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ── Product Recipes ──────────────────────────────────────────────────────────
+
+class ProductRecipeItemIn(BaseModel):
+    ingredient_id: int
+    quantity: float            # Cantidad ingresada en la UI
+    unit: str                  # Unidad usada en la UI ('g', 'kg', 'ml', 'l', etc.)
+    yield_qty: float = 1.0
+
+class ProductRecipeSave(BaseModel):
+    items: list[ProductRecipeItemIn]
+
+class ProductRecipeOut(BaseModel):
+    id: int
+    product_id: int
+    ingredient_id: int
+    quantity: float
+    yield_qty: float
+    ingredient_name: str
+    ingredient_unit: str
 
     model_config = {"from_attributes": True}

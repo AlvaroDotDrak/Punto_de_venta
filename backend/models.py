@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey,
-    Integer, String, Text
+    Integer, String, Text, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -43,6 +43,7 @@ class Product(Base):
 
     showcase_items = relationship("ShowcaseItem", back_populates="product")
     sale_items = relationship("SaleItem", back_populates="product")
+    recipes = relationship("ProductRecipe", back_populates="product", cascade="all, delete-orphan")
 
 
 class ShowcaseItem(Base):
@@ -186,10 +187,50 @@ class IngredientMovement(Base):
     quantity = Column(Float, nullable=False)
     cost = Column(Float, nullable=True)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
+    sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
     ingredient = relationship("Ingredient", back_populates="movements")
     seller = relationship("Seller", back_populates="ingredient_movements")
+    sale = relationship("Sale")
+    product = relationship("Product")
+
+    @property
+    def ingredient_name(self) -> str:
+        return self.ingredient.name if self.ingredient else ""
+
+    @property
+    def ingredient_unit(self) -> str:
+        return self.ingredient.unit if self.ingredient else ""
+
+
+
+class ProductRecipe(Base):
+    __tablename__ = "product_recipes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=False)
+    quantity = Column(Float, nullable=False)   # Cantidad usada en el lote (en la unidad base del ingrediente)
+    yield_qty = Column(Float, default=1.0)     # Unidades que rinde el lote (ej: 30)
+
+    product = relationship("Product", back_populates="recipes")
+    ingredient = relationship("Ingredient")
+
+    __table_args__ = (
+        UniqueConstraint("product_id", "ingredient_id", name="uq_product_ingredient"),
+    )
+
+    @property
+    def ingredient_name(self):
+        return self.ingredient.name if self.ingredient else ""
+
+    @property
+    def ingredient_unit(self):
+        return self.ingredient.unit if self.ingredient else ""
+
 
 
 class ExpenseCategory(Base):

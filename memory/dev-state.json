@@ -1,0 +1,24 @@
+{
+  "projects": {
+    "punto_de_venta": {
+      "branch": "main",
+      "status": "completed",
+      "nextSteps": [
+        "Probar el comportamiento del módulo de recetas con Álvaro y su mamá (Tía Julia) en producción",
+        "Implementar el control de mermas/ajuste manual de ingredientes",
+        "Verificar que el historial de movimientos de ingredientes refleje correctamente los consumos de recetas"
+      ],
+      "blockers": [],
+      "lastUpdated": "2026-05-20T05:31:00Z"
+    }
+  },
+  "lastBuild": {
+    "status": "success",
+    "timestamp": "2026-05-20T05:29:04Z",
+    "tests": { "passed": 9, "failed": 0 }
+  },
+  "todos": [
+    { "id": 1, "task": "Comprobar persistencia del stock autogenerado al vender trozos sin stock previo", "priority": "medium" },
+    { "id": 2, "task": "Implementar ajuste manual de ingredientes (mermas / reposiciones) en bodega", "priority": "high" }
+  ]
+}

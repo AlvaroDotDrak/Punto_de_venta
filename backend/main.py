@@ -12,10 +12,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from .database import Base, SessionLocal, engine
+from .models import ProductRecipe  # Asegurar creación de la tabla
 from .seed import seed_database
 from .backup import check_and_run_backup
 from .routers import auth, sellers, products, sales, showcase, cash, orders, ingredients, audit, config
-from .routers import expenses, invoices, accounting
+from .routers import expenses, invoices, accounting, recipes
 
 
 def _add_column_if_missing(conn, sql: str) -> None:
@@ -49,6 +50,12 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN locked_until DATETIME")
         # v2.7: tipo de documento en gastos (necesario para crédito fiscal IVA)
         _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN document_type TEXT DEFAULT 'boleta'")
+        # v2.8: sale_id en movimientos de ingredientes (para revertir compras/usos al anular)
+        _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN sale_id INTEGER")
+        # v2.9: notes en movimientos de ingredientes (descripciones para mermas/ajustes)
+        _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN notes TEXT")
+        # v2.10: product_id en movimientos de ingredientes (para rentabilidad por producto)
+        _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN product_id INTEGER")
 
 
 @asynccontextmanager
@@ -100,6 +107,7 @@ app.include_router(config.router, prefix="/api")
 app.include_router(expenses.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 app.include_router(accounting.router, prefix="/api")
+app.include_router(recipes.router, prefix="/api")
 
 
 @app.get("/api/health")

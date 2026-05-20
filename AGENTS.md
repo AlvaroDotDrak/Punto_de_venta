@@ -16,6 +16,7 @@ Before doing anything else:
 4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
 5. **Read `DEV.md`** — current projects, architecture decisions, tech stack
 6. **Check `memory/dev-state.json`** — active branches, pending tasks, last build status
+7. **Check `memory/review-queue.md`** — items de feedback de Claude pendientes de incorporar
 
 Don't ask permission. Just do it.
 
@@ -128,6 +129,28 @@ Update this file after every significant change.
    - Final message when done
 
 **Never leave a task "finished" without telling the user it's done.**
+
+### 📦 Commit Protocol (Obligatorio)
+
+**Al terminar cada feature o fase, SIEMPRE hacer commit antes de reportar como completado:**
+
+```bash
+git add -p   # Revisar cambios antes de agregar
+git commit -m "feat: [descripción breve de la feature]"
+```
+
+**Formato de mensajes de commit:**
+- `feat:` — nueva funcionalidad
+- `fix:` — corrección de bug
+- `refactor:` — mejora sin cambio de comportamiento
+- `docs:` — solo documentación
+
+**Regla de Álvaro:** Claude no aprueba el plan de la siguiente fase hasta que la anterior esté commiteada. Sin commit = sin avance.
+
+**Después de hacer commit:**
+1. Actualizar `memory/review-queue.md` marcando los items resueltos
+2. Actualizar `memory/dev-state.json` con el nuevo estado
+3. Reportar a Álvaro
 
 ### 🔄 Development Cycle
 

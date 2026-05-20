@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { TrendingUp, TrendingDown, DollarSign, FileDown, Receipt, Scale } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, FileDown, Receipt, Scale, AlertCircle } from 'lucide-react';
 import {
   Chart as ChartJS,
   ArcElement, Tooltip, Legend,
@@ -48,6 +48,11 @@ export default function Contabilidad() {
   const [activePreset, setActivePreset] = useState('Este mes');
   const [exporting, setExporting] = useState(false);
 
+  // Estados para rentabilidad real
+  const [activeView, setActiveView] = useState('balance'); // 'balance' o 'profitability'
+  const [profitability, setProfitability] = useState(null);
+  const [profLoading, setProfLoading] = useState(false);
+
   const loadSummary = async (from, to) => {
     setLoading(true);
     try {
@@ -60,20 +65,44 @@ export default function Contabilidad() {
     }
   };
 
+  const loadProfitability = async (from = dateFrom, to = dateTo) => {
+    setProfLoading(true);
+    try {
+      const res = await api.get(`/accounting/profitability?date_from=${from}&date_to=${to}`);
+      setProfitability(res.data);
+    } catch (err) {
+      toast.error('Error al cargar rentabilidad: ' + err.message);
+    } finally {
+      setProfLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadSummary(dateFrom, dateTo);
   }, []);
+
+  useEffect(() => {
+    if (activeView === 'profitability') {
+      loadProfitability(dateFrom, dateTo);
+    }
+  }, [activeView]);
 
   const applyPreset = (preset) => {
     setActivePreset(preset.label);
     setDateFrom(preset.from);
     setDateTo(preset.to);
     loadSummary(preset.from, preset.to);
+    if (activeView === 'profitability') {
+      loadProfitability(preset.from, preset.to);
+    }
   };
 
   const applyCustom = () => {
     setActivePreset('Personalizado');
     loadSummary(dateFrom, dateTo);
+    if (activeView === 'profitability') {
+      loadProfitability(dateFrom, dateTo);
+    }
   };
 
   const handleExport = async () => {
@@ -200,6 +229,195 @@ export default function Contabilidad() {
         </div>
       </div>
 
+      {/* Tabs de Vista */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginBottom: 'var(--space-xl)' }}>
+        <button
+          onClick={() => setActiveView('balance')}
+          style={{
+            padding: '12px 24px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeView === 'balance' ? '2.5px solid var(--color-primary)' : '2.5px solid transparent',
+            color: activeView === 'balance' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontSize: '0.95rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'all 0.2s'
+          }}
+        >
+          <Scale size={16} /> Balance General
+        </button>
+        <button
+          onClick={() => setActiveView('profitability')}
+          style={{
+            padding: '12px 24px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeView === 'profitability' ? '2.5px solid var(--color-primary)' : '2.5px solid transparent',
+            color: activeView === 'profitability' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontSize: '0.95rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'all 0.2s'
+          }}
+        >
+          <TrendingUp size={16} /> Rentabilidad Real (COGS)
+        </button>
+      </div>
+
+      {activeView === 'profitability' ? (
+        profLoading ? (
+          <div className="card animate-fade-in" style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--color-text-secondary)' }}>
+            Calculando costos y márgenes de rentabilidad...
+          </div>
+        ) : profitability && (
+          <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            {/* KPIs de Rentabilidad */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)' }}>
+              <SummaryCard
+                icon={<TrendingUp size={22} />}
+                label="Venta Total (Productos)"
+                value={formatCurrency(profitability.total_revenue)}
+                sub="Ingresos brutos percibidos"
+                color="var(--color-success)"
+              />
+              <SummaryCard
+                icon={<TrendingDown size={22} />}
+                label="Costo de Insumos (COGS)"
+                value={formatCurrency(profitability.total_cogs)}
+                sub="Consumos de ingredientes valorizados"
+                color="#C0392B"
+              />
+              <SummaryCard
+                icon={<DollarSign size={22} />}
+                label="Utilidad Bruta"
+                value={formatCurrency(profitability.total_profit)}
+                sub="Venta − Costo Insumos"
+                color="var(--color-primary)"
+                highlight
+              />
+              <SummaryCard
+                icon={<Scale size={22} />}
+                label="Margen de Contribución"
+                value={`${profitability.total_margin}%`}
+                sub="Eficiencia de bodega"
+                color="#2E7BBF"
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-md)', marginTop: 'var(--space-sm)' }}>
+              {/* Márgenes por Categoría */}
+              <div className="card">
+                <h3 style={{ margin: '0 0 var(--space-md)', fontSize: '0.95rem', fontWeight: 600 }}>
+                  Márgenes por Categoría
+                </h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+                      <th style={{ textAlign: 'left', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Categoría</th>
+                      <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Ventas</th>
+                      <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Costo Insumos</th>
+                      <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Margen %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profitability.categories.map((c, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                        <td style={{ padding: '8px 0', fontWeight: 600 }}>{c.label}</td>
+                        <td style={{ padding: '8px 0', textAlign: 'right' }}>{formatCurrency(c.revenue)}</td>
+                        <td style={{ padding: '8px 0', textAlign: 'right', color: '#C0392B' }}>{formatCurrency(c.cogs)}</td>
+                        <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: 700, color: c.margin >= 50 ? 'var(--color-success)' : c.margin >= 30 ? '#C8820A' : '#C0392B' }}>
+                          {c.margin}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Nota de Costeo */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 12 }}>
+                <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>Detalle de Costeo Real (COGS)</h4>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                  * El Costo de Ventas (COGS) se registra dinámicamente al momento de cada venta usando el precio unitario del insumo registrado en esa fecha exacta.
+                </p>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                  * El fallback de costo aproximado (precio actual de bodega) solo se aplica a registros históricos previos a la implementación.
+                </p>
+                <div style={{ padding: '8px 12px', background: 'rgba(200, 130, 10, 0.05)', border: '1px solid rgba(200, 130, 10, 0.15)', borderRadius: 'var(--radius-md)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <AlertCircle size={18} style={{ color: '#C8820A', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.76rem', color: 'var(--color-text-secondary)', lineHeight: 1.3 }}>
+                    <strong>Sin Receta:</strong> Productos sin receta se asumen al 100% de margen. Configure sus ingredientes para obtener costeo preciso.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Listado Detallado de Productos */}
+            <div className="card" style={{ marginTop: 'var(--space-sm)' }}>
+              <h3 style={{ margin: '0 0 var(--space-md)', fontSize: '0.95rem', fontWeight: 600 }}>
+                Desglose de Rentabilidad por Producto
+              </h3>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+                    <th style={{ textAlign: 'left', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Producto</th>
+                    <th style={{ textAlign: 'left', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Categoría</th>
+                    <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Udes</th>
+                    <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Venta Bruta</th>
+                    <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>COGS</th>
+                    <th style={{ textAlign: 'right', padding: '6px 0', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Utilidad</th>
+                    <th style={{ textAlign: 'left', padding: '6px 0 6px 20px', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Margen de Utilidad (%)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profitability.products.map((p) => {
+                    const marginColor = p.margin >= 60 ? '#2E8B57' : p.margin >= 40 ? '#2E7BBF' : p.margin >= 25 ? '#C8820A' : '#C0392B';
+                    return (
+                      <tr key={p.product_id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                        <td style={{ padding: '10px 0' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontWeight: 600 }}>{p.name}</span>
+                            {!p.has_recipe && (
+                              <span style={{ fontSize: '0.68rem', color: '#C8820A', background: 'rgba(200, 130, 10, 0.08)', padding: '1px 5px', borderRadius: 4, width: 'fit-content', fontWeight: 600 }}>
+                                Sin receta
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 0', color: 'var(--color-text-secondary)', fontSize: '0.8rem' }}>{p.category}</td>
+                        <td style={{ padding: '10px 0', textAlign: 'right', fontWeight: 500 }}>{p.units_sold}</td>
+                        <td style={{ padding: '10px 0', textAlign: 'right', fontWeight: 600, color: 'var(--color-success)' }}>{formatCurrency(p.revenue)}</td>
+                        <td style={{ padding: '10px 0', textAlign: 'right', color: p.cogs > 0 ? '#C0392B' : 'var(--color-text-light)' }}>
+                          {p.cogs > 0 ? formatCurrency(p.cogs) : '—'}
+                        </td>
+                        <td style={{ padding: '10px 0', textAlign: 'right', fontWeight: 700 }}>{formatCurrency(p.profit)}</td>
+                        <td style={{ padding: '10px 0 10px 20px', minWidth: 160 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ flex: 1, height: 6, background: 'rgba(0,0,0,0.05)', borderRadius: 99, overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.max(0, Math.min(100, p.margin))}%`, height: '100%', background: marginColor, borderRadius: 99 }} />
+                            </div>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: marginColor, width: 36, textAlign: 'right' }}>
+                              {p.margin}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      ) : (
+        <>
       {loading && (
         <div className="card" style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--color-text-secondary)' }}>
           Cargando resumen...
@@ -480,6 +698,8 @@ export default function Contabilidad() {
               </table>
             </div>
           )}
+        </>
+      )}
         </>
       )}
     </div>

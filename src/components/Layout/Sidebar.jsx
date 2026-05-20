@@ -75,8 +75,8 @@ export default function Sidebar({ open, onClose }) {
       <div className="sidebar-brand">
         <div className="sidebar-brand-icon">🧁</div>
         <div className="sidebar-brand-text">
-          <h2>Pastelería</h2>
-          <span>Punto de Venta</span>
+          <h2 className="text-display" style={{ fontSize: '1.2rem' }}>Tía Julia</h2>
+          <span style={{ fontSize: '0.65rem', letterSpacing: '1px' }}>PASTELERÍA ARTESANAL</span>
         </div>
         <button className="modal-close" onClick={onClose} style={{ marginLeft: 'auto', display: open ? 'block' : 'none' }}>
           <X size={20} />

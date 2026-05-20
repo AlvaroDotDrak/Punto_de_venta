@@ -28,6 +28,7 @@ const MOVEMENT_META = {
   purchase:   { label: 'Compra',   color: '#2E8B57', bg: 'rgba(46,139,87,0.1)',   icon: ArrowDownToLine },
   adjustment: { label: 'Ajuste',   color: '#2E7BBF', bg: 'rgba(46,123,191,0.1)', icon: SlidersHorizontal },
   usage:      { label: 'Consumo',  color: '#C8820A', bg: 'rgba(200,130,10,0.1)', icon: ArrowUpFromLine },
+  loss:       { label: 'Merma',    color: '#C0392B', bg: 'rgba(192,57,43,0.1)',  icon: AlertTriangle },
 };
 
 const emptyForm = { name: '', unit: 'kg', current_stock: 0, min_stock: 0, last_price: 0, category: 'reposteria' };
@@ -53,18 +54,39 @@ export default function Insumos() {
 
   const [showMovement, setShowMovement] = useState(null); // ingredient
   const [movType, setMovType]           = useState('purchase');
-  const [movForm, setMovForm]           = useState({ quantity: '', cost: '' });
+  const [movForm, setMovForm]           = useState({ quantity: '', cost: '', notes: '' });
 
   const [showHistory, setShowHistory]   = useState(null); // ingredient
   const [history, setHistory]           = useState([]);
   const [histLoading, setHistLoading]   = useState(false);
+
+  const [activeTab, setActiveTab]       = useState('stock'); // 'stock' | 'history'
+  const [globalHistory, setGlobalHistory] = useState([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
 
   const loadData = async () => {
     const data = await api.get('/ingredients').catch(() => []);
     setIngredients(data);
   };
 
-  useEffect(() => { loadData(); }, []);
+  const loadGlobalHistory = async () => {
+    setGlobalLoading(true);
+    try {
+      const data = await api.get('/ingredients/movements/global?limit=100');
+      setGlobalHistory(data);
+    } catch {
+      toast.error('No se pudo cargar la bitácora global');
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+    if (activeTab === 'history') {
+      loadGlobalHistory();
+    }
+  }, [activeTab]);
 
   // ── FILTRO + SORT ──────────────────────────────────────
   const displayed = useMemo(() => {
@@ -117,21 +139,35 @@ export default function Insumos() {
     const qty = parseFloat(movForm.quantity);
     if (!qty || qty === 0) { toast.error('Ingresa una cantidad distinta de 0'); return; }
 
-    // Para "usage" el backend resta, así que siempre enviamos positivo
+    if (movType === 'loss' && !movForm.notes?.trim()) {
+      toast.error('Las mermas requieren una nota descriptiva');
+      return;
+    }
+
+    // Para "usage" y "loss" el backend resta, así que siempre enviamos positivo
     // Para "adjustment" permitimos negativo (el backend suma, el signo hace el resto)
-    const finalQty = movType === 'usage' ? Math.abs(qty) : qty;
+    const finalQty = (movType === 'usage' || movType === 'loss') ? Math.abs(qty) : qty;
 
     try {
       await api.post(`/ingredients/${showMovement.id}/movements`, {
         type: movType,
         quantity: finalQty,
         cost: movType === 'purchase' ? (parseFloat(movForm.cost) || null) : null,
+        notes: movForm.notes?.trim() || null,
       });
-      const labels = { purchase: 'Compra registrada', adjustment: 'Ajuste aplicado', usage: 'Consumo registrado' };
+      const labels = {
+        purchase: 'Compra registrada',
+        adjustment: 'Ajuste aplicado',
+        usage: 'Consumo registrado',
+        loss: 'Merma registrada'
+      };
       toast.success(labels[movType]);
       setShowMovement(null);
-      setMovForm({ quantity: '', cost: '' });
+      setMovForm({ quantity: '', cost: '', notes: '' });
       loadData();
+      if (activeTab === 'history') {
+        loadGlobalHistory();
+      }
     } catch (err) { toast.error('Error: ' + err.message); }
   };
 
@@ -184,95 +220,205 @@ export default function Insumos() {
         </div>
       )}
 
-      {/* Toolbar */}
-      <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)', flexWrap: 'wrap', alignItems: 'center' }}>
-        <div className="search-bar" style={{ flex: 1, minWidth: 180 }}>
-          <Search className="search-icon" size={15} />
-          <input type="text" placeholder="Buscar insumo..." value={search} onChange={e => setSearch(e.target.value)} />
-          {search && (
-            <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}>
-              <X size={13} />
-            </button>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          <button className={`btn btn-sm ${catFilter === 'todos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter('todos')}>
-            <Filter size={12} /> Todos
-          </button>
-          {CATEGORIES.map(c => (
-            <button key={c.value} className={`btn btn-sm ${catFilter === c.value ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter(c.value)}>
-              {c.label}
-            </button>
-          ))}
-        </div>
+      {/* Tabs de Navegación */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginBottom: 'var(--space-md)' }}>
+        <button
+          onClick={() => setActiveTab('stock')}
+          style={{
+            padding: '12px 20px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'stock' ? '2.5px solid var(--color-primary)' : '2.5px solid transparent',
+            color: activeTab === 'stock' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: '0.92rem',
+            transition: 'all 0.2s'
+          }}
+        >
+          <Package size={16} /> Lista de Insumos
+        </button>
+        <button
+          onClick={() => setActiveTab('history')}
+          style={{
+            padding: '12px 20px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'history' ? '2.5px solid var(--color-primary)' : '2.5px solid transparent',
+            color: activeTab === 'history' ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: '0.92rem',
+            transition: 'all 0.2s'
+          }}
+        >
+          <History size={16} /> Historial de Bodega (Bitácora)
+        </button>
       </div>
 
-      {/* Tabla */}
-      <div className="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>
-                Nombre <SortIcon field="name" sort={sort} />
-              </th>
-              <th>Categoría</th>
-              <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('stock')}>
-                Stock actual <SortIcon field="stock" sort={sort} />
-              </th>
-              <th>Stock mínimo</th>
-              <th>Precio/unidad</th>
-              <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('status')}>
-                Estado <SortIcon field="status" sort={sort} />
-              </th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayed.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--color-text-secondary)' }}>Sin insumos{search || catFilter !== 'todos' ? ' que coincidan' : ''}</td></tr>
-            ) : displayed.map(ing => {
-              const isLow    = ing.current_stock <= ing.min_stock && ing.min_stock > 0;
-              const isEmpty  = ing.current_stock === 0;
-              const catLabel = CATEGORIES.find(c => c.value === ing.category)?.label ?? ing.category;
-              return (
-                <tr key={ing.id}>
-                  <td style={{ fontWeight: 600 }}>{ing.name}</td>
-                  <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>{catLabel}</td>
-                  <td style={{ fontWeight: 600, color: isEmpty ? '#C0392B' : isLow ? '#C8820A' : 'inherit' }}>
-                    {ing.current_stock} {ing.unit}
-                  </td>
-                  <td style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>{ing.min_stock} {ing.unit}</td>
-                  <td style={{ fontSize: '0.85rem' }}>
-                    {ing.last_price > 0 ? `${formatCurrency(ing.last_price)}/${ing.unit}` : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
-                  </td>
-                  <td>
-                    {isEmpty
-                      ? <span className="badge badge-danger"><AlertTriangle size={11} /> Sin stock</span>
-                      : isLow
-                        ? <span className="badge badge-warning"><AlertTriangle size={11} /> Bajo</span>
-                        : <span className="badge badge-fresh">OK</span>}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button className="btn btn-ghost btn-sm" title="Editar" onClick={() => {
-                        setEditingId(ing.id);
-                        setForm({ name: ing.name, unit: ing.unit, current_stock: ing.current_stock, min_stock: ing.min_stock, last_price: ing.last_price, category: ing.category || 'reposteria' });
-                        setShowForm(true);
-                      }}><Edit size={14} /></button>
-                      <button className="btn btn-ghost btn-sm" title="Historial" onClick={() => openHistory(ing)}>
-                        <History size={14} />
-                      </button>
-                      <button className="btn btn-primary btn-sm" onClick={() => { setShowMovement(ing); setMovType('purchase'); setMovForm({ quantity: '', cost: '' }); }}>
-                        <ArrowDownToLine size={14} /> Movimiento
-                      </button>
-                    </div>
-                  </td>
+      {activeTab === 'stock' ? (
+        <>
+          {/* Toolbar */}
+          <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="search-bar" style={{ flex: 1, minWidth: 180 }}>
+              <Search className="search-icon" size={15} />
+              <input type="text" placeholder="Buscar insumo..." value={search} onChange={e => setSearch(e.target.value)} />
+              {search && (
+                <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              <button className={`btn btn-sm ${catFilter === 'todos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter('todos')}>
+                <Filter size={12} /> Todos
+              </button>
+              {CATEGORIES.map(c => (
+                <button key={c.value} className={`btn btn-sm ${catFilter === c.value ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setCatFilter(c.value)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tabla */}
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>
+                    Nombre <SortIcon field="name" sort={sort} />
+                  </th>
+                  <th>Categoría</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('stock')}>
+                    Stock actual <SortIcon field="stock" sort={sort} />
+                  </th>
+                  <th>Stock mínimo</th>
+                  <th>Precio/unidad</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('status')}>
+                    Estado <SortIcon field="status" sort={sort} />
+                  </th>
+                  <th>Acciones</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {displayed.length === 0 ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--color-text-secondary)' }}>Sin insumos{search || catFilter !== 'todos' ? ' que coincidan' : ''}</td></tr>
+                ) : displayed.map(ing => {
+                  const isLow    = ing.current_stock <= ing.min_stock && ing.min_stock > 0;
+                  const isEmpty  = ing.current_stock === 0;
+                  const catLabel = CATEGORIES.find(c => c.value === ing.category)?.label ?? ing.category;
+                  return (
+                    <tr key={ing.id} style={isLow ? { background: 'rgba(200, 130, 10, 0.02)' } : undefined}>
+                      <td style={{ fontWeight: 600 }}>{ing.name}</td>
+                      <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>{catLabel}</td>
+                      <td style={{ fontWeight: 600, color: isEmpty ? '#C0392B' : isLow ? '#C8820A' : 'inherit' }}>
+                        {ing.current_stock} {ing.unit}
+                      </td>
+                      <td style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>{ing.min_stock} {ing.unit}</td>
+                      <td style={{ fontSize: '0.85rem' }}>
+                        {ing.last_price > 0 ? `${formatCurrency(ing.last_price)}/${ing.unit}` : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                      </td>
+                      <td>
+                        {isEmpty
+                          ? <span className="badge badge-danger"><AlertTriangle size={11} /> Sin stock</span>
+                          : isLow
+                            ? <span className="badge badge-warning"><AlertTriangle size={11} /> Bajo</span>
+                            : <span className="badge badge-fresh">OK</span>}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          <button className="btn btn-ghost btn-sm" title="Editar" onClick={() => {
+                            setEditingId(ing.id);
+                            setForm({ name: ing.name, unit: ing.unit, current_stock: ing.current_stock, min_stock: ing.min_stock, last_price: ing.last_price, category: ing.category || 'reposteria' });
+                            setShowForm(true);
+                          }}><Edit size={14} /></button>
+                          <button className="btn btn-ghost btn-sm" title="Historial" onClick={() => openHistory(ing)}>
+                            <History size={14} />
+                          </button>
+                          <button className="btn btn-primary btn-sm" onClick={() => { setShowMovement(ing); setMovType('purchase'); setMovForm({ quantity: '', cost: '', notes: '' }); }}>
+                            <ArrowDownToLine size={14} /> Movimiento
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        /* Historial de Bodega Global */
+        <div>
+          {globalLoading ? (
+            <div style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--color-text-secondary)' }}>Cargando bitácora…</div>
+          ) : globalHistory.length === 0 ? (
+            <div style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+              <History size={32} style={{ opacity: 0.3, marginBottom: 8, display: 'block', margin: '0 auto 8px' }} />
+              Sin movimientos registrados en la bodega
+            </div>
+          ) : (
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Insumo</th>
+                    <th>Tipo</th>
+                    <th>Cantidad</th>
+                    <th>Costo Total</th>
+                    <th>Precio/u</th>
+                    <th>Notas / Motivo</th>
+                    <th>Operador</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {globalHistory.map(m => {
+                    const meta = MOVEMENT_META[m.type] || MOVEMENT_META.adjustment;
+                    const Icon = meta.icon;
+                    const priceU = m.cost && m.quantity ? m.cost / m.quantity : null;
+                    const sign = (m.type === 'usage' || m.type === 'loss') ? '−' : m.quantity < 0 ? '−' : '+';
+                    const signColor = (m.type === 'usage' || m.type === 'loss') || m.quantity < 0 ? '#C0392B' : '#2E8B57';
+                    return (
+                      <tr key={m.id}>
+                        <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{formatDate(m.created_at)}</td>
+                        <td style={{ fontWeight: 600 }}>{m.ingredient_name || `Insumo #${m.ingredient_id}`}</td>
+                        <td>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 99, background: meta.bg, color: meta.color, fontSize: '0.78rem', fontWeight: 600 }}>
+                            <Icon size={11} />{meta.label}
+                          </span>
+                        </td>
+                        <td style={{ fontWeight: 700, color: signColor }}>
+                          {sign}{Math.abs(m.quantity)} {m.ingredient_unit}
+                        </td>
+                        <td style={{ fontSize: '0.85rem' }}>
+                          {m.cost ? formatCurrency(m.cost) : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>
+                          {priceU ? `${formatCurrency(priceU)}/${m.ingredient_unit}` : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.notes}>
+                          {m.notes || <span style={{ color: 'var(--color-text-light)', fontStyle: 'italic' }}>—</span>}
+                        </td>
+                        <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>
+                          {m.seller?.name ?? '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── MODAL: CREAR / EDITAR ───────────────────────── */}
       {showForm && (
@@ -336,25 +482,26 @@ export default function Insumos() {
               {/* Tipo de movimiento */}
               <div>
                 <label className="form-label">Tipo de movimiento</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-xs)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 'var(--space-xs)' }}>
                   {[
-                    { type: 'purchase',   label: 'Compra',  Icon: ArrowDownToLine,  desc: 'Agrega stock' },
-                    { type: 'adjustment', label: 'Ajuste',  Icon: SlidersHorizontal, desc: 'Corrección manual' },
-                    { type: 'usage',      label: 'Consumo', Icon: ArrowUpFromLine,   desc: 'Descuenta stock' },
+                    { type: 'purchase',   label: 'Compra',  Icon: ArrowDownToLine,  desc: 'Suma stock' },
+                    { type: 'adjustment', label: 'Ajuste',  Icon: SlidersHorizontal, desc: 'Corrección' },
+                    { type: 'usage',      label: 'Consumo', Icon: ArrowUpFromLine,   desc: 'Resta stock' },
+                    { type: 'loss',       label: 'Merma',    Icon: AlertTriangle,     desc: 'Descarte' },
                   ].map(({ type, label, Icon, desc }) => {
                     const meta = MOVEMENT_META[type];
                     const active = movType === type;
                     return (
-                      <button key={type} onClick={() => { setMovType(type); setMovForm({ quantity: '', cost: '' }); }}
+                      <button key={type} onClick={() => { setMovType(type); setMovForm({ quantity: '', cost: '', notes: '' }); }}
                         style={{
                           display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                          padding: '10px 6px', border: `1.5px solid ${active ? meta.color : 'var(--color-border)'}`,
+                          padding: '10px 4px', border: `1.5px solid ${active ? meta.color : 'var(--color-border)'}`,
                           borderRadius: 'var(--radius-md)', background: active ? meta.bg : 'var(--color-bg-card)',
                           cursor: 'pointer', transition: 'all 0.15s',
                         }}>
                         <Icon size={16} style={{ color: meta.color }} />
-                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: active ? meta.color : 'var(--color-text)' }}>{label}</span>
-                        <span style={{ fontSize: '0.68rem', color: 'var(--color-text-light)' }}>{desc}</span>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: active ? meta.color : 'var(--color-text)' }}>{label}</span>
+                        <span style={{ fontSize: '0.62rem', color: 'var(--color-text-light)', textAlign: 'center' }}>{desc}</span>
                       </button>
                     );
                   })}
@@ -364,14 +511,14 @@ export default function Insumos() {
               {/* Cantidad */}
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">
-                  Cantidad ({showMovement.unit})
+                  Cantidad ({showMovement.unit}) *
                   {movType === 'adjustment' && <span style={{ fontWeight: 400, color: 'var(--color-text-light)', marginLeft: 6, fontSize: '0.78rem' }}>negativo para reducir</span>}
                 </label>
                 <input
                   className="form-input"
                   type="number"
                   step="0.01"
-                  min={movType === 'usage' ? '0.01' : undefined}
+                  min={movType === 'usage' || movType === 'loss' ? '0.01' : undefined}
                   placeholder={movType === 'adjustment' ? 'ej: 5 o -2' : '0.00'}
                   value={movForm.quantity}
                   onChange={e => setMovForm(f => ({ ...f, quantity: e.target.value }))}
@@ -399,15 +546,29 @@ export default function Insumos() {
                 </div>
               )}
 
+              {/* Notas / Motivo (Obligatorio para mermas, opcional para otros) */}
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">
+                  Motivo / Notas {movType === 'loss' ? '*' : '(opcional)'}
+                </label>
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder={movType === 'loss' ? 'ej: Huevo roto al armar alfajores' : 'ej: Ajuste de inventario mensual'}
+                  value={movForm.notes}
+                  onChange={e => setMovForm(f => ({ ...f, notes: e.target.value }))}
+                />
+              </div>
+
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowMovement(null)}>Cancelar</button>
               <button
                 className="btn btn-primary"
                 onClick={handleMovement}
-                disabled={!movForm.quantity || parseFloat(movForm.quantity) === 0}
+                disabled={!movForm.quantity || parseFloat(movForm.quantity) === 0 || (movType === 'loss' && !movForm.notes?.trim())}
               >
-                {movType === 'purchase' ? <ArrowDownToLine size={14} /> : movType === 'usage' ? <ArrowUpFromLine size={14} /> : <SlidersHorizontal size={14} />}
+                {movType === 'purchase' ? <ArrowDownToLine size={14} /> : (movType === 'usage' || movType === 'loss') ? <ArrowUpFromLine size={14} /> : <SlidersHorizontal size={14} />}
                 {MOVEMENT_META[movType].label}
               </button>
             </div>
@@ -415,7 +576,7 @@ export default function Insumos() {
         </div>
       )}
 
-      {/* ── MODAL: HISTORIAL ────────────────────────────── */}
+      {/* ── MODAL: HISTORIAL INDIVIDUAL ─────────────────── */}
       {showHistory && (
         <div className="modal-overlay" onClick={() => setShowHistory(null)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
@@ -449,6 +610,7 @@ export default function Insumos() {
                         <th>Cantidad</th>
                         <th>Costo</th>
                         <th>Precio/u</th>
+                        <th>Notas / Motivo</th>
                         <th>Vendedor</th>
                       </tr>
                     </thead>
@@ -457,8 +619,8 @@ export default function Insumos() {
                         const meta = MOVEMENT_META[m.type] || MOVEMENT_META.adjustment;
                         const Icon = meta.icon;
                         const priceU = m.cost && m.quantity ? m.cost / m.quantity : null;
-                        const sign = m.type === 'usage' ? '−' : m.quantity < 0 ? '−' : '+';
-                        const signColor = m.type === 'usage' || m.quantity < 0 ? '#C0392B' : '#2E8B57';
+                        const sign = (m.type === 'usage' || m.type === 'loss') ? '−' : m.quantity < 0 ? '−' : '+';
+                        const signColor = (m.type === 'usage' || m.type === 'loss') || m.quantity < 0 ? '#C0392B' : '#2E8B57';
                         return (
                           <tr key={m.id}>
                             <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>{formatDate(m.created_at)}</td>
@@ -475,6 +637,9 @@ export default function Insumos() {
                             </td>
                             <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>
                               {priceU ? `${formatCurrency(priceU)}/${showHistory.unit}` : <span style={{ color: 'var(--color-text-light)' }}>—</span>}
+                            </td>
+                            <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.notes}>
+                              {m.notes || <span style={{ color: 'var(--color-text-light)', fontStyle: 'italic' }}>—</span>}
                             </td>
                             <td style={{ fontSize: '0.83rem', color: 'var(--color-text-secondary)' }}>
                               {m.seller?.name ?? '—'}
