@@ -137,6 +137,7 @@ def create_sale(
         if item_in.showcase_type and item_in.product_id:
             for _ in range(item_in.quantity):
                 _handle_showcase_stock(db, item_in.product_id, item_in.showcase_type, sale.id)
+                db.flush()  # necesario: autoflush=False, sin esto el query del siguiente ciclo ve estado stale
 
         # Decrementar stock físico (bebidas)
         if product and not item_in.showcase_type:
