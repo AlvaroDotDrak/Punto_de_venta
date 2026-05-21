@@ -29,6 +29,7 @@ _CAT_LABELS = {
     "bebidas": "Bebidas",
     "cafe": "Café",
     "encargo": "Encargos",
+    "mostrador": "Mostrador",
 }
 
 
@@ -310,130 +311,6 @@ def export_report(
     )
 
 
-@router.get("/profitability")
-def get_profitability(
-    date_from: str = Query(...),
-    date_to: str = Query(...),
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    dt_from = datetime.fromisoformat(date_from)
-    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
-
-    # 1. Obtener todas las ventas completadas en el rango de fecha
-    sales = db.query(Sale).filter(
-        Sale.status == "completed",
-        Sale.created_at >= dt_from,
-        Sale.created_at <= dt_to
-    ).options(joinedload(Sale.items).joinedload(SaleItem.product)).all()
-
-    sale_ids = [s.id for s in sales]
-
-    product_stats = {}  # product_id -> { ... }
-    
-    # Pre-cargar recetas para saber qué productos tienen receta
-    recipe_product_ids = {r[0] for r in db.query(ProductRecipe.product_id).distinct().all()}
-
-    # Acumular ingresos y unidades vendidas de SaleItems
-    for sale in sales:
-        for item in sale.items:
-            if not item.product_id:
-                continue
-            p_id = item.product_id
-            if p_id not in product_stats:
-                p_name = item.product.name if item.product else f"Producto #{p_id}"
-                p_cat = item.product.category if item.product else "otro"
-                product_stats[p_id] = {
-                    "product_id": p_id,
-                    "name": p_name,
-                    "category": p_cat,
-                    "units_sold": 0,
-                    "revenue": 0.0,
-                    "cogs": 0.0,
-                    "has_recipe": p_id in recipe_product_ids
-                }
-            
-            product_stats[p_id]["units_sold"] += item.quantity
-            product_stats[p_id]["revenue"] += item.quantity * item.price
-
-    # 2. Obtener todos los movimientos de consumo (usage) asociados a estas ventas
-    if sale_ids:
-        movements = db.query(IngredientMovement).filter(
-            IngredientMovement.type == "usage",
-            IngredientMovement.sale_id.in_(sale_ids)
-        ).options(joinedload(IngredientMovement.ingredient)).all()
-
-        for mv in movements:
-            if not mv.product_id:
-                continue
-            p_id = mv.product_id
-            if p_id in product_stats:
-                # Fallback estimado para registros viejos (donde cost = None) usando last_price actual del ingrediente
-                if mv.cost is not None:
-                    cogs_val = mv.cost
-                else:
-                    last_price = mv.ingredient.last_price if (mv.ingredient and mv.ingredient.last_price) else 0.0
-                    cogs_val = mv.quantity * last_price
-                product_stats[p_id]["cogs"] += cogs_val
-
-    # Calcular ganancias y márgenes
-    product_list = list(product_stats.values())
-    total_revenue = 0.0
-    total_cogs = 0.0
-
-    category_stats = {}  # category_name -> { "revenue": float, "cogs": float }
-
-    for p in product_list:
-        rev = p["revenue"]
-        cogs = p["cogs"]
-        profit = rev - cogs
-        margin = (profit / rev * 100) if rev > 0 else 0.0
-        
-        p["margin"] = round(margin, 1)
-        p["revenue"] = round(rev, 2)
-        p["cogs"] = round(cogs, 2)
-        p["profit"] = round(profit, 2)
-
-        total_revenue += rev
-        total_cogs += cogs
-
-        # Agrupar por categoría
-        cat = p["category"] or "otro"
-        if cat not in category_stats:
-            category_stats[cat] = {
-                "category": cat,
-                "label": _CAT_LABELS.get(cat, cat.capitalize()),
-                "revenue": 0.0,
-                "cogs": 0.0
-            }
-        category_stats[cat]["revenue"] += rev
-        category_stats[cat]["cogs"] += cogs
-
-    # Calcular total gross profit y margen general
-    total_profit = total_revenue - total_cogs
-    total_margin = (total_profit / total_revenue * 100) if total_revenue > 0 else 0.0
-
-    category_list = list(category_stats.values())
-    for c in category_list:
-        c_rev = c["revenue"]
-        c_cogs = c["cogs"]
-        c_profit = c_rev - c_cogs
-        c_margin = (c_profit / c_rev * 100) if c_rev > 0 else 0.0
-        c["profit"] = round(c_profit, 2)
-        c["margin"] = round(c_margin, 1)
-        c["revenue"] = round(c_rev, 2)
-        c["cogs"] = round(c_cogs, 2)
-
-    return {
-        "total_revenue": round(total_revenue, 2),
-        "total_cogs": round(total_cogs, 2),
-        "total_profit": round(total_profit, 2),
-        "total_margin": round(total_margin, 1),
-        "categories": category_list,
-        "products": sorted(product_list, key=lambda x: x["revenue"], reverse=True)
-    }
-
-
 @router.get("/losses", response_model=LossesReport)
 def get_losses_report(
     date_from: str = Query(...),
@@ -547,90 +424,104 @@ def get_profitability(
         .all()
     )
 
+    # Agrupar por (product_id, showcase_type) para separar enteros de trozos
     grouped = {}
     for item in sale_items:
         if not item.product_id:
             continue
-        if item.product_id not in grouped:
-            grouped[item.product_id] = {
+        key = (item.product_id, item.showcase_type)
+        if key not in grouped:
+            suffix = " (entero)" if item.showcase_type == "entero" else " (trozo)" if item.showcase_type == "trozado" else ""
+            grouped[key] = {
                 "product_id": item.product_id,
-                "name": item.product_name,
+                "name": item.product_name + suffix,
+                "showcase_type": item.showcase_type,
                 "units_sold": 0,
-                "revenue": 0.0
+                "revenue": 0.0,
             }
-        grouped[item.product_id]["units_sold"] += item.quantity
-        grouped[item.product_id]["revenue"] += item.subtotal
+        grouped[key]["units_sold"] += item.quantity
+        grouped[key]["revenue"] += item.subtotal
 
     product_results = []
     total_revenue = 0.0
     total_cogs = 0.0
-    
+
     if grouped:
+        product_ids = list({k[0] for k in grouped.keys()})
         products = db.query(Product).options(
             joinedload(Product.recipes).joinedload(ProductRecipe.ingredient)
-        ).filter(Product.id.in_(list(grouped.keys()))).all()
-        
+        ).filter(Product.id.in_(product_ids)).all()
+
         product_map = {p.id: p for p in products}
-        
-        for p_id, data in grouped.items():
+
+        for (p_id, showcase_type), data in grouped.items():
             product = product_map.get(p_id)
             if not product:
                 continue
-                
+
             cost_per_unit = None
             if product.recipes:
-                total = sum(r.ingredient.last_price * r.quantity for r in product.recipes if r.ingredient)
+                ingredient_cost = sum(
+                    r.ingredient.last_price * r.quantity
+                    for r in product.recipes if r.ingredient
+                )
                 yield_qty = product.recipes[0].yield_qty
-                cost_per_unit = round(total / yield_qty, 2) if yield_qty > 0 else None
+                if yield_qty and yield_qty > 0:
+                    base_cost = ingredient_cost / yield_qty
+                    # Trozo: el costo se divide entre la cantidad de trozos por unidad
+                    if showcase_type == "trozado" and product.slices and product.slices > 0:
+                        cost_per_unit = round(base_cost / product.slices, 2)
+                    else:
+                        cost_per_unit = round(base_cost, 2)
             elif product.cost_price is not None:
                 cost_per_unit = product.cost_price
 
             if cost_per_unit is None:
-                continue  # excluir productos sin costo definido — no mostrar margen falso
+                continue  # excluir productos sin costo definido
 
             data["category"] = product.category
             data["has_recipe"] = len(product.recipes) > 0
-            
+
             cogs = round(cost_per_unit * data["units_sold"], 2)
             profit = round(data["revenue"] - cogs, 2)
-            margin = round((profit / data["revenue"]) * 100, 1) if data["revenue"] > 0 else 0
+            margin = round((profit / data["revenue"]) * 100, 1) if data["revenue"] > 0 else 0.0
 
             data["cogs"] = cogs
             data["profit"] = profit
             data["margin"] = margin
-            
+
             total_revenue += data["revenue"]
             total_cogs += cogs
 
             product_results.append(data)
 
     product_results.sort(key=lambda x: x["profit"], reverse=True)
-    
+
     cat_map = {}
     for p in product_results:
         c = p["category"]
         if c not in cat_map:
-            cat_map[c] = {"label": _CAT_LABELS.get(c, c), "revenue": 0.0, "cogs": 0.0}
+            cat_map[c] = {"label": _CAT_LABELS.get(c, c.capitalize()), "revenue": 0.0, "cogs": 0.0}
         cat_map[c]["revenue"] += p["revenue"]
         cat_map[c]["cogs"] += p["cogs"]
-        
+
     categories = []
     for c, stats in cat_map.items():
         c_prof = stats["revenue"] - stats["cogs"]
         stats["margin"] = round((c_prof / stats["revenue"]) * 100, 1) if stats["revenue"] > 0 else 0
         categories.append(stats)
-        
+
     categories.sort(key=lambda x: x["revenue"], reverse=True)
 
     total_profit = total_revenue - total_cogs
     total_margin = round((total_profit / total_revenue) * 100, 1) if total_revenue > 0 else 0
 
     return {
-        "total_revenue": total_revenue,
-        "total_cogs": total_cogs,
-        "total_profit": total_profit,
+        "total_revenue": round(total_revenue, 2),
+        "total_cogs": round(total_cogs, 2),
+        "total_profit": round(total_profit, 2),
         "total_margin": total_margin,
         "categories": categories,
-        "products": product_results
+        "products": product_results,
     }
 
