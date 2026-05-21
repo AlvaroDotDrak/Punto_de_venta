@@ -16,9 +16,10 @@ const categories = [
   { value: 'encargo', label: 'Encargo 🎂' },
   { value: 'bebidas', label: 'Bebidas 🥤' },
   { value: 'cafe', label: 'Café ☕' },
+  { value: 'mostrador', label: 'Mostrador 🍪' },
 ];
 
-const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
+const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕', mostrador: '🍪' };
 
 const emptyForm = { name: '', category: 'vitrina', price: '', cost_price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '' };
 
@@ -105,7 +106,7 @@ export default function Productos() {
       max_showcase_hours: form.noFreshness ? null : (parseInt(form.max_showcase_hours) || 48),
       slices: parseInt(form.slices) || 8,
       photo: form.photo || null,
-      stock: form.category === 'bebidas' ? (parseInt(form.stock) || 0) : null,
+      stock: ['bebidas', 'mostrador'].includes(form.category) ? (parseInt(form.stock) || 0) : null,
       cost_price: ['bebidas', 'cafe'].includes(form.category) && parseFloat(form.cost_price) > 0
         ? parseFloat(form.cost_price)
         : null,
@@ -232,7 +233,7 @@ export default function Productos() {
                   {p.slice_price != null && <> · trozo {formatCurrency(p.slice_price)}</>}
                 </small>
               )}
-              {p.category === 'bebidas' && p.stock != null && (
+              {['bebidas', 'mostrador'].includes(p.category) && p.stock != null && (
                 <small style={{ color: p.stock > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                   Stock: {p.stock} unidades
                 </small>
@@ -369,7 +370,7 @@ export default function Productos() {
                 );
               })()}
 
-              {form.category === 'bebidas' && (
+              {['bebidas', 'mostrador'].includes(form.category) && (
                 <div className="form-group">
                   <label className="form-label">Stock inicial (unidades)</label>
                   <input className="form-input" type="number" min="0" value={form.stock} onChange={e => updateField('stock', e.target.value)} placeholder="0" />

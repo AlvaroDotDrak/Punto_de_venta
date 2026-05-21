@@ -12,8 +12,8 @@ import TypeModal from '../components/Ventas/TypeModal';
 import PaymentModal from '../components/Ventas/PaymentModal';
 import ReceiptModal from '../components/Ventas/ReceiptModal';
 
-const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
-const categoryLabel = { todos: 'Todos', vitrina: 'Vitrina', salados: 'Salados', encargo: 'Encargo', bebidas: 'Bebidas', cafe: 'Café' };
+const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕', mostrador: '🍪' };
+const categoryLabel = { todos: 'Todos', vitrina: 'Vitrina', salados: 'Salados', encargo: 'Encargo', bebidas: 'Bebidas', cafe: 'Café', mostrador: 'Mostrador' };
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
@@ -381,35 +381,30 @@ export default function Ventas() {
               {cart.map(item => (
                 <div key={`${item.product_id}-${item.product_name}`} className="pos-cart-item animate-slide-up" style={{
                   background: '#fff',
-                  margin: '0 0 12px 0',
-                  borderRadius: 'var(--radius-lg)',
+                  margin: '0 0 6px 0',
+                  borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--color-border)',
-                  padding: '14px',
+                  padding: '7px 10px',
                   boxShadow: 'var(--shadow-sm)',
                   display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10
+                  alignItems: 'center',
+                  gap: 8
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div className="pos-cart-item-info">
-                      <div className="pos-cart-item-name" style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>{item.product_name}</div>
-                      <div className="pos-cart-item-price" style={{ fontSize: '0.8rem', opacity: 0.6 }}>{formatCurrency(item.price)} c/u</div>
-                    </div>
-                    <button className="pos-cart-remove" onClick={() => removeFromCart(item.product_id, item.product_name)} style={{ padding: 6 }}>
-                      <Trash2 size={14} />
-                    </button>
+                  <div className="pos-cart-item-info">
+                    <div className="pos-cart-item-name" style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)' }}>{item.product_name}</div>
+                    <div className="pos-cart-item-price" style={{ fontSize: '0.75rem', opacity: 0.6 }}>{formatCurrency(item.price)} c/u</div>
                   </div>
-                  
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div className="pos-cart-qty" style={{ border: 'none', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)', padding: 4 }}>
-                      <button onClick={() => updateQuantity(item.product_id, item.product_name, -1)} style={{ width: 32, height: 32 }}>−</button>
-                      <span style={{ fontSize: '0.95rem', minWidth: 30 }}>{item.quantity}</span>
-                      <button onClick={() => updateQuantity(item.product_id, item.product_name, 1)} style={{ width: 32, height: 32 }}>+</button>
-                    </div>
-                    <div className="pos-cart-item-subtotal text-display" style={{ minWidth: 'auto', fontSize: '1rem', fontWeight: 800, color: 'var(--color-primary)' }}>
-                      {formatCurrency(item.subtotal)}
-                    </div>
+                  <div className="pos-cart-qty" style={{ border: 'none', background: 'var(--color-bg)', borderRadius: 'var(--radius-md)', padding: 2 }}>
+                    <button onClick={() => updateQuantity(item.product_id, item.product_name, -1)} style={{ width: 26, height: 26 }}>−</button>
+                    <span style={{ fontSize: '0.85rem', minWidth: 24 }}>{item.quantity}</span>
+                    <button onClick={() => updateQuantity(item.product_id, item.product_name, 1)} style={{ width: 26, height: 26 }}>+</button>
                   </div>
+                  <div className="pos-cart-item-subtotal text-display" style={{ minWidth: 'auto', fontSize: '0.88rem', fontWeight: 800, color: 'var(--color-primary)' }}>
+                    {formatCurrency(item.subtotal)}
+                  </div>
+                  <button className="pos-cart-remove" onClick={() => removeFromCart(item.product_id, item.product_name)} style={{ padding: 4 }}>
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               ))}
             </div>
