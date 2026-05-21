@@ -20,10 +20,19 @@ def list_products(
     db: Session = Depends(get_db),
     _=Depends(get_current_seller),
 ):
-    q = db.query(Product)
+    q = db.query(Product).options(joinedload(Product.recipes))
     if active_only:
         q = q.filter(Product.active == True)
-    return q.order_by(Product.name).all()
+    
+    products = q.order_by(Product.name).all()
+    
+    result = []
+    for p in products:
+        p_dict = {**p.__dict__}
+        p_dict["has_recipe"] = len(p.recipes) > 0
+        result.append(p_dict)
+        
+    return result
 
 
 @router.post("", response_model=ProductOut, status_code=201)

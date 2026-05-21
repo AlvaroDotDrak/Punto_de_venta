@@ -76,6 +76,7 @@ class ProductOut(BaseModel):
     photo: Optional[str]
     active: bool
     created_at: datetime
+    has_recipe: bool = False
 
     model_config = {"from_attributes": True}
 

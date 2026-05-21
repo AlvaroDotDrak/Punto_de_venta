@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2, BarChart2, ChefHat } from 'lucide-react';
+import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2, BarChart2, ChefHat, RotateCcw } from 'lucide-react';
 import ProductStatsModal from '../components/ProductStatsModal';
 import RecipeModal from '../components/Productos/RecipeModal';
 
@@ -51,6 +51,7 @@ export default function Productos() {
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('todos');
+  const [sortBy, setSortBy] = useState('nombre_asc');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -68,8 +69,17 @@ export default function Productos() {
     let list = products;
     if (filterCategory !== 'todos') list = list.filter(p => p.category === filterCategory);
     if (search) list = list.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+    
+    list = [...list].sort((a, b) => {
+      if (sortBy === 'nombre_asc') return a.name.localeCompare(b.name);
+      if (sortBy === 'nombre_desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'precio_asc') return a.price - b.price;
+      if (sortBy === 'precio_desc') return b.price - a.price;
+      return 0;
+    });
+
     return list;
-  }, [products, search, filterCategory]);
+  }, [products, search, filterCategory, sortBy]);
 
   const updateField = (f, v) => setForm(prev => ({ ...prev, [f]: v }));
 
@@ -126,6 +136,14 @@ export default function Productos() {
     } catch (err) { toast.error('Error: ' + err.message); }
   };
 
+  const handleReactivate = async (p) => {
+    try {
+      await api.patch(`/products/${p.id}`, { active: true });
+      toast.success('Producto reactivado');
+      loadProducts();
+    } catch (err) { toast.error('Error: ' + err.message); }
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -140,6 +158,13 @@ export default function Productos() {
           <Search className="search-icon" size={18} />
           <input type="text" placeholder="Buscar producto..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        
+        <select className="form-input" style={{ width: 'auto' }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+          <option value="nombre_asc">Nombre A→Z</option>
+          <option value="nombre_desc">Nombre Z→A</option>
+          <option value="precio_asc">Precio ↑</option>
+          <option value="precio_desc">Precio ↓</option>
+        </select>
         <div className="tabs">
           {['todos', ...categories.map(c => c.value)].map(c => (
             <button key={c} className={`tab ${filterCategory === c ? 'active' : ''}`}
@@ -153,15 +178,22 @@ export default function Productos() {
       <div className="products-grid">
         {filtered.map(p => (
           <div key={p.id} className={`product-card ${!p.active ? 'inactive' : ''}`}>
+            {!p.active && <div className="product-ribbon-inactive">Inactivo</div>}
             {p.photo
               ? <img src={p.photo} alt={p.name} className="product-card-photo" />
               : <div className="product-card-emoji">{categoryEmoji[p.category] || '🍞'}</div>}
+            <div className="product-card-divider" />
             <div className="product-card-body">
               <h4>{p.name}</h4>
               <div className="product-card-meta">
-                <span className="badge badge-info">{categories.find(c => c.value === p.category)?.label}</span>
-                <strong>{formatCurrency(p.price)}</strong>
+                <span className={`badge badge-category badge-${p.category}`}>{categories.find(c => c.value === p.category)?.label}</span>
+                <strong className="product-price">{formatCurrency(p.price)}</strong>
               </div>
+              {p.has_recipe && (
+                <div className="badge-recipe" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-success)', marginTop: '4px', marginBottom: '4px' }}>
+                  <ChefHat size={14} /> Con receta
+                </div>
+              )}
               {p.category === 'vitrina' && (
                 <small style={{ color: 'var(--color-text-light)' }}>
                   {p.slices} trozos · {p.max_showcase_hours != null ? `${p.max_showcase_hours}h` : 'Sin control'}
@@ -178,9 +210,13 @@ export default function Productos() {
               <button className="btn btn-ghost btn-sm" title="Estadísticas" onClick={() => setStatsProduct(p)}><BarChart2 size={14} /></button>
               <button className="btn btn-ghost btn-sm" title="Receta (Insumos)" onClick={() => setRecipeProduct(p)}><ChefHat size={14} /></button>
               <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
-              {p.active && (
+              {p.active ? (
                 <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p)}>
                   <Trash2 size={14} />
+                </button>
+              ) : (
+                <button className="btn btn-ghost btn-sm" title="Reactivar" onClick={() => handleReactivate(p)}>
+                  <RotateCcw size={14} />
                 </button>
               )}
             </div>
@@ -203,56 +239,103 @@ export default function Productos() {
               <h2>{editingId ? 'Editar Producto' : 'Nuevo Producto'}</h2>
               <button className="modal-close" onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
-            <div className="modal-body">
+            <div className="modal-body modal-body-styled">
 
-              {/* Nombre */}
-              <div className="form-group">
-                <label className="form-label">Nombre *</label>
-                <input className="form-input" value={form.name} onChange={e => updateField('name', e.target.value)} autoFocus />
-              </div>
-
-              {/* Categoría */}
-              <div className="form-group">
-                <label className="form-label">Categoría</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
-                  {categories.map(c => (
-                    <button key={c.value} className={`btn btn-sm ${form.category === c.value ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => updateField('category', c.value)}>{c.label}</button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Precio + campo secundario según categoría */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Precio *</label>
-                  <input className="form-input" type="number" min="1" value={form.price} onChange={e => updateField('price', e.target.value)} />
-                </div>
-                {form.category === 'vitrina' && (
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Trozos por unidad</label>
-                    <input className="form-input" type="number" min="1" max="32" value={form.slices} onChange={e => updateField('slices', parseInt(e.target.value) || 8)} />
+              <div className="modal-section">
+                <h3 className="section-title">Foto</h3>
+                <div className="photo-drop-area" onClick={() => fileInputRef.current?.click()}>
+                  {form.photo ? (
+                    <img src={form.photo} alt="Preview" className="photo-preview" />
+                  ) : (
+                    <div className="photo-placeholder">
+                      <Camera size={32} />
+                      <span>Haz clic para subir o arrastra una foto</span>
+                    </div>
+                  )}
+                  <div className="photo-actions" onClick={e => e.stopPropagation()}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => cameraInputRef.current?.click()}><Camera size={14} /> Cámara</button>
+                    {form.photo && <button className="btn btn-ghost btn-sm" onClick={() => updateField('photo', null)}>Quitar</button>}
                   </div>
-                )}
+                </div>
+                <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={e => handlePhoto(e.target.files[0])} />
+                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden onChange={e => handlePhoto(e.target.files[0])} />
               </div>
 
-              {form.category === 'vitrina' && (
-              <div className="form-group">
-                <label className="form-label">Precio por trozo</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="1"
-                  step="100"
-                  placeholder="Ej: 3000"
-                  value={form.slice_price}
-                  onChange={e => updateField('slice_price', e.target.value)}
-                />
-                <small style={{ color: 'var(--color-text-light)', fontSize: '0.78rem' }}>
-                  Si se deja vacío, el precio del trozo se calculará al momento de trozar.
-                </small>
+              <div className="modal-divider" />
+
+              <div className="modal-section">
+                <h3 className="section-title">Información básica</h3>
+                <div className="form-group">
+                  <label className="form-label">Nombre *</label>
+                  <input className="form-input form-input-lg" value={form.name} onChange={e => updateField('name', e.target.value)} autoFocus />
+                </div>
+  
+                <div className="form-group">
+                  <label className="form-label">Categoría</label>
+                  <div className="category-selector">
+                    {categories.map(c => (
+                      <button key={c.value} className={`category-btn ${form.category === c.value ? 'active' : ''}`}
+                        onClick={() => updateField('category', c.value)}>
+                        <span className="category-emoji">{categoryEmoji[c.value]}</span>
+                        <span className="category-label">{c.label.replace(/[^a-zA-ZáéíóúÁÉÍÓÚ\s]/g, '').trim()}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
-              )}
+
+              <div className="modal-divider" />
+              
+              <div className="modal-section">
+                <h3 className="section-title">Precios e Inventario</h3>
+                <div className="price-grid">
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Precio *</label>
+                    <input className="form-input form-input-price" type="number" min="1" value={form.price} onChange={e => updateField('price', e.target.value)} />
+                  </div>
+                  {form.category === 'vitrina' && (
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Trozos por unidad</label>
+                      <input className="form-input" type="number" min="1" max="32" value={form.slices} onChange={e => updateField('slices', parseInt(e.target.value) || 8)} />
+                    </div>
+                  )}
+                </div>
+
+              {form.category === 'vitrina' && (() => {
+                const price = parseFloat(form.price);
+                const slices = parseInt(form.slices);
+                const suggested = (price > 0 && slices > 0) ? Math.round(price / slices) : null;
+                
+                return (
+                  <div className="form-group mt-3">
+                    <label className="form-label">Precio por trozo</label>
+                    <div className="input-with-button">
+                      <input
+                        className="form-input form-input-price"
+                        type="number"
+                        min="1"
+                        step="100"
+                        placeholder="Ej: 3000"
+                        value={form.slice_price}
+                        onChange={e => updateField('slice_price', e.target.value)}
+                      />
+                      {suggested != null && (
+                        <button className="btn btn-sm btn-outline btn-use-suggested" onClick={() => updateField('slice_price', suggested)}>
+                          Usar {formatCurrency(suggested)}
+                        </button>
+                      )}
+                    </div>
+                    {suggested != null && (
+                      <small className="suggested-text">
+                        Precio sugerido: <strong>{formatCurrency(suggested)}</strong> (precio ÷ trozos)
+                      </small>
+                    )}
+                    <small style={{ color: 'var(--color-text-light)', fontSize: '0.78rem', display: 'block', marginTop: '4px' }}>
+                      Si se deja vacío, el precio del trozo se calculará al momento de trozar.
+                    </small>
+                  </div>
+                );
+              })()}
 
               {form.category === 'bebidas' && (
                 <div className="form-group">
@@ -261,41 +344,31 @@ export default function Productos() {
                 </div>
               )}
 
-              {/* Horas en vitrina — solo para categorías con exposición */}
               {['vitrina', 'salados'].includes(form.category) && (
-                <div className="form-group">
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
-                    <label className="form-label" style={{ marginBottom: 0 }}>Horas en vitrina</label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.82rem', color: 'var(--color-text-secondary)', cursor: 'pointer', fontWeight: 500 }}>
-                      <input
-                        type="checkbox"
-                        checked={form.noFreshness}
-                        onChange={e => updateField('noFreshness', e.target.checked)}
-                      />
-                      Sin control de tiempo
-                    </label>
+                <div className="modal-divider" />
+              )}
+              {['vitrina', 'salados'].includes(form.category) && (
+                <div className="modal-section">
+                  <h3 className="section-title">Configuración de vitrina</h3>
+                  <div className="form-group">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
+                      <label className="form-label" style={{ marginBottom: 0 }}>Horas en vitrina</label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.82rem', color: 'var(--color-text-secondary)', cursor: 'pointer', fontWeight: 500 }}>
+                        <input
+                          type="checkbox"
+                          checked={form.noFreshness}
+                          onChange={e => updateField('noFreshness', e.target.checked)}
+                        />
+                        Sin control de tiempo
+                      </label>
+                    </div>
+                    {!form.noFreshness && (
+                      <input className="form-input" type="number" min="1" value={form.max_showcase_hours} onChange={e => updateField('max_showcase_hours', e.target.value)} />
+                    )}
                   </div>
-                  {!form.noFreshness && (
-                    <input className="form-input" type="number" min="1" value={form.max_showcase_hours} onChange={e => updateField('max_showcase_hours', e.target.value)} />
-                  )}
                 </div>
               )}
 
-              {/* Foto */}
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Foto</label>
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                  {form.photo && <img src={form.photo} alt="" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 'var(--radius-sm)', flexShrink: 0 }} />}
-                  <button className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()}>
-                    <Upload size={14} /> Archivo
-                  </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => cameraInputRef.current?.click()}>
-                    <Camera size={14} /> Cámara
-                  </button>
-                  {form.photo && <button className="btn btn-ghost btn-sm" onClick={() => updateField('photo', null)}>Quitar</button>}
-                </div>
-                <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={e => handlePhoto(e.target.files[0])} />
-                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden onChange={e => handlePhoto(e.target.files[0])} />
               </div>
 
             </div>
