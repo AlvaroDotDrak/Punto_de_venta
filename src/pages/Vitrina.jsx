@@ -118,7 +118,7 @@ export default function Vitrina() {
   const warningCount = groups.filter(g => g.freshness === 'warning').length;
 
   const available = useMemo(() =>
-    products.filter(p => p.active && !['encargo', 'bebidas', 'cafe'].includes(p.category)), [products]);
+    products.filter(p => p.active && !['encargo', 'bebidas', 'cafe', 'mostrador'].includes(p.category)), [products]);
 
   const addFiltered = useMemo(() => {
     if (!addSearch.trim()) return available;
@@ -217,7 +217,7 @@ export default function Vitrina() {
 
   // ── RENDER ─────────────────────────────────────────
   return (
-    <div>
+    <div className="theme-vitrina">
       {/* Header */}
       <div className="page-header">
         <h1 className="page-title">
@@ -325,7 +325,7 @@ export default function Vitrina() {
               <div
                 key={group.product_id}
                 className="vt-card"
-                style={{ borderColor: meta.border, background: meta.bg }}
+                style={{ borderColor: meta.border, background: meta.bg, '--card-meta-color': meta.color }}
               >
                 {/* Barra lateral de color */}
                 <div className="vt-card-accent" style={{ background: meta.color }} />
@@ -363,7 +363,7 @@ export default function Vitrina() {
                     <div className="vt-progress-wrap">
                       <div className="vt-progress-bar">
                         <div
-                          className="vt-progress-fill"
+                          className={`vt-progress-fill ${group.freshness === 'danger' ? 'danger-pulse' : ''}`}
                           style={{ width: `${group.pct}%`, background: meta.color }}
                         />
                       </div>
@@ -494,7 +494,7 @@ export default function Vitrina() {
                           {p.photo
                             ? <img src={p.photo} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
                             : <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0 }}>
-                                {p.category === 'vitrina' ? '🍰' : '🥪'}
+                                {p.category === 'vitrina' ? '🍰' : p.category === 'mostrador' ? '🍪' : '🥪'}
                               </div>
                           }
                           <div style={{ flex: 1, minWidth: 0 }}>

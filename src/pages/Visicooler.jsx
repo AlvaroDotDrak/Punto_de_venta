@@ -128,7 +128,7 @@ export default function Visicooler() {
 
   // ── RENDER ────────────────────────────────────────────
   return (
-    <div>
+    <div className="theme-visicooler">
       {/* Header */}
       <div className="page-header">
         <h1 className="page-title">
@@ -239,7 +239,7 @@ export default function Visicooler() {
               <div
                 key={product.id}
                 className="vt-card"
-                style={{ borderColor: meta.border, background: meta.bg }}
+                style={{ borderColor: meta.border, background: meta.bg, '--card-meta-color': meta.color }}
               >
                 {/* Barra lateral */}
                 <div className="vt-card-accent" style={{ background: meta.color }} />

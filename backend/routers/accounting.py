@@ -584,8 +584,9 @@ def get_profitability(
                 cost_per_unit = round(total / yield_qty, 2) if yield_qty > 0 else None
             elif product.cost_price is not None:
                 cost_per_unit = product.cost_price
-            else:
-                cost_per_unit = 0.0
+
+            if cost_per_unit is None:
+                continue  # excluir productos sin costo definido — no mostrar margen falso
 
             data["category"] = product.category
             data["has_recipe"] = len(product.recipes) > 0
