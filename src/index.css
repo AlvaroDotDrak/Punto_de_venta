@@ -624,6 +624,16 @@ a {
   font-size: 0.8rem;
 }
 
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: var(--color-primary-bg);
+}
+
 .btn-lg {
   padding: 13px 26px;
   font-size: 0.95rem;
@@ -3584,8 +3594,8 @@ tbody tr:last-child td {
    ============================================= */
 .products-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--space-lg);
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-md);
   padding: var(--space-xs) 0;
 }
 
@@ -3645,7 +3655,7 @@ tbody tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 4rem;
+  font-size: 2.8rem;
   background: radial-gradient(circle at center, rgba(191, 90, 47, 0.05) 0%, var(--color-bg) 100%);
   transition: transform 0.3s ease;
 }
@@ -3662,11 +3672,11 @@ tbody tr:last-child td {
 }
 
 .product-card-body {
-  padding: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   position: relative;
   background: var(--color-bg-card);
   z-index: 2;
@@ -3674,7 +3684,7 @@ tbody tr:last-child td {
 
 .product-card-body h4 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: var(--color-text);
   line-height: 1.3;
@@ -3692,7 +3702,7 @@ tbody tr:last-child td {
 
 .product-price {
   font-family: var(--font-heading);
-  font-size: 1.15rem;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--color-primary-dark);
 }
@@ -3710,8 +3720,32 @@ tbody tr:last-child td {
 .badge-cafe { background: #E6D7C3; color: #5C4033; }
 .badge-encargo { background: #FADBD8; color: #C0392B; }
 
+.product-margin-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.product-margin-track {
+  flex: 1;
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.product-margin-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+.product-margin-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .product-card-actions {
-  padding: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
   background: var(--color-bg-input);
   border-top: 1px solid var(--color-border);
   display: flex;

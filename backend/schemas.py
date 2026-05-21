@@ -44,6 +44,7 @@ class ProductCreate(BaseModel):
     name: str
     category: str     # 'vitrina' | 'salados' | 'encargo' | 'bebidas' | 'cafe'
     price: float
+    cost_price: Optional[float] = None
     slices: int = 8
     slice_price: Optional[float] = None  # precio por trozo; None = sin precio fijo
     max_showcase_hours: Optional[int] = 48
@@ -55,6 +56,7 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
     price: Optional[float] = None
+    cost_price: Optional[float] = None
     slices: Optional[int] = None
     slice_price: Optional[float] = None
     max_showcase_hours: Optional[int] = None
@@ -68,6 +70,8 @@ class ProductOut(BaseModel):
     name: str
     category: str
     price: float
+    cost_price: Optional[float] = None
+    cost_per_unit: Optional[float] = None
     slices: int
     slice_price: Optional[float]
     max_showcase_hours: Optional[int]

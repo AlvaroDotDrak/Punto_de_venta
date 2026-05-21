@@ -52,6 +52,7 @@ export default function Contabilidad() {
   const [activeView, setActiveView] = useState('balance'); // 'balance' o 'profitability'
   const [profitability, setProfitability] = useState(null);
   const [profLoading, setProfLoading] = useState(false);
+  const [sortProfit, setSortProfit] = useState('ganancia_desc');
 
   // Estados para pérdidas por mermas
   const [lossesReport, setLossesReport] = useState(null);
@@ -387,9 +388,24 @@ export default function Contabilidad() {
 
             {/* Listado Detallado de Productos */}
             <div className="card" style={{ marginTop: 'var(--space-sm)' }}>
-              <h3 style={{ margin: '0 0 var(--space-md)', fontSize: '0.95rem', fontWeight: 600 }}>
-                Desglose de Rentabilidad por Producto
-              </h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
+                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>
+                  Desglose de Rentabilidad por Producto
+                </h3>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>Ordenar por:</label>
+                  <select 
+                    className="form-input" 
+                    style={{ padding: '4px 8px', fontSize: '0.8rem', height: 'auto', minHeight: 'unset' }}
+                    value={sortProfit} 
+                    onChange={e => setSortProfit(e.target.value)}
+                  >
+                    <option value="ganancia_desc">Utilidad (Mayor a menor)</option>
+                    <option value="margen_desc">Margen % (Mayor a menor)</option>
+                    <option value="unidades_desc">Unidades Vendidas</option>
+                  </select>
+                </div>
+              </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
@@ -403,7 +419,15 @@ export default function Contabilidad() {
                   </tr>
                 </thead>
                 <tbody>
-                  {profitability.products.map((p) => {
+                  {(() => {
+                    if (!profitability?.products) return null;
+                    const sorted = [...profitability.products].sort((a, b) => {
+                      if (sortProfit === 'ganancia_desc') return b.profit - a.profit;
+                      if (sortProfit === 'margen_desc') return b.margin - a.margin;
+                      if (sortProfit === 'unidades_desc') return b.units_sold - a.units_sold;
+                      return 0;
+                    });
+                    return sorted.map((p) => {
                     const marginColor = p.margin >= 60 ? '#2E8B57' : p.margin >= 40 ? '#2E7BBF' : p.margin >= 25 ? '#C8820A' : '#C0392B';
                     return (
                       <tr key={p.product_id} style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -436,7 +460,8 @@ export default function Contabilidad() {
                         </td>
                       </tr>
                     );
-                  })}
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

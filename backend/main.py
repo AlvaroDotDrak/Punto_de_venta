@@ -56,6 +56,8 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN notes TEXT")
         # v2.10: product_id en movimientos de ingredientes (para rentabilidad por producto)
         _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN product_id INTEGER")
+        # v2.11: cost_price en productos para rentabilidad
+        _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN cost_price FLOAT")
 
 
 @asynccontextmanager

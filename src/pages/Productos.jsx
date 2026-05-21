@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Package, Plus, Search, X, Edit, Camera, Upload, Trash2, BarChart2, ChefHat, RotateCcw } from 'lucide-react';
+import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw } from 'lucide-react';
 import ProductStatsModal from '../components/ProductStatsModal';
 import RecipeModal from '../components/Productos/RecipeModal';
 
@@ -20,7 +20,7 @@ const categories = [
 
 const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
 
-const emptyForm = { name: '', category: 'vitrina', price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '' };
+const emptyForm = { name: '', category: 'vitrina', price: '', cost_price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '' };
 
 function resizeImage(file) {
   return new Promise((resolve) => {
@@ -52,6 +52,7 @@ export default function Productos() {
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('todos');
   const [sortBy, setSortBy] = useState('nombre_asc');
+  const [showInactive, setShowInactive] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -67,6 +68,7 @@ export default function Productos() {
 
   const filtered = useMemo(() => {
     let list = products;
+    if (!showInactive) list = list.filter(p => p.active);
     if (filterCategory !== 'todos') list = list.filter(p => p.category === filterCategory);
     if (search) list = list.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
     
@@ -79,7 +81,7 @@ export default function Productos() {
     });
 
     return list;
-  }, [products, search, filterCategory, sortBy]);
+  }, [products, search, filterCategory, sortBy, showInactive]);
 
   const updateField = (f, v) => setForm(prev => ({ ...prev, [f]: v }));
 
@@ -104,6 +106,9 @@ export default function Productos() {
       slices: parseInt(form.slices) || 8,
       photo: form.photo || null,
       stock: form.category === 'bebidas' ? (parseInt(form.stock) || 0) : null,
+      cost_price: ['bebidas', 'cafe'].includes(form.category) && parseFloat(form.cost_price) > 0
+        ? parseFloat(form.cost_price)
+        : null,
     };
 
     try {
@@ -123,7 +128,7 @@ export default function Productos() {
 
   const handleEdit = (p) => {
     setEditingId(p.id);
-    setForm({ name: p.name, category: p.category, price: String(p.price), slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '' });
+    setForm({ name: p.name, category: p.category, price: String(p.price), cost_price: p.cost_price != null ? String(p.cost_price) : '', slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '' });
     setShowForm(true);
   };
 
@@ -153,18 +158,30 @@ export default function Productos() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-md)', flexWrap: 'wrap' }}>
-        <div className="search-bar" style={{ flex: 1, minWidth: 200 }}>
-          <Search className="search-icon" size={18} />
-          <input type="text" placeholder="Buscar producto..." value={search} onChange={e => setSearch(e.target.value)} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <div className="search-bar" style={{ flex: 1, minWidth: 200 }}>
+            <Search className="search-icon" size={18} />
+            <input type="text" placeholder="Buscar producto..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          
+          <select className="form-input" style={{ width: 'auto' }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            <option value="nombre_asc">Nombre A→Z</option>
+            <option value="nombre_desc">Nombre Z→A</option>
+            <option value="precio_asc">Precio ↑</option>
+            <option value="precio_desc">Precio ↓</option>
+          </select>
+
+          {products.some(p => !p.active) && (
+            <button
+              className={`btn btn-sm ${showInactive ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setShowInactive(v => !v)}
+            >
+              {showInactive ? 'Ocultar inactivos' : `Inactivos (${products.filter(p => !p.active).length})`}
+            </button>
+          )}
         </div>
         
-        <select className="form-input" style={{ width: 'auto' }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
-          <option value="nombre_asc">Nombre A→Z</option>
-          <option value="nombre_desc">Nombre Z→A</option>
-          <option value="precio_asc">Precio ↑</option>
-          <option value="precio_desc">Precio ↓</option>
-        </select>
         <div className="tabs">
           {['todos', ...categories.map(c => c.value)].map(c => (
             <button key={c} className={`tab ${filterCategory === c ? 'active' : ''}`}
@@ -189,6 +206,21 @@ export default function Productos() {
                 <span className={`badge badge-category badge-${p.category}`}>{categories.find(c => c.value === p.category)?.label}</span>
                 <strong className="product-price">{formatCurrency(p.price)}</strong>
               </div>
+              {(() => {
+                const cost = p.cost_per_unit;
+                if (!cost || !p.price) return null;
+                const margin = Math.round(((p.price - cost) / p.price) * 100);
+                const color = margin >= 60 ? 'var(--color-success)' : margin >= 30 ? '#D4AC0D' : 'var(--color-danger)';
+                const icon = margin >= 60 ? '✓' : margin >= 30 ? '~' : '✗';
+                return (
+                  <div className="product-margin-bar">
+                    <div className="product-margin-track">
+                      <div className="product-margin-fill" style={{ width: `${Math.min(margin, 100)}%`, background: color }} />
+                    </div>
+                    <span className="product-margin-label" style={{ color }}>{margin}% {icon}</span>
+                  </div>
+                );
+              })()}
               {p.has_recipe && (
                 <div className="badge-recipe" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-success)', marginTop: '4px', marginBottom: '4px' }}>
                   <ChefHat size={14} /> Con receta
@@ -341,6 +373,16 @@ export default function Productos() {
                 <div className="form-group">
                   <label className="form-label">Stock inicial (unidades)</label>
                   <input className="form-input" type="number" min="0" value={form.stock} onChange={e => updateField('stock', e.target.value)} placeholder="0" />
+                </div>
+              )}
+
+              {['bebidas', 'cafe'].includes(form.category) && (
+                <div className="form-group">
+                  <label className="form-label">Precio de costo (compra)</label>
+                  <input className="form-input form-input-price" type="number" min="0" step="100"
+                    placeholder="Lo que pagas al proveedor"
+                    value={form.cost_price}
+                    onChange={e => updateField('cost_price', e.target.value)} />
                 </div>
               )}
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..models import Product, Sale, SaleItem
+from ..models import Product, Sale, SaleItem, ProductRecipe, Ingredient
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import ProductCreate, ProductOut, ProductUpdate, RestockRequest
@@ -20,7 +20,7 @@ def list_products(
     db: Session = Depends(get_db),
     _=Depends(get_current_seller),
 ):
-    q = db.query(Product).options(joinedload(Product.recipes))
+    q = db.query(Product).options(joinedload(Product.recipes).joinedload(ProductRecipe.ingredient))
     if active_only:
         q = q.filter(Product.active == True)
     
@@ -30,6 +30,16 @@ def list_products(
     for p in products:
         p_dict = {**p.__dict__}
         p_dict["has_recipe"] = len(p.recipes) > 0
+        
+        cost_per_unit = None
+        if p.recipes:
+            total = sum(r.ingredient.last_price * r.quantity for r in p.recipes if r.ingredient)
+            yield_qty = p.recipes[0].yield_qty
+            cost_per_unit = round(total / yield_qty, 2) if yield_qty > 0 else None
+        elif p.cost_price is not None:
+            cost_per_unit = p.cost_price
+            
+        p_dict["cost_per_unit"] = cost_per_unit
         result.append(p_dict)
         
     return result

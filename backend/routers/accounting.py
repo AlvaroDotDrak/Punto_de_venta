@@ -524,3 +524,112 @@ def get_losses_report(
         by_ingredient=by_ingredient_list,
         by_reason=by_reason_list
     )
+
+
+@router.get("/profitability")
+def get_profitability(
+    date_from: str = Query(...),
+    date_to: str = Query(...),
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    dt_from = datetime.fromisoformat(date_from)
+    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+
+    sale_items = (
+        db.query(SaleItem)
+        .join(Sale)
+        .filter(
+            Sale.status == "completed",
+            Sale.created_at >= dt_from,
+            Sale.created_at <= dt_to
+        )
+        .all()
+    )
+
+    grouped = {}
+    for item in sale_items:
+        if not item.product_id:
+            continue
+        if item.product_id not in grouped:
+            grouped[item.product_id] = {
+                "product_id": item.product_id,
+                "name": item.product_name,
+                "units_sold": 0,
+                "revenue": 0.0
+            }
+        grouped[item.product_id]["units_sold"] += item.quantity
+        grouped[item.product_id]["revenue"] += item.subtotal
+
+    product_results = []
+    total_revenue = 0.0
+    total_cogs = 0.0
+    
+    if grouped:
+        products = db.query(Product).options(
+            joinedload(Product.recipes).joinedload(ProductRecipe.ingredient)
+        ).filter(Product.id.in_(list(grouped.keys()))).all()
+        
+        product_map = {p.id: p for p in products}
+        
+        for p_id, data in grouped.items():
+            product = product_map.get(p_id)
+            if not product:
+                continue
+                
+            cost_per_unit = None
+            if product.recipes:
+                total = sum(r.ingredient.last_price * r.quantity for r in product.recipes if r.ingredient)
+                yield_qty = product.recipes[0].yield_qty
+                cost_per_unit = round(total / yield_qty, 2) if yield_qty > 0 else None
+            elif product.cost_price is not None:
+                cost_per_unit = product.cost_price
+            else:
+                cost_per_unit = 0.0
+
+            data["category"] = product.category
+            data["has_recipe"] = len(product.recipes) > 0
+            
+            cogs = round(cost_per_unit * data["units_sold"], 2)
+            profit = round(data["revenue"] - cogs, 2)
+            margin = round((profit / data["revenue"]) * 100, 1) if data["revenue"] > 0 else 0
+
+            data["cogs"] = cogs
+            data["profit"] = profit
+            data["margin"] = margin
+            
+            total_revenue += data["revenue"]
+            total_cogs += cogs
+
+            product_results.append(data)
+
+    product_results.sort(key=lambda x: x["profit"], reverse=True)
+    
+    cat_map = {}
+    for p in product_results:
+        c = p["category"]
+        if c not in cat_map:
+            cat_map[c] = {"label": _CAT_LABELS.get(c, c), "revenue": 0.0, "cogs": 0.0}
+        cat_map[c]["revenue"] += p["revenue"]
+        cat_map[c]["cogs"] += p["cogs"]
+        
+    categories = []
+    for c, stats in cat_map.items():
+        c_prof = stats["revenue"] - stats["cogs"]
+        stats["margin"] = round((c_prof / stats["revenue"]) * 100, 1) if stats["revenue"] > 0 else 0
+        categories.append(stats)
+        
+    categories.sort(key=lambda x: x["revenue"], reverse=True)
+
+    total_profit = total_revenue - total_cogs
+    total_margin = round((total_profit / total_revenue) * 100, 1) if total_revenue > 0 else 0
+
+    return {
+        "total_revenue": total_revenue,
+        "total_cogs": total_cogs,
+        "total_profit": total_profit,
+        "total_margin": total_margin,
+        "categories": categories,
+        "products": product_results
+    }
+

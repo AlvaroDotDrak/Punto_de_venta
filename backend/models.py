@@ -34,6 +34,7 @@ class Product(Base):
     price = Column(Float, nullable=False)
     slices = Column(Integer, default=8)           # trozos por unidad (solo vitrina)
     slice_price = Column(Float, nullable=True)    # precio por trozo (None = sin precio fijo)
+    cost_price = Column(Float, nullable=True)     # costo unitario de compra (para bebidas/cafe)
     max_showcase_hours = Column(Integer, nullable=True, default=48)
     stock = Column(Integer, nullable=True)        # stock físico (solo bebidas); None = sin tracking
     min_stock_cooler = Column(Integer, nullable=True)  # umbral alerta semáforo visicooler
