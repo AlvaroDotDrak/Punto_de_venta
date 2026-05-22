@@ -7,9 +7,9 @@ from datetime import datetime, date
 from pathlib import Path
 from sqlalchemy.orm import Session
 from .models import (
-    AuditLog, CashMovement, CashRegister, Ingredient,
-    IngredientMovement, Order, OrderItem, Product,
-    Sale, SaleItem, Seller, ShowcaseItem
+    AuditLog, CashMovement, CashRegister, Expense, ExpenseCategory,
+    Ingredient, IngredientMovement, Invoice, Order, OrderItem, Product,
+    ProductRecipe, Sale, SaleItem, Seller, ShowcaseItem, SystemConfig
 )
 from .audit import ACTIONS, log_action
 
@@ -83,6 +83,11 @@ def _run_backup(db: Session) -> Path:
         "cash_movements": _table_to_list(db, CashMovement),
         "ingredients": _table_to_list(db, Ingredient),
         "ingredient_movements": _table_to_list(db, IngredientMovement),
+        "product_recipes": _table_to_list(db, ProductRecipe),
+        "expense_categories": _table_to_list(db, ExpenseCategory),
+        "expenses": _table_to_list(db, Expense),
+        "invoices": _table_to_list(db, Invoice),
+        "system_config": _table_to_list(db, SystemConfig),
         "audit_log": _table_to_list(db, AuditLog),
     }
 
