@@ -15,22 +15,36 @@ from .audit import ACTIONS, log_action
 
 BACKUP_DIR = Path.home() / "punto_de_venta_backups"
 LAST_BACKUP_FILE = BACKUP_DIR / ".last_backup_date"
+MAX_BACKUPS = 30
+
+# Campos excluidos del backup (base64 pesado; ya vive en pasteleria.db)
+_EXCLUDE_FIELDS = {
+    "products": {"photo"},
+    "sellers": {"photo"},
+}
 
 
 def _serialize(obj):
-    """Serializa objetos SQLAlchemy a dict."""
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     raise TypeError(f"No serializable: {type(obj)}")
 
 
-def _table_to_list(db: Session, model) -> list[dict]:
+def _table_to_list(db: Session, model, exclude: set = None) -> list[dict]:
     rows = db.query(model).all()
     result = []
     for row in rows:
-        d = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+        d = {c.name: getattr(row, c.name) for c in row.__table__.columns
+             if not exclude or c.name not in exclude}
         result.append(d)
     return result
+
+
+def _rotate_backups():
+    """Elimina backups más allá de MAX_BACKUPS, ordenados por fecha."""
+    files = sorted(BACKUP_DIR.glob("backup_*.json"))
+    for old in files[:-MAX_BACKUPS]:
+        old.unlink()
 
 
 def check_and_run_backup(db: Session) -> bool:
@@ -58,8 +72,8 @@ def _run_backup(db: Session) -> Path:
 
     data = {
         "exported_at": datetime.now().isoformat(),
-        "sellers": _table_to_list(db, Seller),
-        "products": _table_to_list(db, Product),
+        "sellers": _table_to_list(db, Seller, _EXCLUDE_FIELDS.get("sellers")),
+        "products": _table_to_list(db, Product, _EXCLUDE_FIELDS.get("products")),
         "showcase_items": _table_to_list(db, ShowcaseItem),
         "sales": _table_to_list(db, Sale),
         "sale_items": _table_to_list(db, SaleItem),
@@ -73,8 +87,9 @@ def _run_backup(db: Session) -> Path:
     }
 
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, default=_serialize)
+        json.dump(data, f, ensure_ascii=False, default=_serialize)
 
+    _rotate_backups()
     log_action(db, ACTIONS.BACKUP, None, f"Backup automático: {filename.name}")
     print(f"✓ Backup guardado en {filename}")
     return filename
