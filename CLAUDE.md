@@ -386,3 +386,27 @@ Los modales usan `align-items: flex-start` + `overflow-y: auto` en el overlay pa
 4. **`backend/seed.py`** — Si la condición "solo seedear si está vacío" falla, duplica datos. Las categorías de gasto se seedean independientemente de los vendedores.
 5. **`dist/`** — Nunca editar manualmente. Siempre regenerar con `npm run build`.
 6. **`backend/routers/accounting.py::export_report`** — El export usa openpyxl; si la dependencia no está instalada, falla en tiempo de request, no al arrancar.
+
+---
+
+## Flujo de trabajo con el agente becario (agy)
+
+Este proyecto usa un flujo de dos agentes: **Claude Code** (arquitecto/revisor) y **agy** (ejecutor).
+
+### Reglas para agy
+
+- **Leer al inicio de cada sesión:** solo `CLAUDE.md` (este archivo) y `task.md` (tarea actual). Nada más.
+- **No crear archivos de memoria:** no crear ni modificar archivos en `memory/`, ni `MEMORY.md`, ni `dev-state.json`, ni archivos de log diario. Claude Code maneja la continuidad entre sesiones.
+- **No hacer commit nunca.** Implementar, correr `npm run build` si hay cambios de frontend, verificar, y reportar. Claude Code revisa y hace el commit.
+- **Trabajar en `master` directamente.** No crear feature branches.
+- **No escribir tests** salvo que `task.md` lo indique explícitamente.
+- **No agregar comentarios** al código salvo que el WHY sea no obvio.
+- **Seguir las convenciones** de nomenclatura y estructura definidas en este archivo.
+
+### Flujo típico
+
+1. Álvaro le pasa una tarea a agy vía `task.md`
+2. agy implementa y reporta
+3. Claude Code revisa el código
+4. Si está correcto, Claude Code hace commit y push
+5. Si hay correcciones, Claude Code las hace directamente o escribe una nueva `task.md`
