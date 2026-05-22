@@ -59,6 +59,15 @@ def _run_migrations():
         # v2.11: cost_price en productos para rentabilidad
         _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN cost_price FLOAT")
 
+        # Índices para consultas frecuentes (v2.8)
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_status ON sales(status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_items_sale_id ON sale_items(sale_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_items_product_id ON sale_items(product_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_showcase_product_status ON showcase_items(product_id, status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_sale_id ON ingredient_movements(sale_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_type ON ingredient_movements(type)"))
+        conn.commit()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

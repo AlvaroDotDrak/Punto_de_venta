@@ -10,6 +10,7 @@ from ..models import Product, Sale, SaleItem, ProductRecipe, Ingredient
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import ProductCreate, ProductOut, ProductUpdate, RestockRequest
+from ..utils import calculate_recipe_fraction, compute_cost_per_unit
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -31,13 +32,7 @@ def list_products(
         p_dict = {**p.__dict__}
         p_dict["has_recipe"] = len(p.recipes) > 0
         
-        cost_per_unit = None
-        if p.recipes:
-            total = sum(r.ingredient.last_price * r.quantity for r in p.recipes if r.ingredient)
-            yield_qty = p.recipes[0].yield_qty
-            cost_per_unit = round(total / yield_qty, 2) if yield_qty > 0 else None
-        elif p.cost_price is not None:
-            cost_per_unit = p.cost_price
+        cost_per_unit = compute_cost_per_unit(p)
             
         p_dict["cost_per_unit"] = cost_per_unit
         result.append(p_dict)

@@ -12,7 +12,7 @@ from ..auth import require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import AccountingSummary, ExpenseSummaryItem, IncomeSummaryItem, LossesReport, LossSummaryItem, LossReasonItem
 
-from ..utils import calculate_vat
+from ..utils import calculate_vat, compute_cost_per_unit
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
 
@@ -459,22 +459,7 @@ def get_profitability(
             if not product:
                 continue
 
-            cost_per_unit = None
-            if product.recipes:
-                ingredient_cost = sum(
-                    r.ingredient.last_price * r.quantity
-                    for r in product.recipes if r.ingredient
-                )
-                yield_qty = product.recipes[0].yield_qty
-                if yield_qty and yield_qty > 0:
-                    base_cost = ingredient_cost / yield_qty
-                    # Trozo: el costo se divide entre la cantidad de trozos por unidad
-                    if showcase_type == "trozado" and product.slices and product.slices > 0:
-                        cost_per_unit = round(base_cost / product.slices, 2)
-                    else:
-                        cost_per_unit = round(base_cost, 2)
-            elif product.cost_price is not None:
-                cost_per_unit = product.cost_price
+            cost_per_unit = compute_cost_per_unit(product, showcase_type)
 
             if cost_per_unit is None:
                 continue  # excluir productos sin costo definido
