@@ -17,6 +17,9 @@ class Seller(Base):
     active = Column(Boolean, default=True)
     failed_attempts = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
+    products_access = Column(String, default="none")   # 'none' | 'view' | 'full'
+    can_access_insumos = Column(Boolean, default=False)
+    can_access_historial = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")

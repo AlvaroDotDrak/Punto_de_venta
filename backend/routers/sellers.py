@@ -48,6 +48,12 @@ def update_seller(
         seller.role = payload.role
     if payload.active is not None:
         seller.active = payload.active
+    if payload.products_access is not None:
+        seller.products_access = payload.products_access
+    if payload.can_access_insumos is not None:
+        seller.can_access_insumos = payload.can_access_insumos
+    if payload.can_access_historial is not None:
+        seller.can_access_historial = payload.can_access_historial
 
     db.commit()
     db.refresh(seller)

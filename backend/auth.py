@@ -104,3 +104,27 @@ def require_admin(seller: Seller = Depends(get_current_seller)) -> Seller:
     if seller.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Se requiere rol admin")
     return seller
+
+
+def require_product_access(write: bool = False):
+    """Permite acceso a admin, o a sellers según su products_access."""
+    def _check(seller: Seller = Depends(get_current_seller)):
+        if seller.role == "admin":
+            return seller
+        if write and seller.products_access == "full":
+            return seller
+        if not write and seller.products_access in ("view", "full"):
+            return seller
+        raise HTTPException(status_code=403, detail="Sin permisos para Productos")
+    return _check
+
+
+def require_permission(perm: str):
+    """Permite acceso a admin, o a sellers con el permiso booleano indicado."""
+    def _check(seller: Seller = Depends(get_current_seller)):
+        if seller.role == "admin":
+            return seller
+        if getattr(seller, perm, False):
+            return seller
+        raise HTTPException(status_code=403, detail="Sin permisos suficientes")
+    return _check

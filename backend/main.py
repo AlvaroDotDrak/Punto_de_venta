@@ -59,6 +59,11 @@ def _run_migrations():
         # v2.11: cost_price en productos para rentabilidad
         _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN cost_price FLOAT")
 
+        # v2.12: permisos granulares por vendedor
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN products_access TEXT DEFAULT 'none'")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_access_insumos BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_access_historial BOOLEAN DEFAULT 0")
+
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_status ON sales(status)"))

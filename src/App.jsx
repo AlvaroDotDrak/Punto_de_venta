@@ -34,6 +34,17 @@ function AdminRoute({ children }) {
   return children;
 }
 
+function PermissionRoute({ permission, children }) {
+  const { currentSeller } = useSeller();
+  if (currentSeller?.role === 'admin') return children;
+  if (permission === 'products_access') {
+    if (['view', 'full'].includes(currentSeller?.products_access)) return children;
+    return <Navigate to="/" replace />;
+  }
+  if (currentSeller?.[permission]) return children;
+  return <Navigate to="/" replace />;
+}
+
 export default function App() {
   const { currentSeller, loading } = useSeller();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -86,11 +97,11 @@ export default function App() {
             <Route path="/contabilidad" element={<AdminRoute><Contabilidad /></AdminRoute>} />
             <Route path="/facturas" element={<AdminRoute><Facturas /></AdminRoute>} />
 
-            <Route path="/productos" element={<AdminRoute><Productos /></AdminRoute>} />
-            <Route path="/insumos" element={<AdminRoute><Insumos /></AdminRoute>} />
+            <Route path="/productos" element={<PermissionRoute permission="products_access"><Productos /></PermissionRoute>} />
+            <Route path="/insumos" element={<PermissionRoute permission="can_access_insumos"><Insumos /></PermissionRoute>} />
             <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
             <Route path="/configuracion" element={<AdminRoute><Configuracion /></AdminRoute>} />
-            <Route path="/historial" element={<AdminRoute><HistorialVentas /></AdminRoute>} />
+            <Route path="/historial" element={<PermissionRoute permission="can_access_historial"><HistorialVentas /></PermissionRoute>} />
             <Route path="/vendedores" element={<AdminRoute><Vendedores /></AdminRoute>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />

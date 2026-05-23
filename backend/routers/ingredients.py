@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import Ingredient, IngredientMovement
-from ..auth import get_current_seller, require_admin
+from ..auth import get_current_seller, require_permission
 from ..audit import ACTIONS, log_action
 from ..schemas import IngredientCreate, IngredientMovementCreate, IngredientMovementOut, IngredientOut, IngredientUpdate, RestockSuggestion
 from ..utils import calculate_suggested_restock, calculate_loss_valuation
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
 
 @router.get("", response_model=list[IngredientOut])
-def list_ingredients(db: Session = Depends(get_db), _=Depends(require_admin)):
+def list_ingredients(db: Session = Depends(get_db), _=Depends(require_permission('can_access_insumos'))):
     return db.query(Ingredient).filter(Ingredient.active == True).order_by(Ingredient.name).all()
 
 
@@ -20,13 +20,13 @@ def list_ingredients(db: Session = Depends(get_db), _=Depends(require_admin)):
 def create_ingredient(
     payload: IngredientCreate,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    seller=Depends(require_permission('can_access_insumos')),
 ):
     ingredient = Ingredient(**payload.model_dump())
     db.add(ingredient)
     db.commit()
     db.refresh(ingredient)
-    log_action(db, ACTIONS.INGREDIENT_CREATE, admin.id, f"Insumo creado: {ingredient.name}")
+    log_action(db, ACTIONS.INGREDIENT_CREATE, seller.id, f"Insumo creado: {ingredient.name}")
     return ingredient
 
 
@@ -35,7 +35,7 @@ def update_ingredient(
     ingredient_id: int,
     payload: IngredientUpdate,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    seller=Depends(require_permission('can_access_insumos')),
 ):
     ingredient = db.query(Ingredient).filter(Ingredient.id == ingredient_id).first()
     if not ingredient:
@@ -53,7 +53,7 @@ def update_ingredient(
 def list_global_movements(
     limit: int = 100,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    _=Depends(require_permission('can_access_insumos')),
 ):
     return (
         db.query(IngredientMovement)
@@ -67,7 +67,7 @@ def list_global_movements(
 @router.get("/restock", response_model=list[RestockSuggestion])
 def get_restock_suggestions(
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    _=Depends(require_permission('can_access_insumos')),
 ):
     ingredients = (
         db.query(Ingredient)
@@ -100,7 +100,7 @@ def list_movements(
     ingredient_id: int,
     limit: int = 50,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    _=Depends(require_permission('can_access_insumos')),
 ):
     ingredient = db.query(Ingredient).filter(Ingredient.id == ingredient_id).first()
     if not ingredient:
@@ -120,7 +120,7 @@ def add_movement(
     ingredient_id: int,
     payload: IngredientMovementCreate,
     db: Session = Depends(get_db),
-    seller=Depends(get_current_seller),
+    seller=Depends(require_permission('can_access_insumos')),
 ):
     ingredient = db.query(Ingredient).filter(Ingredient.id == ingredient_id).first()
     if not ingredient:

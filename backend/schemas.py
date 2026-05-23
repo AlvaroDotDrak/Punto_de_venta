@@ -15,12 +15,18 @@ class SellerUpdate(BaseModel):
     pin: Optional[str] = None
     role: Optional[str] = None
     active: Optional[bool] = None
+    products_access: Optional[str] = None
+    can_access_insumos: Optional[bool] = None
+    can_access_historial: Optional[bool] = None
 
 class SellerOut(BaseModel):
     id: int
     name: str
     role: str
     active: bool
+    products_access: str
+    can_access_insumos: bool
+    can_access_historial: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

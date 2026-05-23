@@ -9,7 +9,15 @@ import api from '../utils/api';
 import { Users, Plus, Edit, Shield, Key, Activity, X, CheckCircle, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
-const emptyForm = { name: '', pin: '', role: 'seller', active: true };
+const emptyForm = { 
+  name: '', 
+  pin: '', 
+  role: 'seller', 
+  active: true,
+  products_access: 'none',
+  can_access_insumos: false,
+  can_access_historial: false 
+};
 
 export default function Vendedores() {
   const toast = useToast();
@@ -49,7 +57,14 @@ export default function Vendedores() {
     }
     try {
       if (editingId) {
-        const patch = { name: form.name, role: form.role, active: form.active };
+        const patch = { 
+          name: form.name, 
+          role: form.role, 
+          active: form.active,
+          products_access: form.products_access,
+          can_access_insumos: form.can_access_insumos,
+          can_access_historial: form.can_access_historial
+        };
         if (form.pin) patch.pin = form.pin;
         await api.patch(`/sellers/${editingId}`, patch);
         toast.success('Vendedor actualizado');
@@ -66,7 +81,15 @@ export default function Vendedores() {
 
   const handleEdit = (seller) => {
     setEditingId(seller.id);
-    setForm({ name: seller.name, pin: '', role: seller.role, active: seller.active });
+    setForm({ 
+      name: seller.name, 
+      pin: '', 
+      role: seller.role, 
+      active: seller.active,
+      products_access: seller.products_access || 'none',
+      can_access_insumos: !!seller.can_access_insumos,
+      can_access_historial: !!seller.can_access_historial
+    });
     setShowForm(true);
   };
 
@@ -185,6 +208,31 @@ export default function Vendedores() {
                   ))}
                 </div>
               </div>
+
+              {editingId && form.role === 'seller' && (
+                <div style={{ marginTop: 'var(--space-md)', borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                  <h3 className="section-title" style={{ fontSize: '1rem', marginBottom: 'var(--space-sm)' }}>Permisos adicionales</h3>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Productos</label>
+                    <select className="form-input" value={form.products_access} onChange={e => updateField('products_access', e.target.value)}>
+                      <option value="none">Sin acceso</option>
+                      <option value="view">Solo ver</option>
+                      <option value="full">Editar</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_access_insumos" checked={form.can_access_insumos} onChange={e => updateField('can_access_insumos', e.target.checked)} />
+                    <label htmlFor="can_access_insumos" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Acceso a Insumos</label>
+                  </div>
+
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_access_historial" checked={form.can_access_historial} onChange={e => updateField('can_access_historial', e.target.checked)} />
+                    <label htmlFor="can_access_historial" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Acceso a Historial</label>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>

@@ -16,11 +16,11 @@ const navItems = [
   { path: '/caja', label: 'Control de Caja', icon: DollarSign },
   { section: 'Gestión' },
   { path: '/pedidos', label: 'Pedidos', icon: ClipboardList, badgeKey: 'pendingOrders' },
-  { path: '/productos', label: 'Productos', icon: Package, adminOnly: true },
-  { path: '/insumos', label: 'Insumos', icon: Wheat, adminOnly: true },
+  { path: '/productos', label: 'Productos', icon: Package, permission: 'products_access' },
+  { path: '/insumos', label: 'Insumos', icon: Wheat, permission: 'can_access_insumos' },
   { section: 'Análisis' },
   { path: '/dashboard', label: 'Dashboard', icon: BarChart3, adminOnly: true },
-  { path: '/historial', label: 'Historial Ventas', icon: History, adminOnly: true },
+  { path: '/historial', label: 'Historial Ventas', icon: History, permission: 'can_access_historial' },
   { section: 'Contabilidad' },
   { path: '/gastos', label: 'Gastos', icon: TrendingDown },
   { path: '/contabilidad', label: 'Contabilidad', icon: BookOpen, adminOnly: true },
@@ -95,6 +95,14 @@ export default function Sidebar({ open, onClose }) {
 
           // Skip admin-only items for non-admin users
           if (item.adminOnly && !isAdmin) return null;
+
+          if (item.permission && !isAdmin) {
+            if (item.permission === 'products_access') {
+              if (!['view', 'full'].includes(currentSeller?.products_access)) return null;
+            } else if (!currentSeller?.[item.permission]) {
+              return null;
+            }
+          }
 
           const Icon = item.icon;
           const badgeCount = item.badgeKey ? badges[item.badgeKey] : 0;

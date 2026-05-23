@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import CashMovement, CashRegister, Sale, SaleItem, ShowcaseItem, Product, ProductRecipe, IngredientMovement
-from ..auth import get_current_seller, require_admin
+from ..auth import get_current_seller, require_admin, require_permission
 from ..audit import ACTIONS, log_action
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
 from ..utils import calculate_recipe_fraction
@@ -199,7 +199,7 @@ def list_sales(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_seller),
+    _=Depends(require_permission('can_access_historial')),
 ):
     q = db.query(Sale).options(joinedload(Sale.items), joinedload(Sale.seller))
     if date_from:

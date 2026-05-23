@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
+import { useSeller } from '../context/SellerContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
 import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw } from 'lucide-react';
@@ -46,6 +47,9 @@ function resizeImage(file) {
 
 export default function Productos() {
   const toast = useToast();
+  const { currentSeller } = useSeller();
+  const canEdit = currentSeller?.role === 'admin' || currentSeller?.products_access === 'full';
+
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
@@ -154,9 +158,11 @@ export default function Productos() {
     <div>
       <div className="page-header">
         <h1 className="page-title"><Package size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />Productos</h1>
-        <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(emptyForm); setShowForm(true); }}>
-          <Plus size={16} /> Nuevo Producto
-        </button>
+        {canEdit && (
+          <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(emptyForm); setShowForm(true); }}>
+            <Plus size={16} /> Nuevo Producto
+          </button>
+        )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
@@ -242,15 +248,19 @@ export default function Productos() {
             <div className="product-card-actions">
               <button className="btn btn-ghost btn-sm" title="Estadísticas" onClick={() => setStatsProduct(p)}><BarChart2 size={14} /></button>
               <button className="btn btn-ghost btn-sm" title="Receta (Insumos)" onClick={() => setRecipeProduct(p)}><ChefHat size={14} /></button>
-              <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
-              {p.active ? (
-                <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p)}>
-                  <Trash2 size={14} />
-                </button>
-              ) : (
-                <button className="btn btn-ghost btn-sm" title="Reactivar" onClick={() => handleReactivate(p)}>
-                  <RotateCcw size={14} />
-                </button>
+              {canEdit && (
+                <>
+                  <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
+                  {p.active ? (
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p)}>
+                      <Trash2 size={14} />
+                    </button>
+                  ) : (
+                    <button className="btn btn-ghost btn-sm" title="Reactivar" onClick={() => handleReactivate(p)}>
+                      <RotateCcw size={14} />
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
