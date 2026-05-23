@@ -5,11 +5,28 @@ Sistema POS (Point of Sale) para panadería/pastelería. Backend FastAPI + SQLit
 ## Inicio rápido
 
 ```bash
+# 1. Copiar y configurar variables de entorno
+cp .env.example .env
+# Editar .env con valores secretos propios
+
+# 2. Arrancar la app
 bash inicio.sh        # Linux
 inicio.bat            # Windows
 ```
 
 La app queda disponible en **http://localhost:8000**.
+
+## Configuración
+
+Antes de iniciar por primera vez, copia `.env.example` a `.env` y define los valores:
+
+```env
+PIN_SALT=tu_salt_secreto
+JWT_SECRET_KEY=tu_clave_jwt_secreta
+```
+
+- **PIN_SALT** — se usa para hashear los PINs de vendedores. Cambiarlo invalida todos los PINs existentes.
+- **JWT_SECRET_KEY** — firma los tokens de sesión. Debe ser una cadena larga y aleatoria (`openssl rand -hex 32`).
 
 Credenciales demo:
 
