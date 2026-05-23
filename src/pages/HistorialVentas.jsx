@@ -57,11 +57,13 @@ function SellerBadge({ name }) {
 export default function HistorialVentas() {
   const { currentSeller } = useSeller();
   const toast = useToast();
+  const isAdmin = currentSeller?.role === 'admin';
+  const minDate = (() => { const d = new Date(); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0]; })();
 
   const [sales, setSales] = useState([]);
   const [sellers, setSellers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split('T')[0]; });
+  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - (isAdmin ? 30 : 2)); return d.toISOString().split('T')[0]; });
   const [dateTo, setDateTo]     = useState(() => new Date().toISOString().split('T')[0]);
   const [filterSeller, setFilterSeller]   = useState('');
   const [filterPayment, setFilterPayment] = useState('');
@@ -78,9 +80,12 @@ export default function HistorialVentas() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [s, sel] = await Promise.all([api.get('/sales?limit=500'), api.get('/sellers')]);
-      setSales(s);
-      setSellers(sel);
+      const salesData = await api.get('/sales?limit=500');
+      setSales(salesData);
+      if (isAdmin) {
+        const sellersData = await api.get('/sellers');
+        setSellers(sellersData);
+      }
     } catch { /* silencioso */ }
     finally { setLoading(false); }
   };
@@ -201,7 +206,8 @@ export default function HistorialVentas() {
           {/* Fecha desde */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Desde</label>
-            <DateInput className="form-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            <DateInput className="form-input" value={dateFrom} min={!isAdmin ? minDate : undefined}
+              onChange={e => { if (!isAdmin && e.target.value < minDate) return; setDateFrom(e.target.value); }} />
           </div>
 
           {/* Fecha hasta */}
@@ -210,14 +216,16 @@ export default function HistorialVentas() {
             <DateInput className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
 
-          {/* Vendedor */}
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Vendedor</label>
-            <select className="form-input" value={filterSeller} onChange={e => setFilterSeller(e.target.value)}>
-              <option value="">Todos</option>
-              {sellers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
+          {/* Vendedor — solo admin tiene la lista de vendedores */}
+          {isAdmin && (
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Vendedor</label>
+              <select className="form-input" value={filterSeller} onChange={e => setFilterSeller(e.target.value)}>
+                <option value="">Todos</option>
+                {sellers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Método de pago */}
           <div>
