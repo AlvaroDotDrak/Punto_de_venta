@@ -11,8 +11,14 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from .models import Seller
 
-SALT = os.environ.get("PIN_SALT", "_pasteleria_salt_2026")
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "pasteleria_jwt_secret_2026")
+SALT = os.environ.get("PIN_SALT")
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+
+if not SALT or not SECRET_KEY:
+    raise RuntimeError(
+        "Variables de entorno PIN_SALT y JWT_SECRET_KEY son requeridas. "
+        "Copia .env.example a .env y configura los valores."
+    )
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 12
 
