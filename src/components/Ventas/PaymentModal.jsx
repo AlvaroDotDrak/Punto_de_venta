@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { X, Banknote, CreditCard, Smartphone, Check } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
@@ -6,6 +7,8 @@ const METHODS = [
   { id: 'tarjeta',       label: 'Tarjeta',        Icon: CreditCard },
   { id: 'transferencia', label: 'Transferencia',  Icon: Smartphone },
 ];
+
+const BILLS = [1000, 2000, 5000, 10000, 20000, 50000];
 
 export default function PaymentModal({
   total,
@@ -20,14 +23,28 @@ export default function PaymentModal({
   onConfirm,
   onClose,
 }) {
+  const [pressedBill, setPressedBill] = useState(null);
+  const [feedbackKey, setFeedbackKey] = useState(0);
+  const [feedbackAmount, setFeedbackAmount] = useState(null);
+
   const cashOk = paymentMethod !== 'efectivo' || !cashReceived || parseInt(cashReceived) >= total;
   const receiptForced = paymentMethod === 'tarjeta';
+  const suggested = BILLS.find(b => b >= total) ?? BILLS[BILLS.length - 1];
+
+  const handleBillPress = (bill) => {
+    const currentAmount = parseInt(cashReceived) || 0;
+    onCashChange(String(currentAmount + bill));
+    setPressedBill(bill);
+    setFeedbackAmount(bill);
+    setFeedbackKey(k => k + 1);
+    setTimeout(() => setPressedBill(null), 220);
+  };
 
   return (
     <div className="modal-overlay animate-fade-in" onClick={() => !processing && onClose()} style={{ background: 'rgba(18, 10, 4, 0.65)' }}>
-      <div className="modal glass noise-overlay" onClick={e => e.stopPropagation()} style={{ 
-        maxWidth: 520, 
-        border: 'none', 
+      <div className="modal glass noise-overlay" onClick={e => e.stopPropagation()} style={{
+        maxWidth: 520,
+        border: 'none',
         boxShadow: 'var(--shadow-xl)',
         overflow: 'hidden'
       }}>
@@ -47,9 +64,9 @@ export default function PaymentModal({
 
         <div className="modal-body" style={{ padding: 'var(--space-xl)' }}>
           {/* Total Display */}
-          <div className="payment-total card" style={{ 
-            background: 'var(--color-bg-sidebar)', 
-            color: '#fff', 
+          <div className="payment-total card" style={{
+            background: 'var(--color-bg-sidebar)',
+            color: '#fff',
             border: 'none',
             padding: 'var(--space-lg)',
             marginBottom: 'var(--space-xl)',
@@ -96,70 +113,122 @@ export default function PaymentModal({
           {paymentMethod === 'efectivo' && (
             <div className="animate-slide-up">
               {/* Billetes rápidos */}
-              {(() => {
-                const BILLS = [1000, 2000, 5000, 10000, 20000, 50000];
-                const suggested = BILLS.find(b => b >= total) ?? BILLS[BILLS.length - 1];
-                const currentAmount = parseInt(cashReceived) || 0;
-
-                return (
-                  <div style={{ marginBottom: 'var(--space-md)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <label className="form-label text-display" style={{ marginBottom: 0 }}>Billetes</label>
-                      {cashReceived && (
-                        <button
-                          type="button"
-                          onClick={() => onCashChange('')}
-                          style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                        >
-                          Limpiar
-                        </button>
-                      )}
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
-                      {BILLS.map(bill => (
-                        <button
-                          key={bill}
-                          type="button"
-                          onClick={() => onCashChange(String(currentAmount + bill))}
-                          style={{
-                            padding: '10px 4px',
-                            borderRadius: 'var(--radius-md)',
-                            border: `2px solid ${bill === suggested ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                            background: bill === suggested ? 'var(--color-primary-bg)' : 'var(--color-bg-card)',
-                            color: bill === suggested ? 'var(--color-primary)' : 'var(--color-text)',
-                            fontWeight: 700,
-                            fontSize: '0.9rem',
-                            cursor: 'pointer',
-                            transition: 'all 0.15s',
-                          }}
-                        >
-                          {formatCurrency(bill)}
-                        </button>
-                      ))}
-                    </div>
-
+              <div style={{ marginBottom: 'var(--space-md)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label className="form-label text-display" style={{ marginBottom: 0 }}>Billetes</label>
+                  {cashReceived && (
                     <button
                       type="button"
-                      onClick={() => onCashChange(String(total))}
+                      onClick={() => { onCashChange(''); setFeedbackAmount(null); }}
+                      style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
+                  {BILLS.map(bill => {
+                    const isSuggested = bill === suggested;
+                    const isPressed = pressedBill === bill;
+                    return (
+                      <button
+                        key={bill}
+                        type="button"
+                        onClick={() => handleBillPress(bill)}
+                        style={{
+                          padding: isSuggested ? '11px 4px 9px' : '10px 4px',
+                          borderRadius: 'var(--radius-md)',
+                          border: `2px solid ${isSuggested ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                          background: isSuggested ? 'var(--color-primary)' : 'var(--color-bg-card)',
+                          color: isSuggested ? '#fff' : 'var(--color-text)',
+                          fontWeight: 700,
+                          fontSize: '0.9rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: 3,
+                          animation: isPressed ? 'bill-tap 0.22s ease-out' : 'none',
+                          boxShadow: isSuggested ? 'var(--shadow-md)' : 'none',
+                        }}
+                      >
+                        {isSuggested && (
+                          <span style={{ fontSize: '0.58rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.6px', opacity: 0.88 }}>
+                            Sugerido
+                          </span>
+                        )}
+                        {formatCurrency(bill)}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onCashChange(String(total))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '2px dashed var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-text-secondary)',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Monto exacto ({formatCurrency(total)})
+                </button>
+              </div>
+
+              {/* Indicador de recibido con animación */}
+              {cashReceived && parseInt(cashReceived) > 0 && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 14px',
+                  background: 'var(--color-bg)',
+                  borderRadius: 'var(--radius-md)',
+                  marginBottom: 'var(--space-sm)',
+                  border: '1px solid var(--color-border)',
+                }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                    Recibido
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {feedbackAmount && (
+                      <span
+                        key={feedbackKey}
+                        style={{
+                          fontSize: '0.82rem',
+                          color: 'var(--color-primary)',
+                          fontWeight: 700,
+                          animation: 'bill-feedback-fade 0.85s ease-out forwards',
+                          display: 'inline-block',
+                        }}
+                      >
+                        +{formatCurrency(feedbackAmount)}
+                      </span>
+                    )}
+                    <span
+                      key={`amt-${cashReceived}`}
                       style={{
-                        width: '100%',
-                        padding: '10px',
-                        borderRadius: 'var(--radius-md)',
-                        border: '2px dashed var(--color-border)',
-                        background: 'var(--color-bg)',
-                        color: 'var(--color-text-secondary)',
-                        fontWeight: 700,
-                        fontSize: '0.85rem',
-                        cursor: 'pointer',
+                        fontWeight: 800,
+                        fontSize: '1.15rem',
+                        display: 'inline-block',
+                        animation: 'bill-amount-pop 0.28s ease-out',
                       }}
                     >
-                      Monto exacto ({formatCurrency(total)})
-                    </button>
+                      {formatCurrency(parseInt(cashReceived))}
+                    </span>
                   </div>
-                );
-              })()}
+                </div>
+              )}
 
+              {/* Input manual */}
               <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
                 <label className="form-label text-display" style={{ fontSize: '0.8rem', opacity: 0.7 }}>O ingresa el monto manualmente</label>
                 <div style={{ position: 'relative' }}>
@@ -175,7 +244,7 @@ export default function PaymentModal({
                   />
                 </div>
               </div>
-              
+
               {cashReceived && parseInt(cashReceived) >= total ? (
                 <div className="change-calculator glass" style={{ border: 'none', background: 'var(--color-success-bg)', padding: 'var(--space-lg)', borderRadius: 'var(--radius-lg)' }}>
                   <div className="change-result">
@@ -186,12 +255,12 @@ export default function PaymentModal({
                   </div>
                 </div>
               ) : cashReceived && (
-                <div style={{ 
-                  color: 'var(--color-danger)', 
-                  fontSize: '0.85rem', 
-                  marginTop: 8, 
-                  background: 'var(--color-danger-bg)', 
-                  padding: '8px 12px', 
+                <div style={{
+                  color: 'var(--color-danger)',
+                  fontSize: '0.85rem',
+                  marginTop: 8,
+                  background: 'var(--color-danger-bg)',
+                  padding: '8px 12px',
                   borderRadius: 'var(--radius-sm)',
                   fontWeight: 600
                 }}>
@@ -202,10 +271,10 @@ export default function PaymentModal({
           )}
 
           {/* Receipt Toggle */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: 12, 
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
             marginTop: 'var(--space-xl)',
             padding: 'var(--space-md)',
             background: 'var(--color-bg)',
@@ -219,17 +288,17 @@ export default function PaymentModal({
                 checked={receiptForced || hasReceipt}
                 onChange={e => !receiptForced && onReceiptChange(e.target.checked)}
                 disabled={receiptForced}
-                style={{ 
-                  width: 22, 
-                  height: 22, 
+                style={{
+                  width: 22,
+                  height: 22,
                   cursor: receiptForced ? 'default' : 'pointer',
                   accentColor: 'var(--color-primary)'
                 }}
               />
             </div>
-            <label htmlFor="has-receipt" style={{ 
-              fontSize: '0.9rem', 
-              cursor: receiptForced ? 'default' : 'pointer', 
+            <label htmlFor="has-receipt" style={{
+              fontSize: '0.9rem',
+              cursor: receiptForced ? 'default' : 'pointer',
               userSelect: 'none',
               fontWeight: 600,
               display: 'flex',
@@ -253,10 +322,10 @@ export default function PaymentModal({
             className={`btn btn-primary ${processing ? 'btn-loading' : ''}`}
             onClick={onConfirm}
             disabled={processing || !cashOk}
-            style={{ 
-              flex: 1, 
-              height: 48, 
-              fontSize: '1rem', 
+            style={{
+              flex: 1,
+              height: 48,
+              fontSize: '1rem',
               boxShadow: 'var(--shadow-md)',
               textTransform: 'uppercase',
               letterSpacing: '0.5px'
