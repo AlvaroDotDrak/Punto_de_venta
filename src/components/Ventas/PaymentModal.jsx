@@ -20,7 +20,7 @@ export default function PaymentModal({
   onConfirm,
   onClose,
 }) {
-  const cashOk = paymentMethod !== 'efectivo' || (cashReceived && parseInt(cashReceived) >= total);
+  const cashOk = paymentMethod !== 'efectivo' || !cashReceived || parseInt(cashReceived) >= total;
   const receiptForced = paymentMethod === 'tarjeta';
 
   return (
@@ -95,8 +95,73 @@ export default function PaymentModal({
           {/* Cash Specifics */}
           {paymentMethod === 'efectivo' && (
             <div className="animate-slide-up">
+              {/* Billetes rápidos */}
+              {(() => {
+                const BILLS = [1000, 2000, 5000, 10000, 20000, 50000];
+                const suggested = BILLS.find(b => b >= total) ?? BILLS[BILLS.length - 1];
+                const currentAmount = parseInt(cashReceived) || 0;
+
+                return (
+                  <div style={{ marginBottom: 'var(--space-md)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <label className="form-label text-display" style={{ marginBottom: 0 }}>Billetes</label>
+                      {cashReceived && (
+                        <button
+                          type="button"
+                          onClick={() => onCashChange('')}
+                          style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
+                      {BILLS.map(bill => (
+                        <button
+                          key={bill}
+                          type="button"
+                          onClick={() => onCashChange(String(currentAmount + bill))}
+                          style={{
+                            padding: '10px 4px',
+                            borderRadius: 'var(--radius-md)',
+                            border: `2px solid ${bill === suggested ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                            background: bill === suggested ? 'var(--color-primary-bg)' : 'var(--color-bg-card)',
+                            color: bill === suggested ? 'var(--color-primary)' : 'var(--color-text)',
+                            fontWeight: 700,
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          {formatCurrency(bill)}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => onCashChange(String(total))}
+                      style={{
+                        width: '100%',
+                        padding: '10px',
+                        borderRadius: 'var(--radius-md)',
+                        border: '2px dashed var(--color-border)',
+                        background: 'var(--color-bg)',
+                        color: 'var(--color-text-secondary)',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Monto exacto ({formatCurrency(total)})
+                    </button>
+                  </div>
+                );
+              })()}
+
               <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
-                <label className="form-label text-display">Monto entregado por el cliente</label>
+                <label className="form-label text-display" style={{ fontSize: '0.8rem', opacity: 0.7 }}>O ingresa el monto manualmente</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', fontWeight: 800, opacity: 0.4 }}>$</span>
                   <input
