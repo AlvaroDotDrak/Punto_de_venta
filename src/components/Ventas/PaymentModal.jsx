@@ -95,7 +95,7 @@ export default function PaymentModal({
                 className={`payment-method-btn ${paymentMethod === id ? 'selected' : ''}`}
                 onClick={() => onMethodChange(id)}
                 style={{
-                  height: 68,
+                  height: 82,
                   borderWidth: 2,
                   borderRadius: 'var(--radius-lg)',
                   transition: 'all var(--transition-bounce)',
