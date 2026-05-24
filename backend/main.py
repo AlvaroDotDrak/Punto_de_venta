@@ -127,8 +127,8 @@ app.include_router(recipes.router, prefix="/api")
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "version": "2.0.0"}
+def health_check():
+    return {"ok": True}
 
 
 # Servir el frontend React — debe ir AL FINAL para no capturar rutas /api

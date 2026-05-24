@@ -50,6 +50,25 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
 
+  const [serverOnline, setServerOnline] = useState(true);
+
+  // Escuchar eventos de red emitidos por api.js
+  useEffect(() => {
+    const handler = (e) => setServerOnline(e.detail.online);
+    window.addEventListener('server-status', handler);
+    return () => window.removeEventListener('server-status', handler);
+  }, []);
+
+  // Heartbeat cada 30s para detectar recuperación
+  useEffect(() => {
+    const ping = () =>
+      fetch('/api/health')
+        .then(() => setServerOnline(true))
+        .catch(() => setServerOnline(false));
+    const interval = setInterval(ping, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     if (window.__pwaInstallPrompt) setInstallPrompt(window.__pwaInstallPrompt);
     const handler = () => setInstallPrompt(window.__pwaInstallPrompt);
@@ -84,6 +103,36 @@ export default function App() {
     <div className="app-layout">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="app-main" style={{ marginLeft: 'var(--sidebar-width)' }}>
+        {!serverOnline && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: '#C0392B',
+            color: '#fff',
+            padding: '10px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+            fontSize: '0.9rem',
+            fontWeight: 700,
+            boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+          }}>
+            <span style={{ fontSize: '1.1rem' }}>⚠️</span>
+            Servidor desconectado — Avisa al administrador para que lo reinicie
+            <span style={{
+              fontSize: '0.75rem',
+              opacity: 0.85,
+              fontWeight: 500,
+              marginLeft: 8,
+            }}>
+              (bash inicio.sh)
+            </span>
+          </div>
+        )}
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <div className="page-content">
           <Routes>

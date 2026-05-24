@@ -19,11 +19,21 @@ async function request(method, path, body = undefined) {
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // El servidor no responde (caído, sin red, etc.)
+    window.dispatchEvent(new CustomEvent('server-status', { detail: { online: false } }));
+    throw new Error('Sin conexión con el servidor');
+  }
+
+  // Si llegamos aquí, el servidor respondió (aunque sea con error HTTP)
+  window.dispatchEvent(new CustomEvent('server-status', { detail: { online: true } }));
 
   if (res.status === 204) return null;
 
