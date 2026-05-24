@@ -107,7 +107,7 @@ export default function PaymentModal({
                     <Check size={12} strokeWidth={3} />
                   </div>
                 )}
-                <Icon size={20} className="icon" />
+                <Icon size={28} className="icon" />
                 <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>{label}</span>
               </button>
             ))}
