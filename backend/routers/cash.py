@@ -81,13 +81,13 @@ def daily_status(
     if not register:
         return CashDailyStatusOut(needs_check=False)
 
-    if register.created_at.date() >= date.today():
+    if register.opened_at.date() >= date.today():
         return CashDailyStatusOut(needs_check=False)
 
-    days_open = (date.today() - register.created_at.date()).days
+    days_open = (date.today() - register.opened_at.date()).days
     return CashDailyStatusOut(
         needs_check=True,
-        open_since=register.created_at.isoformat(),
+        open_since=register.opened_at.isoformat(),
         days_open=days_open,
     )
 
@@ -105,7 +105,7 @@ def daily_handover(
     register = db.query(CashRegister).filter(CashRegister.status == "open").first()
     if not register:
         raise HTTPException(status_code=400, detail="No hay caja abierta")
-    if register.created_at.date() >= date.today():
+    if register.opened_at.date() >= date.today():
         raise HTTPException(status_code=400, detail="La caja ya fue registrada hoy")
 
     # Calcular monto esperado (misma lógica que close_register)
