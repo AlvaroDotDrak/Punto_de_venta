@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 
 from ..database import get_db
 from ..models import Product, Sale, SaleItem, ProductRecipe, Ingredient
@@ -27,6 +28,14 @@ def list_products(
     
     products = q.order_by(Product.name).all()
     
+    units_sold_map = dict(
+        db.query(SaleItem.product_id, func.sum(SaleItem.quantity))
+        .join(Sale, SaleItem.sale_id == Sale.id)
+        .filter(Sale.status == "completed")
+        .group_by(SaleItem.product_id)
+        .all()
+    )
+    
     result = []
     for p in products:
         p_dict = {**p.__dict__}
@@ -35,6 +44,7 @@ def list_products(
         cost_per_unit = compute_cost_per_unit(p)
             
         p_dict["cost_per_unit"] = cost_per_unit
+        p_dict["units_sold"] = units_sold_map.get(p.id, 0)
         result.append(p_dict)
         
     return result

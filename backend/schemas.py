@@ -87,6 +87,7 @@ class ProductOut(BaseModel):
     active: bool
     created_at: datetime
     has_recipe: bool = False
+    units_sold: int = 0
 
     model_config = {"from_attributes": True}
 

@@ -33,6 +33,7 @@ export default function Ventas() {
   const [showReceipt, setShowReceipt] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
   const [showTypeModal, setShowTypeModal] = useState(null);
+  const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
 
   const loadData = async () => {
     try {
@@ -67,8 +68,15 @@ export default function Ventas() {
     if (activeCategory !== 'todos') list = list.filter(p => p.category === activeCategory);
     if (search) list = list.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
     if (onlyInShowcase) list = list.filter(p => stockMap[p.id]?.total > 0);
+
+    // Ordenamiento
+    list = [...list]; // copia para no mutar
+    if (sortOrder === 'price') list.sort((a, b) => a.price - b.price);
+    else if (sortOrder === 'popular') list.sort((a, b) => (b.units_sold ?? 0) - (a.units_sold ?? 0));
+    // 'alpha' ya viene ordenado de la API
+
     return list;
-  }, [products, activeCategory, search, onlyInShowcase, stockMap]);
+  }, [products, activeCategory, search, onlyInShowcase, stockMap, sortOrder]);
 
   const addToCart = (product, overridePrice, overrideName, showcaseType = null) => {
     const price = overridePrice ?? product.price;
@@ -223,6 +231,33 @@ export default function Ventas() {
                     padding: '10px 16px'
                   }}>
                   {key !== 'todos' && <span style={{ marginRight: 6 }}>{categoryEmoji[key]}</span>} {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Selector de orden */}
+            <div style={{ display: 'flex', gap: 6, marginTop: 'var(--space-sm)' }}>
+              {[
+                { key: 'alpha',   label: 'A–Z' },
+                { key: 'price',   label: 'Precio' },
+                { key: 'popular', label: '⭐ Más vendidos' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSortOrder(key)}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: 'var(--radius-full)',
+                    border: `1.5px solid ${sortOrder === key ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    background: sortOrder === key ? 'var(--color-primary-bg)' : 'transparent',
+                    color: sortOrder === key ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {label}
                 </button>
               ))}
             </div>
