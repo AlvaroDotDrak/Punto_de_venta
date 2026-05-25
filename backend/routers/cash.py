@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
@@ -9,6 +9,7 @@ from ..audit import ACTIONS, log_action
 from ..schemas import (
     CashCloseRequest, CashMovementCreate, CashMovementOut,
     CashOpenRequest, CashRegisterOut,
+    CashHandoverRequest, CashDailyStatusOut,
 )
 
 router = APIRouter(prefix="/cash", tags=["cash"])
@@ -65,6 +66,88 @@ def get_history_detail(
     if not reg:
         raise HTTPException(status_code=404, detail="Caja no encontrada")
     return reg
+
+
+@router.get("/daily-status", response_model=CashDailyStatusOut)
+def daily_status(
+    db: Session = Depends(get_db),
+    _=Depends(get_current_seller),
+):
+    now = datetime.now()
+    if now.hour < 7:
+        return CashDailyStatusOut(needs_check=False)
+
+    register = db.query(CashRegister).filter(CashRegister.status == "open").first()
+    if not register:
+        return CashDailyStatusOut(needs_check=False)
+
+    if register.created_at.date() >= date.today():
+        return CashDailyStatusOut(needs_check=False)
+
+    days_open = (date.today() - register.created_at.date()).days
+    return CashDailyStatusOut(
+        needs_check=True,
+        open_since=register.created_at.isoformat(),
+        days_open=days_open,
+    )
+
+
+@router.post("/daily-handover", response_model=CashRegisterOut, status_code=201)
+def daily_handover(
+    payload: CashHandoverRequest,
+    db: Session = Depends(get_db),
+    seller=Depends(get_current_seller),
+):
+    now = datetime.now()
+    if now.hour < 7:
+        raise HTTPException(status_code=400, detail="El cuadre diario solo está disponible después de las 7:00")
+
+    register = db.query(CashRegister).filter(CashRegister.status == "open").first()
+    if not register:
+        raise HTTPException(status_code=400, detail="No hay caja abierta")
+    if register.created_at.date() >= date.today():
+        raise HTTPException(status_code=400, detail="La caja ya fue registrada hoy")
+
+    # Calcular monto esperado (misma lógica que close_register)
+    movements_efectivo = db.query(CashMovement).filter(
+        CashMovement.register_id == register.id,
+        CashMovement.payment_method == "efectivo",
+    ).all()
+    expected = register.opening_amount
+    for m in movements_efectivo:
+        expected += m.amount
+
+    manual = db.query(CashMovement).filter(
+        CashMovement.register_id == register.id,
+        CashMovement.payment_method == None,
+        CashMovement.type.in_(["expense", "income"]),
+    ).all()
+    for m in manual:
+        expected += m.amount if m.type == "income" else -m.amount
+
+    # Cerrar caja anterior
+    register.closed_at = now
+    register.closing_amount = payload.counted_amount
+    register.expected_amount = expected
+    register.notes = payload.notes or "Cuadre diario"
+    register.status = "closed"
+    db.commit()
+
+    log_action(db, ACTIONS.CASH_CLOSE, seller.id,
+               f"Cuadre diario. Esperado: ${expected:.0f} | Contado: ${payload.counted_amount:.0f}")
+
+    # Abrir nueva caja con el monto contado
+    new_register = CashRegister(opening_amount=payload.counted_amount, status="open")
+    db.add(new_register)
+    db.commit()
+    db.refresh(new_register)
+
+    log_action(db, ACTIONS.CASH_OPEN, seller.id,
+               f"Caja abierta automáticamente tras cuadre diario con ${payload.counted_amount:.0f}")
+
+    return db.query(CashRegister).options(
+        joinedload(CashRegister.movements)
+    ).filter(CashRegister.id == new_register.id).first()
 
 
 @router.post("/open", response_model=CashRegisterOut, status_code=201)

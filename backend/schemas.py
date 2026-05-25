@@ -514,3 +514,14 @@ class SystemConfigOut(BaseModel):
 class SystemConfigUpdate(BaseModel):
     value: str
 
+
+class CashHandoverRequest(BaseModel):
+    counted_amount: float
+    notes: str = ""
+
+
+class CashDailyStatusOut(BaseModel):
+    needs_check: bool
+    open_since: str | None = None
+    days_open: int = 0
+

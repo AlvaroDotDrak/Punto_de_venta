@@ -23,6 +23,8 @@ import SellerSelect from './pages/SellerSelect';
 import Gastos from './pages/Gastos';
 import Contabilidad from './pages/Contabilidad';
 import Facturas from './pages/Facturas';
+import DailyCashCheckModal from './components/DailyCashCheckModal';
+import api from './utils/api';
 
 // Layout
 import Sidebar from './components/Layout/Sidebar';
@@ -69,6 +71,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const [dailyCheckNeeded, setDailyCheckNeeded] = useState(false);
+  const [dailyCheckInfo, setDailyCheckInfo] = useState(null);
+
+  useEffect(() => {
+    if (!currentSeller) {
+      setDailyCheckNeeded(false);
+      return;
+    }
+    api.get('/cash/daily-status')
+      .then(data => {
+        if (data.needs_check) {
+          setDailyCheckNeeded(true);
+          setDailyCheckInfo(data);
+        }
+      })
+      .catch(() => {});
+  }, [currentSeller?.id]);
+
   useEffect(() => {
     if (window.__pwaInstallPrompt) setInstallPrompt(window.__pwaInstallPrompt);
     const handler = () => setInstallPrompt(window.__pwaInstallPrompt);
@@ -101,6 +121,12 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      {dailyCheckNeeded && (
+        <DailyCashCheckModal
+          info={dailyCheckInfo}
+          onDone={() => setDailyCheckNeeded(false)}
+        />
+      )}
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="app-main" style={{ marginLeft: 'var(--sidebar-width)' }}>
         {!serverOnline && (
