@@ -426,134 +426,167 @@ export default function Vitrina() {
 
       {/* ── MODAL: AGREGAR ──────────────────────────── */}
       {showAddModal && (
-        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
-          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 'var(--radius-md)', background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Store size={16} style={{ color: 'var(--color-primary)' }} />
-                </div>
-                <h2 style={{ fontSize: '1rem' }}>Agregar a Vitrina</h2>
-              </div>
-              <button className="modal-close" onClick={() => setShowAddModal(false)}><X size={18} /></button>
-            </div>
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-              {/* Producto — buscador */}
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Producto</label>
-                <div style={{ position: 'relative' }}>
-                  {/* Input de búsqueda */}
-                  <div style={{ position: 'relative' }}>
-                    <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-light)', pointerEvents: 'none' }} />
-                    <input
-                      type="text"
-                      className="form-input"
-                      style={{ paddingLeft: 34, paddingRight: addProductId ? 34 : undefined }}
-                      placeholder="Buscar producto…"
-                      value={addSearch}
-                      autoFocus
-                      onChange={e => { setAddSearch(e.target.value); setAddProductId(''); setAddDropOpen(true); }}
-                      onFocus={() => setAddDropOpen(true)}
-                      onBlur={() => setTimeout(() => setAddDropOpen(false), 150)}
-                    />
-                    {addProductId && (
-                      <button
-                        onClick={() => { setAddSearch(''); setAddProductId(''); setAddDropOpen(true); }}
-                        style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}
-                      ><X size={14} /></button>
-                    )}
-                  </div>
+        <div className="modal-overlay animate-fade-in" onClick={() => setShowAddModal(false)} style={{ background: 'rgba(18,10,4,0.65)' }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 500, border: 'none', boxShadow: 'var(--shadow-xl)', overflow: 'hidden' }}>
 
-                  {/* Dropdown */}
-                  {addDropOpen && (
-                    <div style={{
-                      position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 200,
-                      background: 'var(--color-bg-card)',
-                      border: '1px solid var(--color-border)',
-                      borderRadius: 'var(--radius-md)',
-                      boxShadow: 'var(--shadow-md)',
-                      maxHeight: 240, overflowY: 'auto',
-                    }}>
-                      {addFiltered.length === 0 ? (
-                        <div style={{ padding: '14px 16px', fontSize: '0.85rem', color: 'var(--color-text-light)', textAlign: 'center' }}>
-                          Sin resultados
-                        </div>
-                      ) : addFiltered.map((p, idx) => (
-                        <button
-                          key={p.id}
-                          onMouseDown={() => selectProduct(p)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10,
-                            width: '100%', padding: '9px 14px',
-                            background: addProductId === String(p.id) ? 'var(--color-primary-bg)' : 'transparent',
-                            border: 'none',
-                            borderBottom: idx < addFiltered.length - 1 ? '1px solid var(--color-border)' : 'none',
-                            cursor: 'pointer', textAlign: 'left',
-                          }}
-                        >
-                          {p.photo
-                            ? <img src={p.photo} alt="" style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
-                            : <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0 }}>
-                                {p.category === 'vitrina' ? '🍰' : p.category === 'mostrador' ? '🍪' : '🥪'}
-                              </div>
-                          }
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>{p.category}</div>
-                          </div>
-                          <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-primary)', flexShrink: 0 }}>
-                            {formatCurrency(p.price)}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+            {/* Header */}
+            <div className="modal-header" style={{ borderBottom: '1px solid rgba(0,0,0,0.06)', padding: '14px var(--space-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: 'var(--color-primary)', borderRadius: 'var(--radius-md)', padding: 7, display: 'flex' }}>
+                  <Store size={17} color="#fff" />
+                </div>
+                <div>
+                  <h2 className="text-display" style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>Agregar a Vitrina</h2>
+                  <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Selecciona el producto y el tipo</p>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setShowAddModal(false)} style={{ background: 'var(--color-bg)', borderRadius: '50%', padding: 6 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ padding: '14px var(--space-lg)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+              {/* Buscador inline */}
+              <div>
+                <label className="form-label" style={{ marginBottom: 6 }}>Producto</label>
+                <div style={{ position: 'relative', marginBottom: 8 }}>
+                  <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-light)', pointerEvents: 'none' }} />
+                  <input
+                    type="text"
+                    className="form-input"
+                    style={{ paddingLeft: 34, paddingRight: addProductId ? 34 : undefined }}
+                    placeholder="Buscar producto…"
+                    value={addSearch}
+                    autoFocus
+                    onChange={e => { setAddSearch(e.target.value); setAddProductId(''); }}
+                  />
+                  {addProductId && (
+                    <button onClick={() => { setAddSearch(''); setAddProductId(''); }}
+                      style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-light)', display: 'flex' }}>
+                      <X size={14} />
+                    </button>
                   )}
                 </div>
+
+                {/* Lista inline — no flota, no tapa nada */}
+                {!selectedProduct && (
+                  <div style={{
+                    border: '1.5px solid var(--color-border)',
+                    borderRadius: 'var(--radius-lg)',
+                    overflow: 'hidden',
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                  }}>
+                    {addFiltered.length === 0 ? (
+                      <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: '0.85rem', color: 'var(--color-text-light)' }}>
+                        Sin resultados
+                      </div>
+                    ) : addFiltered.map((p, idx) => (
+                      <button
+                        key={p.id}
+                        onClick={() => selectProduct(p)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 12,
+                          width: '100%', padding: '11px 14px',
+                          background: 'transparent',
+                          border: 'none',
+                          borderBottom: idx < addFiltered.length - 1 ? '1px solid var(--color-border)' : 'none',
+                          cursor: 'pointer', textAlign: 'left',
+                          transition: 'background 0.12s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--color-bg)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        {p.photo
+                          ? <img src={p.photo} alt="" style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', objectFit: 'cover', flexShrink: 0 }} />
+                          : <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
+                              {p.category === 'vitrina' ? '🍰' : p.category === 'mostrador' ? '🍪' : '🥪'}
+                            </div>
+                        }
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>{formatCurrency(p.price)}</div>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-light)', flexShrink: 0 }}>
+                          <Clock size={10} style={{ verticalAlign: 'middle', marginRight: 2 }} />
+                          {p.max_showcase_hours || 48}h
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Producto seleccionado */}
                 {selectedProduct && (
                   <div style={{
-                    marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)',
-                    background: 'var(--color-primary-bg)', border: '1px solid var(--color-primary-light)',
-                    display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.85rem',
+                    padding: '10px 14px',
+                    borderRadius: 'var(--radius-lg)',
+                    background: 'var(--color-primary-bg)',
+                    border: '1.5px solid var(--color-primary)',
+                    display: 'flex', alignItems: 'center', gap: 12,
                   }}>
-                    <CheckCircle2 size={15} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{selectedProduct.name}</span>
-                    <span style={{ color: 'var(--color-text-secondary)', marginLeft: 'auto' }}>{formatCurrency(selectedProduct.price)}</span>
+                    {selectedProduct.photo
+                      ? <img src={selectedProduct.photo} alt="" style={{ width: 44, height: 44, borderRadius: 'var(--radius-md)', objectFit: 'cover', flexShrink: 0 }} />
+                      : <div style={{ width: 44, height: 44, borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', opacity: 0.15, flexShrink: 0 }} />
+                    }
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--color-primary)' }}>{selectedProduct.name}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>{formatCurrency(selectedProduct.price)}</div>
+                    </div>
+                    <button onClick={() => { setAddSearch(''); setAddProductId(''); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', display: 'flex', padding: 4 }}>
+                      <X size={16} />
+                    </button>
                   </div>
                 )}
               </div>
 
               {/* Tipo */}
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Tipo</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
+              <div>
+                <label className="form-label" style={{ marginBottom: 6 }}>Tipo</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {[['entero', '🎂 Entero'], ['trozado', '🍰 Trozado']].map(([val, lbl]) => (
                     <button key={val}
                       className={`btn ${addType === val ? 'btn-primary' : 'btn-secondary'}`}
                       onClick={() => setAddType(val)}
-                      style={{ justifyContent: 'center' }}
+                      style={{ justifyContent: 'center', height: 44, fontSize: '0.9rem', fontWeight: 700 }}
                     >{lbl}</button>
                   ))}
                 </div>
               </div>
 
               {/* Cantidad */}
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Cantidad a agregar</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setAddQuantity(q => Math.max(1, q - 1))}>−</button>
-                  <span style={{ minWidth: 40, textAlign: 'center', fontWeight: 700, fontSize: '1.1rem' }}>{addQuantity}</span>
-                  <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setAddQuantity(q => Math.min(20, q + 1))}>+</button>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginLeft: 4 }}>
-                    {addType === 'entero' ? 'entero' : 'trozo'}{addQuantity > 1 ? 's' : ''}
+              <div>
+                <label className="form-label" style={{ marginBottom: 6 }}>Cantidad</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', border: '1.5px solid var(--color-border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', height: 44 }}>
+                    <button
+                      type="button"
+                      onClick={() => setAddQuantity(q => Math.max(1, q - 1))}
+                      disabled={addQuantity <= 1}
+                      style={{ width: 44, height: '100%', border: 'none', background: 'var(--color-bg)', cursor: addQuantity <= 1 ? 'not-allowed' : 'pointer', color: addQuantity <= 1 ? 'var(--color-text-light)' : 'var(--color-text)', fontSize: '1.2rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >−</button>
+                    <span style={{ width: 52, textAlign: 'center', fontWeight: 800, fontSize: '1.1rem', borderLeft: '1px solid var(--color-border)', borderRight: '1px solid var(--color-border)', lineHeight: '44px' }}>
+                      {addQuantity}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAddQuantity(q => Math.min(20, q + 1))}
+                      style={{ width: 44, height: '100%', border: 'none', background: 'var(--color-bg)', cursor: 'pointer', fontSize: '1.2rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >+</button>
+                  </div>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                    {addType === 'entero' ? 'entero' : 'trozo'}{addQuantity > 1 ? 's' : ''} a agregar
                   </span>
                 </div>
               </div>
             </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleAdd} disabled={!addProductId || addLoading}>
+
+            <div className="modal-footer" style={{ padding: '10px var(--space-lg)', borderTop: '1px solid rgba(0,0,0,0.06)', background: 'var(--color-bg-input)' }}>
+              <button className="btn btn-secondary" onClick={() => setShowAddModal(false)} style={{ height: 44 }}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleAdd} disabled={!addProductId || addLoading}
+                style={{ flex: 1, height: 44, fontSize: '0.95rem', fontWeight: 700 }}>
                 {addLoading ? 'Agregando…' : `Agregar ${addQuantity > 1 ? addQuantity + ' ' : ''}${addType}${addQuantity > 1 ? 's' : ''}`}
               </button>
             </div>
