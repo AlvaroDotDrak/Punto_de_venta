@@ -39,8 +39,9 @@ class Product(Base):
     slice_price = Column(Float, nullable=True)    # precio por trozo (None = sin precio fijo)
     cost_price = Column(Float, nullable=True)     # costo unitario de compra (para bebidas/cafe)
     max_showcase_hours = Column(Integer, nullable=True, default=48)
-    stock = Column(Integer, nullable=True)        # stock físico (solo bebidas); None = sin tracking
-    min_stock_cooler = Column(Integer, nullable=True)  # umbral alerta semáforo visicooler
+    sold_by = Column(String, default="unit")      # 'unit' | 'weight' (si 'weight', price = precio por kg)
+    stock = Column(Float, nullable=True)          # stock físico; None = sin tracking. Unidades o kg según sold_by
+    min_stock_cooler = Column(Float, nullable=True)  # umbral alerta semáforo visicooler (unidades o kg)
     photo = Column(Text, nullable=True)           # base64
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -98,6 +99,7 @@ class SaleItem(Base):
     quantity = Column(Integer, nullable=False)
     subtotal = Column(Float, nullable=False)
     showcase_type = Column(String, nullable=True)   # 'entero' | 'trozado'
+    weight = Column(Float, nullable=True)           # kg vendidos (productos sold_by='weight'); None por unidad
 
     sale = relationship("Sale", back_populates="items")
     product = relationship("Product", back_populates="sale_items")

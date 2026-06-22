@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { Lock, AlertTriangle, ArrowLeft } from 'lucide-react';
 
@@ -35,6 +36,7 @@ export default function SellerSelect() {
   const [verifying, setVerifying] = useState(false);
   const [, setTick] = useState(0);
   const { selectSeller } = useSeller();
+  const { branding } = useConfig();
 
   // Tick cada segundo para actualizar el countdown en tiempo real
   useEffect(() => {
@@ -177,9 +179,9 @@ export default function SellerSelect() {
   return (
     <div className="login-screen">
       <div style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
-        <div style={{ fontSize: '4rem', marginBottom: 'var(--space-md)' }}>🧁</div>
+        <div style={{ fontSize: '4rem', marginBottom: 'var(--space-md)' }}>{branding?.emoji || '🧁'}</div>
         <h1 style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>
-          Pastelería
+          {branding?.name || 'Punto de Venta'}
         </h1>
         <p style={{ color: 'var(--color-text-secondary)', fontSize: '1rem' }}>
           Selecciona tu usuario para comenzar

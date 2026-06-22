@@ -125,6 +125,7 @@ def create_sale(
             quantity=item_in.quantity,
             subtotal=item_in.subtotal,
             showcase_type=item_in.showcase_type,
+            weight=item_in.weight,
         )
         db.add(item)
 
@@ -139,15 +140,21 @@ def create_sale(
                 _handle_showcase_stock(db, item_in.product_id, item_in.showcase_type, sale.id)
                 db.flush()  # necesario: autoflush=False, sin esto el query del siguiente ciclo ve estado stale
 
-        # Decrementar stock físico (bebidas)
+        # Decrementar stock físico (bebidas, congelados). Por peso descuenta kg.
         if product and not item_in.showcase_type:
             if product.stock is not None:
-                if product.stock < item_in.quantity:
+                if product.sold_by == "weight":
+                    consumed = (item_in.weight or 0) * item_in.quantity
+                    unit_label = "kg"
+                else:
+                    consumed = item_in.quantity
+                    unit_label = "u"
+                if product.stock < consumed:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Stock insuficiente para '{product.name}' (disponible: {product.stock})"
+                        detail=f"Stock insuficiente para '{product.name}' (disponible: {product.stock:g} {unit_label})"
                     )
-                product.stock -= item_in.quantity
+                product.stock -= consumed
 
         # Descontar insumos basados en recetas de productos (si existen)
         if product:

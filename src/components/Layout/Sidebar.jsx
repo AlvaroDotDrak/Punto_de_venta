@@ -4,20 +4,23 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useSeller } from '../../context/SellerContext';
+import { useConfig } from '../../context/ConfigContext';
 import api from '../../utils/api';
 import { getFreshnessStatus } from '../../utils/formatters';
 import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat, Thermometer, TrendingDown, BookOpen, FileText } from 'lucide-react';
 
+// Cada ítem puede declarar `capability` (se oculta si el rubro no la tiene) y/o
+// `termKey` (etiqueta adaptable por rubro vía terminología).
 const navItems = [
   { section: 'Principal' },
   { path: '/', label: 'Punto de Venta', icon: ShoppingCart },
-  { path: '/vitrina', label: 'Vitrina', icon: Store, badgeKey: 'vitrinaAlerts' },
-  { path: '/visicooler', label: 'Visicooler', icon: Thermometer },
+  { path: '/vitrina', label: 'Vitrina', icon: Store, badgeKey: 'vitrinaAlerts', capability: 'showcase', termKey: 'showcase' },
+  { path: '/visicooler', label: 'Visicooler', icon: Thermometer, capability: 'cooler_stock', termKey: 'cooler' },
   { path: '/caja', label: 'Control de Caja', icon: DollarSign },
   { section: 'Gestión' },
-  { path: '/pedidos', label: 'Pedidos', icon: ClipboardList, badgeKey: 'pendingOrders' },
+  { path: '/pedidos', label: 'Pedidos', icon: ClipboardList, badgeKey: 'pendingOrders', capability: 'orders', termKey: 'orders' },
   { path: '/productos', label: 'Productos', icon: Package, permission: 'products_access' },
-  { path: '/insumos', label: 'Insumos', icon: Wheat, permission: 'can_access_insumos' },
+  { path: '/insumos', label: 'Insumos', icon: Wheat, permission: 'can_access_insumos', capability: 'recipes' },
   { section: 'Análisis' },
   { path: '/dashboard', label: 'Dashboard', icon: BarChart3, adminOnly: true },
   { path: '/historial', label: 'Historial Ventas', icon: History, permission: 'can_access_historial' },
@@ -32,6 +35,7 @@ const navItems = [
 
 export default function Sidebar({ open, onClose }) {
   const { currentSeller } = useSeller();
+  const { hasCapability, t, branding } = useConfig();
   const [vitrinaAlerts, setVitrinaAlerts] = useState(0);
   const [pendingOrders, setPendingOrders] = useState(0);
 
@@ -73,10 +77,10 @@ export default function Sidebar({ open, onClose }) {
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`}>
       <div className="sidebar-brand">
-        <div className="sidebar-brand-icon">🧁</div>
+        <div className="sidebar-brand-icon">{branding?.emoji || '🧁'}</div>
         <div className="sidebar-brand-text">
-          <h2 className="text-display" style={{ fontSize: '1.2rem' }}>Tía Julia</h2>
-          <span style={{ fontSize: '0.65rem', letterSpacing: '1px' }}>PASTELERÍA ARTESANAL</span>
+          <h2 className="text-display" style={{ fontSize: '1.2rem' }}>{branding?.name || 'Punto de Venta'}</h2>
+          <span style={{ fontSize: '0.65rem', letterSpacing: '1px' }}>{branding?.tagline || ''}</span>
         </div>
         <button className="modal-close" onClick={onClose} style={{ marginLeft: 'auto', display: open ? 'block' : 'none' }}>
           <X size={20} />
@@ -92,6 +96,9 @@ export default function Sidebar({ open, onClose }) {
               </div>
             );
           }
+
+          // Ocultar ítems cuyo módulo no está activo en este rubro
+          if (item.capability && !hasCapability(item.capability)) return null;
 
           // Skip admin-only items for non-admin users
           if (item.adminOnly && !isAdmin) return null;
@@ -116,7 +123,7 @@ export default function Sidebar({ open, onClose }) {
               onClick={onClose}
             >
               <Icon className="icon" size={20} />
-              <span>{item.label}</span>
+              <span>{item.termKey ? t(item.termKey, item.label) : item.label}</span>
               {badgeCount > 0 && <span className="sidebar-badge">{badgeCount}</span>}
             </NavLink>
           );

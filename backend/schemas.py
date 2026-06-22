@@ -48,14 +48,15 @@ class TokenOut(BaseModel):
 
 class ProductCreate(BaseModel):
     name: str
-    category: str     # 'vitrina' | 'salados' | 'encargo' | 'bebidas' | 'cafe'
-    price: float
+    category: str     # según el rubro (ver verticals.py)
+    price: float      # si sold_by='weight', es el precio por kg
     cost_price: Optional[float] = None
     slices: int = 8
     slice_price: Optional[float] = None  # precio por trozo; None = sin precio fijo
     max_showcase_hours: Optional[int] = 48
-    stock: Optional[int] = None          # solo para bebidas
-    min_stock_cooler: Optional[int] = None  # umbral alerta visicooler
+    sold_by: str = "unit"                # 'unit' | 'weight'
+    stock: Optional[float] = None        # unidades o kg según sold_by
+    min_stock_cooler: Optional[float] = None  # umbral alerta visicooler
     photo: Optional[str] = None
 
 class ProductUpdate(BaseModel):
@@ -66,8 +67,9 @@ class ProductUpdate(BaseModel):
     slices: Optional[int] = None
     slice_price: Optional[float] = None
     max_showcase_hours: Optional[int] = None
-    stock: Optional[int] = None
-    min_stock_cooler: Optional[int] = None
+    sold_by: Optional[str] = None
+    stock: Optional[float] = None
+    min_stock_cooler: Optional[float] = None
     photo: Optional[str] = None
     active: Optional[bool] = None
 
@@ -81,8 +83,9 @@ class ProductOut(BaseModel):
     slices: int
     slice_price: Optional[float]
     max_showcase_hours: Optional[int]
-    stock: Optional[int]
-    min_stock_cooler: Optional[int]
+    sold_by: str = "unit"
+    stock: Optional[float]
+    min_stock_cooler: Optional[float]
     photo: Optional[str]
     active: bool
     created_at: datetime
@@ -93,7 +96,7 @@ class ProductOut(BaseModel):
 
 
 class RestockRequest(BaseModel):
-    quantity: int   # unidades a agregar al stock
+    quantity: float   # unidades o kg a agregar al stock
 
 
 # ── Showcase ──────────────────────────────────────────────────────────────────
@@ -126,6 +129,7 @@ class SaleItemIn(BaseModel):
     quantity: int
     subtotal: float
     showcase_type: Optional[str] = None   # 'entero' | 'trozado'
+    weight: Optional[float] = None        # kg vendidos (sold_by='weight')
 
 class SaleCreate(BaseModel):
     total: float
@@ -142,6 +146,7 @@ class SaleItemOut(BaseModel):
     quantity: int
     subtotal: float
     showcase_type: Optional[str]
+    weight: Optional[float] = None
 
     model_config = {"from_attributes": True}
 
@@ -513,6 +518,38 @@ class SystemConfigOut(BaseModel):
 
 class SystemConfigUpdate(BaseModel):
     value: str
+
+
+# ── Perfil de rubro (multi-vertical) ───────────────────────────────────────────
+
+class ConfigProfileOut(BaseModel):
+    business_type: str
+    palette: str
+    colors: dict
+    available_palettes: list[dict]
+    capabilities: dict[str, bool]
+    branding: dict
+    product_categories: list[dict]
+    terminology: dict
+    tax_rate: float
+    setup_complete: bool
+
+
+class ConfigProfileUpdate(BaseModel):
+    palette: Optional[str] = None
+    branding: Optional[dict] = None
+    capabilities: Optional[dict] = None
+    product_categories: Optional[list] = None
+    tax_rate: Optional[float] = None
+
+
+class SetupRequest(BaseModel):
+    business_type: str
+    palette: Optional[str] = None
+    business_name: str
+    admin_pin: str
+    admin_name: str = "Admin"
+    branding: Optional[dict] = None
 
 
 class CashHandoverRequest(BaseModel):

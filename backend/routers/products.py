@@ -173,7 +173,7 @@ def get_product_stats(
     best_day_of_week = {"day": day_names[best_dow], "units": day_of_week[best_dow]}
 
     by_showcase_type = None
-    if product.category == "vitrina":
+    if any(i.showcase_type for i in items):
         by_showcase_type = {
             "entero": sum(i.quantity for i in items if i.showcase_type == "entero"),
             "trozado": sum(i.quantity for i in items if i.showcase_type == "trozado"),

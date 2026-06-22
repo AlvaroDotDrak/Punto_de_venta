@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useSeller } from './context/SellerContext';
+import { useConfig } from './context/ConfigContext';
 
 // Pages
 import Ventas from './pages/Ventas';
@@ -20,6 +21,7 @@ import Configuracion from './pages/Configuracion';
 import HistorialVentas from './pages/HistorialVentas';
 import Vendedores from './pages/Vendedores';
 import SellerSelect from './pages/SellerSelect';
+import SetupWizard from './pages/SetupWizard';
 import Gastos from './pages/Gastos';
 import Contabilidad from './pages/Contabilidad';
 import Facturas from './pages/Facturas';
@@ -47,8 +49,15 @@ function PermissionRoute({ permission, children }) {
   return <Navigate to="/" replace />;
 }
 
+function CapabilityRoute({ capability, children }) {
+  const { hasCapability } = useConfig();
+  if (!hasCapability(capability)) return <Navigate to="/" replace />;
+  return children;
+}
+
 export default function App() {
   const { currentSeller, loading } = useSeller();
+  const { loading: configLoading, setupComplete } = useConfig();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
 
@@ -96,13 +105,17 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  if (loading) {
+  if (loading || configLoading) {
     return (
       <div className="loading-screen">
         <div className="spinner" />
         <span>Cargando sistema...</span>
       </div>
     );
+  }
+
+  if (!setupComplete) {
+    return <SetupWizard />;
   }
 
   if (!currentSeller) {
@@ -163,9 +176,9 @@ export default function App() {
         <div className="page-content">
           <Routes>
             <Route path="/" element={<Ventas />} />
-            <Route path="/vitrina" element={<Vitrina />} />
-            <Route path="/visicooler" element={<Visicooler />} />
-            <Route path="/pedidos" element={<Pedidos />} />
+            <Route path="/vitrina" element={<CapabilityRoute capability="showcase"><Vitrina /></CapabilityRoute>} />
+            <Route path="/visicooler" element={<CapabilityRoute capability="cooler_stock"><Visicooler /></CapabilityRoute>} />
+            <Route path="/pedidos" element={<CapabilityRoute capability="orders"><Pedidos /></CapabilityRoute>} />
             <Route path="/caja" element={<Caja />} />
 
             <Route path="/gastos" element={<Gastos />} />

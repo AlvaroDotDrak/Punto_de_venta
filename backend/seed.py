@@ -1,9 +1,15 @@
 """
-Puebla la base de datos con datos de demo si está vacía.
-Equivalente a src/utils/seedData.js
+Siembra de datos por rubro.
+
+- seed_database(): corre al arrancar. NO crea vendedores en una DB fresca
+  (eso lo hace el SetupWizard vía POST /api/setup). Solo asegura defaults
+  inofensivos y, en instalaciones establecidas, garantiza categorías de gasto.
+- seed_vertical(): llamado por POST /api/setup. Siembra las categorías de gasto
+  del rubro elegido y, si es pastelería, los datos demo originales.
 """
 from .auth import hash_pin
 from .models import ExpenseCategory, Ingredient, Product, Seller, SystemConfig
+from .verticals import get_vertical
 from sqlalchemy.orm import Session
 
 
@@ -43,46 +49,36 @@ INGREDIENTES_DEMO = [
 ]
 
 
+def _seed_expense_categories(db: Session, business_type: str) -> None:
+    """Siembra las categorías de gasto del rubro si no hay ninguna."""
+    if db.query(ExpenseCategory).count() > 0:
+        return
+    for c in get_vertical(business_type).get("expense_categories", []):
+        db.add(ExpenseCategory(name=c["name"], description=c.get("description")))
+
+
 def seed_database(db: Session) -> None:
-    """Puebla la DB si está vacía. Solo corre una vez."""
-
-    # Siempre asegurar categorías de gasto, independiente del estado de la DB
-    if db.query(ExpenseCategory).count() == 0:
-        default_categories = [
-            ExpenseCategory(name="Insumos", description="Materias primas y productos para elaboración"),
-            ExpenseCategory(name="Arriendo", description="Arriendo del local"),
-            ExpenseCategory(name="Electricidad", description="Cuenta de luz"),
-            ExpenseCategory(name="Gas", description="Gas para hornos y cocina"),
-            ExpenseCategory(name="Agua", description="Cuenta de agua"),
-            ExpenseCategory(name="Sueldos", description="Remuneraciones del personal"),
-            ExpenseCategory(name="Transporte", description="Fletes, combustible, despachos"),
-            ExpenseCategory(name="Mantención", description="Reparaciones y mantención de equipos"),
-            ExpenseCategory(name="Marketing", description="Publicidad, redes sociales, packaging"),
-            ExpenseCategory(name="Otros", description="Gastos no categorizados"),
-        ]
-        db.add_all(default_categories)
-        db.commit()
-
-    # Siempre asegurar configuraciones por defecto
+    """Corre al arrancar. Asegura defaults inofensivos; no toca DBs ya pobladas."""
+    # Default de configuración (umbral de semáforo de vitrina)
     if db.query(SystemConfig).filter(SystemConfig.key == "showcase_alert_hours").count() == 0:
         db.add(SystemConfig(key="showcase_alert_hours", value="24"))
         db.commit()
 
+    # Instalación establecida (ya tiene vendedores): garantizar categorías de gasto
+    # por retrocompatibilidad. Una DB fresca NO se siembra aquí — la maneja el wizard.
     if db.query(Seller).count() > 0:
-        return
+        _seed_expense_categories(db, "pasteleria")
+        db.commit()
 
-    # Vendedores demo
-    admin = Seller(name="Admin", pin=hash_pin("1234"), role="admin", active=True)
-    vendedor = Seller(name="Vendedor 1", pin=hash_pin("0000"), role="seller", active=True)
-    db.add_all([admin, vendedor])
 
-    # Productos demo
-    for p in PRODUCTOS_DEMO:
-        db.add(Product(**p))
+def seed_vertical(db: Session, business_type: str) -> None:
+    """Siembra inicial al completar el SetupWizard, según el rubro elegido."""
+    _seed_expense_categories(db, business_type)
 
-    # Ingredientes demo
-    for i in INGREDIENTES_DEMO:
-        db.add(Ingredient(**i))
+    if business_type == "pasteleria":
+        for p in PRODUCTOS_DEMO:
+            db.add(Product(**p))
+        for i in INGREDIENTES_DEMO:
+            db.add(Ingredient(**i))
 
     db.commit()
-    print("✓ Base de datos inicializada con datos de demo")

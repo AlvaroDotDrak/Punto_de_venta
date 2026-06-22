@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import {
   formatCurrency, getFreshnessStatus,
@@ -25,7 +26,13 @@ const FRESHNESS_META = {
 export default function Vitrina() {
   const toast = useToast();
   const { currentSeller } = useSeller();
+  const { categories } = useConfig();
   const isAdmin = currentSeller?.role === 'admin';
+
+  const showcaseCats = useMemo(() => new Set(categories.filter(c => c.showcase).map(c => c.value)), [categories]);
+  const sliceableCats = useMemo(() => new Set(categories.filter(c => c.sliceable).map(c => c.value)), [categories]);
+  const anySliceable = sliceableCats.size > 0;
+  const categoryEmoji = useMemo(() => Object.fromEntries(categories.map(c => [c.value, c.emoji])), [categories]);
 
   const [showcaseItems, setShowcaseItems] = useState([]);
   const [products, setProducts]           = useState([]);
@@ -118,7 +125,7 @@ export default function Vitrina() {
   const warningCount = groups.filter(g => g.freshness === 'warning').length;
 
   const available = useMemo(() =>
-    products.filter(p => p.active && !['encargo', 'bebidas', 'cafe', 'mostrador'].includes(p.category)), [products]);
+    products.filter(p => p.active && showcaseCats.has(p.category)), [products, showcaseCats]);
 
   const addFiltered = useMemo(() => {
     if (!addSearch.trim()) return available;
@@ -274,11 +281,13 @@ export default function Vitrina() {
             Enteros
             <span className="vt-tab-count">{enteros.length}</span>
           </button>
-          <button className={`tab ${showcaseTab === 'trozados' ? 'active' : ''}`} onClick={() => setShowcaseTab('trozados')}>
-            <Package size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-            Trozados
-            <span className="vt-tab-count">{trozados.length}</span>
-          </button>
+          {anySliceable && (
+            <button className={`tab ${showcaseTab === 'trozados' ? 'active' : ''}`} onClick={() => setShowcaseTab('trozados')}>
+              <Package size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+              Trozados
+              <span className="vt-tab-count">{trozados.length}</span>
+            </button>
+          )}
         </div>
         <div className="search-bar" style={{ flex: 1, minWidth: 180, maxWidth: 320, marginBottom: 0 }}>
           <Search className="search-icon" size={15} />
@@ -319,7 +328,7 @@ export default function Vitrina() {
             const meta  = FRESHNESS_META[group.freshness] || FRESHNESS_META.fresh;
             const FIcon = meta.icon;
             const photo = group.product?.photo;
-            const emoji = group.product?.category === 'salados' ? '🥪' : group.showcase_type === 'trozado' ? '🍰' : '🎂';
+            const emoji = categoryEmoji[group.product?.category] || (group.showcase_type === 'trozado' ? '🍰' : '🎂');
 
             return (
               <div
@@ -394,7 +403,7 @@ export default function Vitrina() {
                         <Timer size={12} /> +Tiempo
                       </button>
                     )}
-                    {group.showcase_type === 'entero' && (
+                    {group.showcase_type === 'entero' && sliceableCats.has(group.product?.category) && (
                       <button
                         className="btn btn-ghost btn-sm"
                         style={{ fontSize: '0.78rem' }}
@@ -501,7 +510,7 @@ export default function Vitrina() {
                         {p.photo
                           ? <img src={p.photo} alt="" style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', objectFit: 'cover', flexShrink: 0 }} />
                           : <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', background: 'var(--color-primary-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
-                              {p.category === 'vitrina' ? '🍰' : p.category === 'mostrador' ? '🍪' : '🥪'}
+                              {categoryEmoji[p.category] || '🍽️'}
                             </div>
                         }
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -542,19 +551,21 @@ export default function Vitrina() {
                 )}
               </div>
 
-              {/* Tipo */}
-              <div>
-                <label className="form-label" style={{ marginBottom: 6 }}>Tipo</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {[['entero', '🎂 Entero'], ['trozado', '🍰 Trozado']].map(([val, lbl]) => (
-                    <button key={val}
-                      className={`btn ${addType === val ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => setAddType(val)}
-                      style={{ justifyContent: 'center', height: 44, fontSize: '0.9rem', fontWeight: 700 }}
-                    >{lbl}</button>
-                  ))}
+              {/* Tipo (solo si el rubro permite trozar; si no, todo es unidad/entero) */}
+              {anySliceable && (
+                <div>
+                  <label className="form-label" style={{ marginBottom: 6 }}>Tipo</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {[['entero', '🎂 Entero'], ['trozado', '🍰 Trozado']].map(([val, lbl]) => (
+                      <button key={val}
+                        className={`btn ${addType === val ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => setAddType(val)}
+                        style={{ justifyContent: 'center', height: 44, fontSize: '0.9rem', fontWeight: 700 }}
+                      >{lbl}</button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Cantidad */}
               <div>

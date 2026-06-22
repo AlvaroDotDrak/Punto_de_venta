@@ -5,24 +5,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
 import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw } from 'lucide-react';
 import ProductStatsModal from '../components/ProductStatsModal';
 import RecipeModal from '../components/Productos/RecipeModal';
 
-const categories = [
-  { value: 'vitrina', label: 'Vitrina 🍰' },
-  { value: 'salados', label: 'Salados 🥪' },
-  { value: 'encargo', label: 'Encargo 🎂' },
-  { value: 'bebidas', label: 'Bebidas 🥤' },
-  { value: 'cafe', label: 'Café ☕' },
-  { value: 'mostrador', label: 'Mostrador 🍪' },
-];
-
-const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕', mostrador: '🍪' };
-
-const emptyForm = { name: '', category: 'vitrina', price: '', cost_price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '' };
+const emptyForm = { name: '', category: '', price: '', cost_price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '', sold_by: 'unit' };
 
 function resizeImage(file) {
   return new Promise((resolve) => {
@@ -48,7 +38,17 @@ function resizeImage(file) {
 export default function Productos() {
   const toast = useToast();
   const { currentSeller } = useSeller();
+  const { categories, hasCapability } = useConfig();
   const canEdit = currentSeller?.role === 'admin' || currentSeller?.products_access === 'full';
+
+  const categoryEmoji = useMemo(
+    () => Object.fromEntries(categories.map(c => [c.value, c.emoji])),
+    [categories]
+  );
+  const isShowcaseCat = (cat) => categories.some(c => c.value === cat && c.showcase);
+  const isSliceableCat = (cat) => categories.some(c => c.value === cat && c.sliceable);
+  const isStockCat = (cat) => categories.some(c => c.value === cat && c.stock);
+  const newForm = () => ({ ...emptyForm, category: categories[0]?.value || '' });
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
@@ -102,16 +102,19 @@ export default function Productos() {
     if (isNaN(price) || price <= 0) { toast.error('El precio debe ser mayor a 0'); return; }
 
     const slicePrice = parseFloat(form.slice_price);
+    const soldBy = isStockCat(form.category) && hasCapability('weight_sale') ? form.sold_by : 'unit';
+    const stockVal = soldBy === 'weight' ? parseFloat(form.stock) : parseInt(form.stock);
     const payload = {
       name: form.name.trim(),
       category: form.category,
       price,
-      slice_price: form.category === 'vitrina' && slicePrice > 0 ? slicePrice : null,
+      slice_price: isSliceableCat(form.category) && slicePrice > 0 ? slicePrice : null,
       max_showcase_hours: form.noFreshness ? null : (parseInt(form.max_showcase_hours) || 48),
       slices: parseInt(form.slices) || 8,
       photo: form.photo || null,
-      stock: ['bebidas', 'mostrador'].includes(form.category) ? (parseInt(form.stock) || 0) : null,
-      cost_price: ['bebidas', 'cafe'].includes(form.category) && parseFloat(form.cost_price) > 0
+      sold_by: soldBy,
+      stock: isStockCat(form.category) ? (Number.isFinite(stockVal) ? stockVal : 0) : null,
+      cost_price: (isStockCat(form.category) || form.category === 'cafe') && parseFloat(form.cost_price) > 0
         ? parseFloat(form.cost_price)
         : null,
     };
@@ -133,7 +136,7 @@ export default function Productos() {
 
   const handleEdit = (p) => {
     setEditingId(p.id);
-    setForm({ name: p.name, category: p.category, price: String(p.price), cost_price: p.cost_price != null ? String(p.cost_price) : '', slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '' });
+    setForm({ name: p.name, category: p.category, price: String(p.price), cost_price: p.cost_price != null ? String(p.cost_price) : '', slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '', sold_by: p.sold_by || 'unit' });
     setShowForm(true);
   };
 
@@ -159,7 +162,7 @@ export default function Productos() {
       <div className="page-header">
         <h1 className="page-title"><Package size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />Productos</h1>
         {canEdit && (
-          <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(emptyForm); setShowForm(true); }}>
+          <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(newForm()); setShowForm(true); }}>
             <Plus size={16} /> Nuevo Producto
           </button>
         )}
@@ -233,15 +236,16 @@ export default function Productos() {
                   <ChefHat size={14} /> Con receta
                 </div>
               )}
-              {p.category === 'vitrina' && (
+              {isShowcaseCat(p.category) && (
                 <small style={{ color: 'var(--color-text-light)' }}>
-                  {p.slices} trozos · {p.max_showcase_hours != null ? `${p.max_showcase_hours}h` : 'Sin control'}
-                  {p.slice_price != null && <> · trozo {formatCurrency(p.slice_price)}</>}
+                  {isSliceableCat(p.category) && <>{p.slices} trozos · </>}
+                  {p.max_showcase_hours != null ? `${p.max_showcase_hours}h` : 'Sin control'}
+                  {isSliceableCat(p.category) && p.slice_price != null && <> · trozo {formatCurrency(p.slice_price)}</>}
                 </small>
               )}
-              {['bebidas', 'mostrador'].includes(p.category) && p.stock != null && (
+              {isStockCat(p.category) && p.stock != null && (
                 <small style={{ color: p.stock > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                  Stock: {p.stock} unidades
+                  Stock: {p.sold_by === 'weight' ? `${p.stock} kg` : `${p.stock} unidades`}
                 </small>
               )}
             </div>
@@ -333,10 +337,10 @@ export default function Productos() {
                 <h3 className="section-title">Precios e Inventario</h3>
                 <div className="price-grid">
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Precio *</label>
+                    <label className="form-label">{form.sold_by === 'weight' ? 'Precio por kg *' : 'Precio *'}</label>
                     <input className="form-input form-input-price" type="number" min="1" value={form.price} onChange={e => updateField('price', e.target.value)} />
                   </div>
-                  {form.category === 'vitrina' && (
+                  {isSliceableCat(form.category) && (
                     <div className="form-group" style={{ marginBottom: 0 }}>
                       <label className="form-label">Trozos por unidad</label>
                       <input className="form-input" type="number" min="1" max="32" value={form.slices} onChange={e => updateField('slices', parseInt(e.target.value) || 8)} />
@@ -344,7 +348,7 @@ export default function Productos() {
                   )}
                 </div>
 
-              {form.category === 'vitrina' && (() => {
+              {isSliceableCat(form.category) && (() => {
                 const price = parseFloat(form.price);
                 const slices = parseInt(form.slices);
                 const suggested = (price > 0 && slices > 0) ? Math.round(price / slices) : null;
@@ -380,14 +384,30 @@ export default function Productos() {
                 );
               })()}
 
-              {['bebidas', 'mostrador'].includes(form.category) && (
+              {isStockCat(form.category) && hasCapability('weight_sale') && (
                 <div className="form-group">
-                  <label className="form-label">Stock inicial (unidades)</label>
-                  <input className="form-input" type="number" min="0" value={form.stock} onChange={e => updateField('stock', e.target.value)} placeholder="0" />
+                  <label className="form-label">Modo de venta</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {[['unit', '🔢 Por unidad'], ['weight', '⚖️ Por peso (kg)']].map(([val, lbl]) => (
+                      <button key={val} type="button"
+                        className={`btn ${form.sold_by === val ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => updateField('sold_by', val)}
+                        style={{ justifyContent: 'center', height: 42, fontSize: '0.88rem', fontWeight: 700 }}
+                      >{lbl}</button>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {['bebidas', 'cafe'].includes(form.category) && (
+              {isStockCat(form.category) && (
+                <div className="form-group">
+                  <label className="form-label">Stock inicial ({form.sold_by === 'weight' ? 'kg' : 'unidades'})</label>
+                  <input className="form-input" type="number" min="0" step={form.sold_by === 'weight' ? '0.01' : '1'}
+                    value={form.stock} onChange={e => updateField('stock', e.target.value)} placeholder="0" />
+                </div>
+              )}
+
+              {(isStockCat(form.category) || form.category === 'cafe') && (
                 <div className="form-group">
                   <label className="form-label">Precio de costo (compra)</label>
                   <input className="form-input form-input-price" type="number" min="0" step="100"
@@ -397,10 +417,10 @@ export default function Productos() {
                 </div>
               )}
 
-              {['vitrina', 'salados'].includes(form.category) && (
+              {isShowcaseCat(form.category) && (
                 <div className="modal-divider" />
               )}
-              {['vitrina', 'salados'].includes(form.category) && (
+              {isShowcaseCat(form.category) && (
                 <div className="modal-section">
                   <h3 className="section-title">Configuración de vitrina</h3>
                   <div className="form-group">

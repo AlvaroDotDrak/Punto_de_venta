@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
@@ -12,12 +13,28 @@ import TypeModal from '../components/Ventas/TypeModal';
 import PaymentModal from '../components/Ventas/PaymentModal';
 import ReceiptModal from '../components/Ventas/ReceiptModal';
 
-const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕', mostrador: '🍪' };
-const categoryLabel = { todos: 'Todos', vitrina: 'Vitrina', salados: 'Salados', encargo: 'Encargo', bebidas: 'Bebidas', cafe: 'Café', mostrador: 'Mostrador' };
-
 export default function Ventas() {
   const { currentSeller } = useSeller();
+  const { categories, t } = useConfig();
   const toast = useToast();
+
+  // Categorías derivadas de la configuración del rubro
+  const catTabs = useMemo(
+    () => [{ value: 'todos', label: 'Todos', emoji: null }, ...categories.map(c => ({ value: c.value, label: c.label, emoji: c.emoji }))],
+    [categories]
+  );
+  const showcaseCats = useMemo(
+    () => new Set(categories.filter(c => c.showcase).map(c => c.value)),
+    [categories]
+  );
+  const sliceableCats = useMemo(
+    () => new Set(categories.filter(c => c.sliceable).map(c => c.value)),
+    [categories]
+  );
+  const categoryEmoji = useMemo(
+    () => Object.fromEntries(categories.map(c => [c.value, c.emoji])),
+    [categories]
+  );
 
   const [products, setProducts] = useState([]);
   const [showcaseItems, setShowcaseItems] = useState([]);
@@ -33,6 +50,7 @@ export default function Ventas() {
   const [showReceipt, setShowReceipt] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
   const [showTypeModal, setShowTypeModal] = useState(null);
+  const [weightProduct, setWeightProduct] = useState(null);
   const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
 
   const loadData = async () => {
@@ -78,7 +96,7 @@ export default function Ventas() {
     return list;
   }, [products, activeCategory, search, onlyInShowcase, stockMap, sortOrder]);
 
-  const addToCart = (product, overridePrice, overrideName, showcaseType = null) => {
+  const addToCart = (product, overridePrice, overrideName, showcaseType = null, weight = null) => {
     const price = overridePrice ?? product.price;
     const name = overrideName ?? product.name;
     setCart(prev => {
@@ -100,14 +118,22 @@ export default function Ventas() {
         category: product.category,
         photo: product.photo || null,
         showcase_type: showcaseType,
+        weight,
       }];
     });
   };
 
   const handleProductClick = (product) => {
-    // Si es un producto de vitrina, siempre permitir elegir si se vende entero o por trozo,
-    // incluso si no hay stock registrado (Vitrina Automática).
-    if (product.category === 'vitrina') {
+    // Producto vendido por peso → pedir los kg
+    if (product.sold_by === 'weight') {
+      setWeightProduct(product);
+      return;
+    }
+
+    // Si la categoría es trozable (sliceable), siempre permitir elegir entero o
+    // por trozo, incluso sin stock registrado (Vitrina Automática). Las categorías
+    // de vitrina NO trozables (ej. ceviches en tupper) caen al flujo de stock normal.
+    if (sliceableCats.has(product.category)) {
       const stock = stockMap[product.id] || { enteros: 0, trozos: 0, total: 0 };
       setShowTypeModal({ product, stock });
       return;
@@ -159,6 +185,7 @@ export default function Ventas() {
           quantity: i.quantity,
           subtotal: i.subtotal,
           showcase_type: i.showcase_type,
+          weight: i.weight ?? null,
         })),
       });
 
@@ -215,22 +242,22 @@ export default function Ventas() {
                   style={{ cursor: 'pointer', width: 18, height: 18 }}
                 />
                 <MapPin size={16} />
-                <span>Solo en vitrina</span>
+                <span>Solo en {t('showcase', 'vitrina').toLowerCase()}</span>
               </label>
             </div>
 
             <div className="tabs" style={{ marginTop: 'var(--space-md)', marginBottom: 0, borderBottom: 'none' }}>
-              {Object.entries(categoryLabel).map(([key, label]) => (
-                <button key={key} className={`tab ${activeCategory === key ? 'active' : ''}`}
-                  onClick={() => setActiveCategory(key)}
-                  style={{ 
-                    fontSize: '0.75rem', 
+              {catTabs.map(({ value, label, emoji }) => (
+                <button key={value} className={`tab ${activeCategory === value ? 'active' : ''}`}
+                  onClick={() => setActiveCategory(value)}
+                  style={{
+                    fontSize: '0.75rem',
                     fontWeight: 700,
                     textTransform: 'uppercase',
                     letterSpacing: '0.8px',
                     padding: '10px 16px'
                   }}>
-                  {key !== 'todos' && <span style={{ marginRight: 6 }}>{categoryEmoji[key]}</span>} {label}
+                  {emoji && <span style={{ marginRight: 6 }}>{emoji}</span>} {label}
                 </button>
               ))}
             </div>
@@ -485,6 +512,18 @@ export default function Ventas() {
         />
       )}
 
+      {weightProduct && (
+        <WeightModal
+          product={weightProduct}
+          onConfirm={(kg) => {
+            const portion = Math.round(kg * weightProduct.price);
+            addToCart(weightProduct, portion, `${weightProduct.name} (${kg} kg)`, null, kg);
+            setWeightProduct(null);
+          }}
+          onClose={() => setWeightProduct(null)}
+        />
+      )}
+
       {showPayment && (
         <PaymentModal
           total={cartTotal}
@@ -507,6 +546,59 @@ export default function Ventas() {
           onClose={() => setShowReceipt(false)}
         />
       )}
+    </div>
+  );
+}
+
+function WeightModal({ product, onConfirm, onClose }) {
+  const [kg, setKg] = useState('');
+  const value = parseFloat(kg);
+  const valid = Number.isFinite(value) && value > 0;
+  const subtotal = valid ? Math.round(value * product.price) : 0;
+
+  const submit = (e) => {
+    e?.preventDefault();
+    if (valid) onConfirm(value);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2 style={{ fontSize: '1.05rem' }}>⚖️ {product.name}</h2>
+            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
+              {formatCurrency(product.price)} por kg
+            </div>
+          </div>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={submit}>
+          <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Peso (kg)</label>
+              <input
+                className="form-input"
+                type="number" min="0" step="0.01" inputMode="decimal"
+                placeholder="Ej: 0.75"
+                value={kg}
+                autoFocus
+                onChange={e => setKg(e.target.value)}
+                style={{ fontSize: '1.4rem', fontWeight: 700, textAlign: 'center' }}
+              />
+            </div>
+            <div style={{ textAlign: 'center', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-primary)' }}>
+              {valid ? `${value} kg × ${formatCurrency(product.price)} = ${formatCurrency(subtotal)}` : 'Ingresa el peso'}
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+            <button type="submit" className="btn btn-primary" disabled={!valid} style={{ flex: 1 }}>
+              Agregar {valid ? formatCurrency(subtotal) : ''}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

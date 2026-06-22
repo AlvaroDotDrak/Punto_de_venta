@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ToastProvider } from './context/ToastContext'
 import { SellerProvider } from './context/SellerContext'
+import { ConfigProvider } from './context/ConfigContext'
 import './index.css'
 
 // Registrar Service Worker solo en producción
@@ -25,9 +26,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <ToastProvider>
-        <SellerProvider>
-          <App />
-        </SellerProvider>
+        <ConfigProvider>
+          <SellerProvider>
+            <App />
+          </SellerProvider>
+        </ConfigProvider>
       </ToastProvider>
     </BrowserRouter>
   </React.StrictMode>

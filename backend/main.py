@@ -64,6 +64,11 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_access_insumos BOOLEAN DEFAULT 0")
         _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_access_historial BOOLEAN DEFAULT 0")
 
+        # v2.14: modo de venta (unidad/peso) para congelados por kg
+        _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN sold_by TEXT DEFAULT 'unit'")
+        # v2.15: kg vendidos en items de venta por peso
+        _add_column_if_missing(conn, "ALTER TABLE sale_items ADD COLUMN weight FLOAT")
+
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_status ON sales(status)"))
@@ -73,6 +78,22 @@ def _run_migrations():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_sale_id ON ingredient_movements(sale_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_type ON ingredient_movements(type)"))
         conn.commit()
+
+        # v2.13: marca de rubro (multi-vertical). Una instalación legacy ya poblada
+        # (tiene vendedores) se auto-marca como pastelería ya configurada para no
+        # mostrarle el SetupWizard ni cambiar su comportamiento. Una DB fresca queda
+        # sin marcar → el wizard se encarga.
+        has_business_type = conn.execute(
+            text("SELECT 1 FROM system_config WHERE key='business_type'")
+        ).fetchone()
+        if has_business_type is None:
+            seller_count = conn.execute(text("SELECT COUNT(*) FROM sellers")).scalar()
+            if seller_count and seller_count > 0:
+                conn.execute(text(
+                    "INSERT INTO system_config (key, value) VALUES "
+                    "('business_type', 'pasteleria'), ('setup_complete', 'true')"
+                ))
+                conn.commit()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
