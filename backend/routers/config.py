@@ -49,6 +49,10 @@ def build_profile(db: Session) -> dict:
     capabilities = resolve_capabilities(business_type, _get_json(db, "capabilities", {}))
     branding = {**preset["branding"], **_get_json(db, "branding", {})}
     product_categories = _get_json(db, "product_categories", preset["product_categories"])
+    # Overlay de flags estáticos del tipo de categoría (no dependen del snapshot)
+    preset_flags = {c["value"]: c.get("age_restricted", False) for c in preset["product_categories"]}
+    for c in product_categories:
+        c["age_restricted"] = preset_flags.get(c["value"], False)
     tax_rate = float(_get(db, "tax_rate") or 0.19)
     setup_complete = _get(db, "setup_complete") == "true"
     return {

@@ -116,3 +116,16 @@ def test_get_palette_fallback():
 def test_list_palettes_order():
     palettes = list_palettes("botilleria")
     assert palettes[0]["id"] == "vino"
+
+
+def test_botilleria_categorias_restringidas():
+    cats = {c["value"]: c for c in get_vertical("botilleria")["product_categories"]}
+    for v in ("cervezas", "vinos", "destilados", "cigarros"):
+        assert cats[v].get("age_restricted") is True
+    for v in ("bebidas", "snacks"):
+        assert cats[v].get("age_restricted") is not True
+
+
+def test_pasteleria_sin_restriccion_edad():
+    cats = get_vertical("pasteleria")["product_categories"]
+    assert all(not c.get("age_restricted") for c in cats)

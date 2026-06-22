@@ -68,6 +68,8 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN sold_by TEXT DEFAULT 'unit'")
         # v2.15: kg vendidos en items de venta por peso
         _add_column_if_missing(conn, "ALTER TABLE sale_items ADD COLUMN weight FLOAT")
+        # v2.16: código de barras en productos (retail: botillería, minimarket)
+        _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN barcode TEXT")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
@@ -77,6 +79,7 @@ def _run_migrations():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_showcase_product_status ON showcase_items(product_id, status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_sale_id ON ingredient_movements(sale_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_type ON ingredient_movements(type)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_barcode ON products(barcode)"))
         conn.commit()
 
         # v2.13: marca de rubro (multi-vertical). Una instalación legacy ya poblada

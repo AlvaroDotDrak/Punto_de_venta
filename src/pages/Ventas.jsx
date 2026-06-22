@@ -15,7 +15,7 @@ import ReceiptModal from '../components/Ventas/ReceiptModal';
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
-  const { categories, t } = useConfig();
+  const { categories, t, hasCapability } = useConfig();
   const toast = useToast();
 
   // Categorías derivadas de la configuración del rubro
@@ -29,6 +29,10 @@ export default function Ventas() {
   );
   const sliceableCats = useMemo(
     () => new Set(categories.filter(c => c.sliceable).map(c => c.value)),
+    [categories]
+  );
+  const ageRestrictedCats = useMemo(
+    () => new Set(categories.filter(c => c.age_restricted).map(c => c.value)),
     [categories]
   );
   const categoryEmoji = useMemo(
@@ -51,6 +55,7 @@ export default function Ventas() {
   const [processingPayment, setProcessingPayment] = useState(false);
   const [showTypeModal, setShowTypeModal] = useState(null);
   const [weightProduct, setWeightProduct] = useState(null);
+  const [ageConfirmProduct, setAgeConfirmProduct] = useState(null);
   const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
 
   const loadData = async () => {
@@ -123,7 +128,7 @@ export default function Ventas() {
     });
   };
 
-  const handleProductClick = (product) => {
+  const proceedAddProduct = (product) => {
     // Producto vendido por peso → pedir los kg
     if (product.sold_by === 'weight') {
       setWeightProduct(product);
@@ -152,6 +157,14 @@ export default function Ventas() {
       return;
     }
     addToCart(product, null, null, 'entero');
+  };
+
+  const handleProductClick = (product) => {
+    if (hasCapability('age_restriction') && ageRestrictedCats.has(product.category)) {
+      setAgeConfirmProduct(product);
+      return;
+    }
+    proceedAddProduct(product);
   };
 
   const updateQuantity = (product_id, product_name, delta) => {
@@ -224,8 +237,28 @@ export default function Ventas() {
             <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
               <div className="search-bar" style={{ flex: 1, minWidth: 260 }}>
                 <Search className="search-icon" size={18} />
-                <input type="text" placeholder="Buscar delicias..."
-                  value={search} onChange={e => setSearch(e.target.value)} />
+                <input type="text" placeholder={hasCapability('barcode') ? "Buscar o escanea código..." : "Buscar delicias..."}
+                  value={search} onChange={e => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return;
+                    const code = search.trim();
+                    if (!code) return;
+                    if (hasCapability('barcode')) {
+                      const match = products.find(p => p.barcode && p.barcode === code);
+                      if (match) {
+                        handleProductClick(match);
+                        setSearch('');
+                        e.preventDefault();
+                        return;
+                      }
+                    }
+                    // Fallback: si el filtro deja exactamente 1 producto, agregarlo
+                    if (filteredProducts.length === 1) {
+                      handleProductClick(filteredProducts[0]);
+                      setSearch('');
+                    }
+                  }}
+                />
               </div>
               <label className="filter-toggle" style={{ 
                 display: 'flex', 
@@ -522,6 +555,30 @@ export default function Ventas() {
           }}
           onClose={() => setWeightProduct(null)}
         />
+      )}
+
+      {ageConfirmProduct && (
+        <div className="modal-overlay" onClick={() => setAgeConfirmProduct(null)}>
+          <div className="modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>⚠️ Venta con restricción de edad</h3></div>
+            <div className="modal-body">
+              <p><strong>{ageConfirmProduct.name}</strong> es un producto con venta
+              restringida a mayores de 18 años.</p>
+              <p style={{ marginTop: 'var(--space-sm)' }}>¿El cliente es mayor de edad?</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setAgeConfirmProduct(null)}>
+                Cancelar
+              </button>
+              <button className="btn btn-primary" onClick={() => {
+                proceedAddProduct(ageConfirmProduct);
+                setAgeConfirmProduct(null);
+              }}>
+                Sí, es mayor de 18
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showPayment && (

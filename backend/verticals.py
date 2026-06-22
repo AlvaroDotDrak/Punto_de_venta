@@ -130,12 +130,12 @@ VERTICALS = {
             "age_restriction": True,
         },
         "product_categories": [
-            {"value": "cervezas", "label": "Cervezas", "emoji": "🍺", "showcase": False, "stock": True},
-            {"value": "vinos", "label": "Vinos", "emoji": "🍷", "showcase": False, "stock": True},
-            {"value": "destilados", "label": "Destilados", "emoji": "🥃", "showcase": False, "stock": True},
+            {"value": "cervezas", "label": "Cervezas", "emoji": "🍺", "showcase": False, "stock": True, "age_restricted": True},
+            {"value": "vinos", "label": "Vinos", "emoji": "🍷", "showcase": False, "stock": True, "age_restricted": True},
+            {"value": "destilados", "label": "Destilados", "emoji": "🥃", "showcase": False, "stock": True, "age_restricted": True},
             {"value": "bebidas", "label": "Bebidas", "emoji": "🥤", "showcase": False, "stock": True},
             {"value": "snacks", "label": "Snacks", "emoji": "🍫", "showcase": False, "stock": True},
-            {"value": "cigarros", "label": "Cigarros", "emoji": "🚬", "showcase": False, "stock": True},
+            {"value": "cigarros", "label": "Cigarros", "emoji": "🚬", "showcase": False, "stock": True, "age_restricted": True},
         ],
         "expense_categories": _GENERIC_EXPENSES,
         "terminology": {

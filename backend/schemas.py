@@ -58,6 +58,7 @@ class ProductCreate(BaseModel):
     stock: Optional[float] = None        # unidades o kg según sold_by
     min_stock_cooler: Optional[float] = None  # umbral alerta visicooler
     photo: Optional[str] = None
+    barcode: Optional[str] = None
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
@@ -71,6 +72,7 @@ class ProductUpdate(BaseModel):
     stock: Optional[float] = None
     min_stock_cooler: Optional[float] = None
     photo: Optional[str] = None
+    barcode: Optional[str] = None
     active: Optional[bool] = None
 
 class ProductOut(BaseModel):
@@ -87,6 +89,7 @@ class ProductOut(BaseModel):
     stock: Optional[float]
     min_stock_cooler: Optional[float]
     photo: Optional[str]
+    barcode: Optional[str] = None
     active: bool
     created_at: datetime
     has_recipe: bool = False

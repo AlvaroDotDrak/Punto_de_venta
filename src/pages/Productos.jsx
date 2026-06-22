@@ -12,7 +12,7 @@ import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, Rot
 import ProductStatsModal from '../components/ProductStatsModal';
 import RecipeModal from '../components/Productos/RecipeModal';
 
-const emptyForm = { name: '', category: '', price: '', cost_price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '', sold_by: 'unit' };
+const emptyForm = { name: '', category: '', price: '', cost_price: '', slice_price: '', max_showcase_hours: '48', noFreshness: false, photo: null, slices: 8, stock: '', sold_by: 'unit', barcode: '' };
 
 function resizeImage(file) {
   return new Promise((resolve) => {
@@ -112,6 +112,7 @@ export default function Productos() {
       max_showcase_hours: form.noFreshness ? null : (parseInt(form.max_showcase_hours) || 48),
       slices: parseInt(form.slices) || 8,
       photo: form.photo || null,
+      barcode: hasCapability('barcode') && form.barcode.trim() ? form.barcode.trim() : null,
       sold_by: soldBy,
       stock: isStockCat(form.category) ? (Number.isFinite(stockVal) ? stockVal : 0) : null,
       cost_price: (isStockCat(form.category) || form.category === 'cafe') && parseFloat(form.cost_price) > 0
@@ -136,7 +137,7 @@ export default function Productos() {
 
   const handleEdit = (p) => {
     setEditingId(p.id);
-    setForm({ name: p.name, category: p.category, price: String(p.price), cost_price: p.cost_price != null ? String(p.cost_price) : '', slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '', sold_by: p.sold_by || 'unit' });
+    setForm({ name: p.name, category: p.category, price: String(p.price), cost_price: p.cost_price != null ? String(p.cost_price) : '', slice_price: p.slice_price != null ? String(p.slice_price) : '', max_showcase_hours: String(p.max_showcase_hours ?? 48), noFreshness: p.max_showcase_hours == null, photo: p.photo, slices: p.slices, stock: p.stock != null ? String(p.stock) : '', sold_by: p.sold_by || 'unit', barcode: p.barcode || '' });
     setShowForm(true);
   };
 
@@ -316,6 +317,14 @@ export default function Productos() {
                   <label className="form-label">Nombre *</label>
                   <input className="form-input form-input-lg" value={form.name} onChange={e => updateField('name', e.target.value)} autoFocus />
                 </div>
+                {hasCapability('barcode') && (
+                  <div className="form-group">
+                    <label className="form-label">Código de barras</label>
+                    <input className="form-input" value={form.barcode}
+                      onChange={e => updateField('barcode', e.target.value)}
+                      placeholder="Escanea o escribe el código" />
+                  </div>
+                )}
   
                 <div className="form-group">
                   <label className="form-label">Categoría</label>

@@ -43,6 +43,7 @@ class Product(Base):
     stock = Column(Float, nullable=True)          # stock físico; None = sin tracking. Unidades o kg según sold_by
     min_stock_cooler = Column(Float, nullable=True)  # umbral alerta semáforo visicooler (unidades o kg)
     photo = Column(Text, nullable=True)           # base64
+    barcode = Column(String, nullable=True)        # código de barras (retail)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
 
