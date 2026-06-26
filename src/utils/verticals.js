@@ -38,6 +38,25 @@ export function hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+export function hexToRgbTriplet(hex) {
+  const h = (hex || '#000000').replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
+// Tono muy oscuro del primario (para fondos tipo sidebar). factor ~0.15 mantiene
+// el matiz del rubro pero suficientemente oscuro para texto claro legible.
+export function darkenHex(hex, factor) {
+  const h = (hex || '#000000').replace('#', '');
+  const to2 = (n) => Math.round(n).toString(16).padStart(2, '0');
+  const r = parseInt(h.slice(0, 2), 16) * factor;
+  const g = parseInt(h.slice(2, 4), 16) * factor;
+  const b = parseInt(h.slice(4, 6), 16) * factor;
+  return `#${to2(r)}${to2(g)}${to2(b)}`;
+}
+
 export const VERTICAL_OPTIONS = [
   { value: 'pasteleria', label: 'Pastelería', emoji: '🧁', description: 'Vitrina por trozos, frescura y encargos', palettes: ['terracota', 'chocolate', 'frambuesa', 'miel', 'durazno'], defaultPalette: 'terracota' },
   { value: 'botilleria', label: 'Botillería', emoji: '🍷', description: 'Licores y bebidas con control de stock', palettes: ['vino', 'verde_botella', 'ambar', 'azul_noche'], defaultPalette: 'vino' },
@@ -80,4 +99,5 @@ export const DEFAULT_PROFILE = {
   terminology: {},
   tax_rate: 0.19,
   setup_complete: true,
+  printing: { auto_print: false, printer_name: 'POS-80', print_logo: false },
 };

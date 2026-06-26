@@ -20,6 +20,10 @@ class Seller(Base):
     products_access = Column(String, default="none")   # 'none' | 'view' | 'full'
     can_access_insumos = Column(Boolean, default=False)
     can_access_historial = Column(Boolean, default=False)
+    can_void_sales = Column(Boolean, default=False)
+    can_close_cash = Column(Boolean, default=False)
+    can_cash_movements = Column(Boolean, default=False)
+    can_view_costs = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
@@ -261,11 +265,51 @@ class Expense(Base):
     description = Column(String, nullable=True)
     receipt_photo = Column(Text, nullable=True)      # base64, mismo patrón que products.photo
     document_type = Column(String, default='boleta') # 'boleta' | 'factura'
+    payment_method = Column(String, nullable=True)   # 'efectivo' | 'transferencia' | 'debito' (compras)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
     category = relationship("ExpenseCategory", back_populates="expenses")
     seller = relationship("Seller", back_populates="expenses")
+    supplier = relationship("Supplier", back_populates="expenses")
+    purchase_items = relationship("PurchaseItem", back_populates="expense", cascade="all, delete-orphan")
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    rut = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    expenses = relationship("Expense", back_populates="supplier")
+
+
+class PurchaseItem(Base):
+    """Línea de detalle de una factura de compra (Fase 2). Vive colgada de un Expense.
+    Una línea puede reponer un producto, un ingrediente, o ser solo gasto (sin inventario).
+    unit_cost y line_total se guardan en NETO (sin IVA) — el IVA es crédito fiscal, no costo."""
+    __tablename__ = "purchase_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=True)
+    description = Column(String, nullable=False)     # snapshot del nombre de la línea
+    quantity = Column(Float, nullable=False)
+    unit_cost = Column(Float, nullable=False)        # costo neto unitario
+    line_total = Column(Float, nullable=False)       # quantity * unit_cost (neto)
+    created_at = Column(DateTime, default=datetime.now)
+
+    expense = relationship("Expense", back_populates="purchase_items")
+    product = relationship("Product")
+    ingredient = relationship("Ingredient")
 
 
 class Invoice(Base):

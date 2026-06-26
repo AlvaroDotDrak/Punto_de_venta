@@ -16,7 +16,7 @@ from .models import ProductRecipe  # Asegurar creación de la tabla
 from .seed import seed_database
 from .backup import check_and_run_backup
 from .routers import auth, sellers, products, sales, showcase, cash, orders, ingredients, audit, config
-from .routers import expenses, invoices, accounting, recipes
+from .routers import expenses, invoices, accounting, recipes, suppliers, purchases, printing
 
 
 def _add_column_if_missing(conn, sql: str) -> None:
@@ -64,12 +64,22 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_access_insumos BOOLEAN DEFAULT 0")
         _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_access_historial BOOLEAN DEFAULT 0")
 
+        # permisos granulares de vendedores
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_void_sales BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_close_cash BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_cash_movements BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_view_costs BOOLEAN DEFAULT 0")
+
         # v2.14: modo de venta (unidad/peso) para congelados por kg
         _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN sold_by TEXT DEFAULT 'unit'")
         # v2.15: kg vendidos en items de venta por peso
         _add_column_if_missing(conn, "ALTER TABLE sale_items ADD COLUMN weight FLOAT")
         # v2.16: código de barras en productos (retail: botillería, minimarket)
         _add_column_if_missing(conn, "ALTER TABLE products ADD COLUMN barcode TEXT")
+        # v2.17: proveedor en gastos (Fase 1 — compras)
+        _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN supplier_id INTEGER")
+        # v2.18: método de pago en gastos/compras (Fase 2)
+        _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN payment_method TEXT")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
@@ -80,6 +90,9 @@ def _run_migrations():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_sale_id ON ingredient_movements(sale_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_type ON ingredient_movements(type)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_barcode ON products(barcode)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_expense_id ON purchase_items(expense_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_product_id ON purchase_items(product_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_ingredient_id ON purchase_items(ingredient_id)"))
         conn.commit()
 
         # v2.13: marca de rubro (multi-vertical). Una instalación legacy ya poblada
@@ -148,6 +161,9 @@ app.include_router(expenses.router, prefix="/api")
 app.include_router(invoices.router, prefix="/api")
 app.include_router(accounting.router, prefix="/api")
 app.include_router(recipes.router, prefix="/api")
+app.include_router(suppliers.router, prefix="/api")
+app.include_router(purchases.router, prefix="/api")
+app.include_router(printing.router, prefix="/api")
 
 
 @app.get("/api/health")

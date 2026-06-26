@@ -58,6 +58,7 @@ export default function HistorialVentas() {
   const { currentSeller } = useSeller();
   const toast = useToast();
   const isAdmin = currentSeller?.role === 'admin';
+  const canVoid = currentSeller?.role === 'admin' || currentSeller?.can_void_sales;
   const minDate = (() => { const d = new Date(); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0]; })();
 
   const [sales, setSales] = useState([]);
@@ -348,7 +349,7 @@ export default function HistorialVentas() {
                           >
                             {expandedId === sale.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                           </button>
-                          {sale.status === 'completed' && currentSeller?.role === 'admin' && (
+                          {sale.status === 'completed' && canVoid && (
                             <button
                               className="btn btn-ghost btn-sm btn-icon"
                               title="Anular venta"

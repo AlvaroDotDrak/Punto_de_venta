@@ -18,6 +18,10 @@ class SellerUpdate(BaseModel):
     products_access: Optional[str] = None
     can_access_insumos: Optional[bool] = None
     can_access_historial: Optional[bool] = None
+    can_void_sales: Optional[bool] = None
+    can_close_cash: Optional[bool] = None
+    can_cash_movements: Optional[bool] = None
+    can_view_costs: Optional[bool] = None
 
 class SellerOut(BaseModel):
     id: int
@@ -27,6 +31,10 @@ class SellerOut(BaseModel):
     products_access: str
     can_access_insumos: bool
     can_access_historial: bool
+    can_void_sales: bool
+    can_close_cash: bool
+    can_cash_movements: bool
+    can_view_costs: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -390,6 +398,8 @@ class ExpenseCreate(BaseModel):
     description: Optional[str] = None
     receipt_photo: Optional[str] = None  # base64
     document_type: str = 'boleta'        # 'boleta' | 'factura'
+    supplier_id: Optional[int] = None
+    payment_method: Optional[str] = None  # 'efectivo' | 'transferencia' | 'debito'
 
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
@@ -397,6 +407,8 @@ class ExpenseUpdate(BaseModel):
     description: Optional[str] = None
     receipt_photo: Optional[str] = None
     document_type: Optional[str] = None
+    supplier_id: Optional[int] = None
+    payment_method: Optional[str] = None
 
 class ExpenseOut(BaseModel):
     id: int
@@ -408,9 +420,97 @@ class ExpenseOut(BaseModel):
     document_type: str
     seller_id: int
     seller_name: str
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    payment_method: Optional[str] = None
+    has_items: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Suppliers ─────────────────────────────────────────────────────────────────
+
+class SupplierCreate(BaseModel):
+    name: str
+    rut: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+
+class SupplierUpdate(BaseModel):
+    name: Optional[str] = None
+    rut: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
+    active: Optional[bool] = None
+
+class SupplierOut(BaseModel):
+    id: int
+    name: str
+    rut: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    notes: Optional[str]
+    active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Purchases (Fase 2 — factura de compra con detalle) ─────────────────────────
+
+class PurchaseItemIn(BaseModel):
+    product_id: Optional[int] = None
+    ingredient_id: Optional[int] = None
+    description: str
+    quantity: float
+    unit_cost: float          # costo neto unitario
+
+class PurchaseCreate(BaseModel):
+    category_id: int
+    supplier_id: Optional[int] = None
+    document_type: str = 'factura'         # 'boleta' | 'factura'
+    payment_method: Optional[str] = None   # 'efectivo' | 'transferencia' | 'debito'
+    description: Optional[str] = None
+    receipt_photo: Optional[str] = None
+    items: list[PurchaseItemIn]
+
+class PurchaseItemOut(BaseModel):
+    id: int
+    product_id: Optional[int]
+    ingredient_id: Optional[int]
+    description: str
+    quantity: float
+    unit_cost: float
+    line_total: float
+
+    model_config = {"from_attributes": True}
+
+class PurchaseOut(BaseModel):
+    id: int                    # = expense id
+    category_id: int
+    category_name: str
+    supplier_id: Optional[int]
+    supplier_name: Optional[str]
+    document_type: str
+    payment_method: Optional[str]
+    description: Optional[str]
+    net_amount: float
+    tax_amount: float
+    total_amount: float
+    seller_name: str
+    created_at: datetime
+    items: list[PurchaseItemOut]
+
+class CostHistoryEntry(BaseModel):
+    expense_id: int
+    date: datetime
+    supplier_name: Optional[str]
+    document_type: str
+    quantity: float
+    unit_cost: float
 
 
 # ── Invoices ──────────────────────────────────────────────────────────────────
@@ -536,6 +636,7 @@ class ConfigProfileOut(BaseModel):
     terminology: dict
     tax_rate: float
     setup_complete: bool
+    printing: dict
 
 
 class ConfigProfileUpdate(BaseModel):

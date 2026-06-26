@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import CashMovement, CashRegister
-from ..auth import get_current_seller, require_admin
+from ..auth import get_current_seller, require_admin, require_permission
 from ..audit import ACTIONS, log_action
 from ..schemas import (
     CashCloseRequest, CashMovementCreate, CashMovementOut,
@@ -172,7 +172,7 @@ def open_register(
 def close_register(
     payload: CashCloseRequest,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    seller=Depends(require_permission("can_close_cash")),
 ):
     register = _get_open_register(db)
 
@@ -202,7 +202,7 @@ def close_register(
     register.status = "closed"
 
     db.commit()
-    log_action(db, ACTIONS.CASH_CLOSE, admin.id,
+    log_action(db, ACTIONS.CASH_CLOSE, seller.id,
                f"Caja cerrada. Esperado: ${expected:.0f} | Real: ${payload.closing_amount:.0f}")
 
     return db.query(CashRegister).options(
@@ -214,7 +214,7 @@ def close_register(
 def add_movement(
     payload: CashMovementCreate,
     db: Session = Depends(get_db),
-    seller=Depends(get_current_seller),
+    seller=Depends(require_permission("can_cash_movements")),
 ):
     if payload.type not in ("expense", "income"):
         raise HTTPException(status_code=422, detail="Tipo debe ser 'expense' o 'income'")

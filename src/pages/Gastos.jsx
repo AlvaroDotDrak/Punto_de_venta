@@ -3,7 +3,9 @@ import { useSeller } from '../context/SellerContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
-import { PlusCircle, Trash2, Image, X, FileText, Receipt } from 'lucide-react';
+import { PlusCircle, Trash2, Image, X, FileText, Receipt, Tags, Truck } from 'lucide-react';
+import CategoryManagerModal from '../components/Gastos/CategoryManagerModal';
+import SupplierManagerModal from '../components/Gastos/SupplierManagerModal';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -19,6 +21,7 @@ export default function Gastos() {
   const fileInputRef = useRef(null);
 
   const [categories, setCategories] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -27,9 +30,11 @@ export default function Gastos() {
   const [filterFrom, setFilterFrom] = useState(today());
   const [filterTo, setFilterTo] = useState(today());
   const [filterCategory, setFilterCategory] = useState('');
+  const [filterSupplier, setFilterSupplier] = useState('');
 
   // Formulario
   const [categoryId, setCategoryId] = useState('');
+  const [supplierId, setSupplierId] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [receiptPhoto, setReceiptPhoto] = useState(null);
@@ -41,6 +46,10 @@ export default function Gastos() {
   // Confirmar eliminación
   const [deletingId, setDeletingId] = useState(null);
 
+  // Gestores (admin)
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [showSupplierManager, setShowSupplierManager] = useState(false);
+
   const loadCategories = async () => {
     try {
       const data = await api.get('/expense-categories');
@@ -51,12 +60,22 @@ export default function Gastos() {
     }
   };
 
+  const loadSuppliers = async () => {
+    try {
+      const data = await api.get('/suppliers');
+      setSuppliers(data);
+    } catch (err) {
+      toast.error('Error al cargar proveedores: ' + err.message);
+    }
+  };
+
   const loadExpenses = async () => {
     const params = new URLSearchParams();
     if (isAdmin) {
       if (filterFrom) params.set('date_from', filterFrom);
       if (filterTo) params.set('date_to', filterTo);
       if (filterCategory) params.set('category_id', filterCategory);
+      if (filterSupplier) params.set('supplier_id', filterSupplier);
     } else {
       params.set('date_from', today());
       params.set('date_to', today());
@@ -67,12 +86,13 @@ export default function Gastos() {
 
   useEffect(() => {
     loadCategories();
+    loadSuppliers();
   }, []);
 
   useEffect(() => {
     setLoading(true);
     loadExpenses().finally(() => setLoading(false));
-  }, [filterFrom, filterTo, filterCategory]);
+  }, [filterFrom, filterTo, filterCategory, filterSupplier]);
 
   const handlePhotoChange = (e) => {
     const file = e.target.files[0];
@@ -100,12 +120,14 @@ export default function Gastos() {
         description: description.trim() || null,
         receipt_photo: receiptPhoto || null,
         document_type: documentType,
+        supplier_id: supplierId ? parseInt(supplierId) : null,
       });
       toast.success('Gasto registrado');
       setAmount('');
       setDescription('');
       setReceiptPhoto(null);
       setDocumentType('boleta');
+      setSupplierId('');
       if (fileInputRef.current) fileInputRef.current.value = '';
       await loadExpenses();
     } catch (err) {
@@ -182,7 +204,16 @@ export default function Gastos() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Categoría</label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <label className="form-label" style={{ margin: 0 }}>Categoría</label>
+                {isAdmin && (
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => setShowCategoryManager(true)}
+                    style={{ fontSize: '0.75rem', padding: '2px 6px', gap: 4 }}>
+                    <Tags size={13} /> Gestionar
+                  </button>
+                )}
+              </div>
               <select
                 className="form-select"
                 value={categoryId}
@@ -192,6 +223,31 @@ export default function Gastos() {
                 <option value="">Selecciona...</option>
                 {categories.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <label className="form-label" style={{ margin: 0 }}>
+                  Proveedor <span style={{ color: 'var(--color-text-secondary)', fontWeight: 400 }}>(opcional)</span>
+                </label>
+                {isAdmin && (
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => setShowSupplierManager(true)}
+                    style={{ fontSize: '0.75rem', padding: '2px 6px', gap: 4 }}>
+                    <Truck size={13} /> Gestionar
+                  </button>
+                )}
+              </div>
+              <select
+                className="form-select"
+                value={supplierId}
+                onChange={e => setSupplierId(e.target.value)}
+              >
+                <option value="">— Sin proveedor —</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
             </div>
@@ -303,6 +359,13 @@ export default function Gastos() {
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+              <div className="form-group" style={{ margin: 0, minWidth: 160 }}>
+                <label className="form-label">Proveedor</label>
+                <select className="form-select" value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}>
+                  <option value="">Todos</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
               <button className="btn btn-secondary" onClick={loadExpenses}>Filtrar</button>
             </div>
           )}
@@ -373,8 +436,13 @@ export default function Gastos() {
                         </span>
                       )}
                     </div>
-                    <div style={{ marginTop: 4, fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
-                      {formatDate(expense.created_at)} · {expense.seller_name}
+                    <div style={{ marginTop: 4, fontSize: '0.8rem', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span>{formatDate(expense.created_at)} · {expense.seller_name}</span>
+                      {expense.supplier_name && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          · <Truck size={12} /> {expense.supplier_name}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -412,6 +480,24 @@ export default function Gastos() {
           )}
         </div>
       </div>
+
+      {/* Gestor de categorías (admin) */}
+      {showCategoryManager && (
+        <CategoryManagerModal
+          categories={categories}
+          onClose={() => setShowCategoryManager(false)}
+          onReload={loadCategories}
+        />
+      )}
+
+      {/* Gestor de proveedores (admin) */}
+      {showSupplierManager && (
+        <SupplierManagerModal
+          suppliers={suppliers}
+          onClose={() => setShowSupplierManager(false)}
+          onReload={loadSuppliers}
+        />
+      )}
 
       {/* Modal preview foto */}
       {previewPhoto && (

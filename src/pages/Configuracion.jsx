@@ -9,24 +9,49 @@ import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatDate } from '../utils/formatters';
 import { hexToRgba } from '../utils/verticals';
-import { Settings, Download, Clock, Shield, Sliders, Store } from 'lucide-react';
+import {
+  Settings, Download, Clock, Shield, Sliders, Store, Upload, Trash2, Check,
+  CakeSlice, ClipboardList, Refrigerator, ChefHat, Utensils, Scale, Barcode, Wine, Printer,
+} from 'lucide-react';
 
-const CAPABILITY_LABELS = {
-  showcase: 'Vitrina (venta por trozo)',
-  freshness: 'Control de frescura',
-  orders: 'Pedidos / encargos',
-  cooler_stock: 'Control de stock',
-  recipes: 'Recetas e insumos',
-  tables: 'Mesas / comandas',
-  weight_sale: 'Venta por peso',
-  barcode: 'Código de barras',
-  age_restriction: 'Alerta venta de alcohol',
-};
+function resizeImage(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const maxSize = 256;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > maxSize) { h = (h * maxSize) / w; w = maxSize; } }
+        else { if (h > maxSize) { w = (w * maxSize) / h; h = maxSize; } }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+const MODULES = [
+  { key: 'showcase', label: 'Vitrina (venta por trozo)', description: 'Vende tortas enteras o por trozo desde la vitrina', Icon: CakeSlice },
+  { key: 'freshness', label: 'Control de frescura', description: 'Alertas de vencimiento por horas en vitrina', Icon: Clock },
+  { key: 'orders', label: 'Pedidos / encargos', description: 'Encargos con abono, saldo y fecha de entrega', Icon: ClipboardList },
+  { key: 'cooler_stock', label: 'Control de stock', description: 'Stock físico numérico (bebidas, visicooler)', Icon: Refrigerator },
+  { key: 'recipes', label: 'Recetas e insumos', description: 'Ingredientes y descuento por receta', Icon: ChefHat },
+  { key: 'tables', label: 'Mesas / comandas', description: 'Gestión de mesas y comandas de salón', Icon: Utensils },
+  { key: 'weight_sale', label: 'Venta por peso', description: 'Productos vendidos por kilo o gramaje', Icon: Scale },
+  { key: 'barcode', label: 'Código de barras', description: 'Escaneo de productos en el POS', Icon: Barcode },
+  { key: 'age_restriction', label: 'Alerta venta de alcohol', description: 'Confirmación de mayoría de edad (18+)', Icon: Wine },
+];
 
 export default function Configuracion() {
   const toast = useToast();
   const { currentSeller } = useSeller();
   const { profile, refresh } = useConfig();
+  const [testingPrint, setTestingPrint] = useState(false);
   const [activeTab, setActiveTab] = useState('backup');
   const [auditLogs, setAuditLogs] = useState([]);
   const [backupPath, setBackupPath] = useState('');
@@ -49,6 +74,13 @@ export default function Configuracion() {
       setPalette(profile.palette);
     }
   }, [activeTab, profile]);
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await resizeImage(file);
+    setBranding(prev => ({ ...prev, logo: dataUrl }));
+  };
 
   const handleSaveProfile = async () => {
     setSavingProfile(true);
@@ -87,6 +119,33 @@ export default function Configuracion() {
       toast.error('Error al guardar configuración: ' + err.message);
     } finally {
       setSavingParam(false);
+    }
+  };
+
+  const handleSavePrinting = async () => {
+    setSavingParam(true);
+    try {
+      await api.put('/config/auto_print', { value: configParams.auto_print === 'true' ? 'true' : 'false' });
+      await api.put('/config/printer_name', { value: configParams.printer_name || 'POS-80' });
+      await api.put('/config/print_logo', { value: configParams.print_logo === 'true' ? 'true' : 'false' });
+      await refresh();
+      toast.success('Configuración de impresión guardada');
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
+    } finally {
+      setSavingParam(false);
+    }
+  };
+
+  const handleTestPrint = async () => {
+    setTestingPrint(true);
+    try {
+      await api.post('/print/test');
+      toast.success('Ticket de prueba enviado a la impresora');
+    } catch (err) {
+      toast.error('No se pudo imprimir: ' + err.message);
+    } finally {
+      setTestingPrint(false);
     }
   };
 
@@ -145,6 +204,55 @@ export default function Configuracion() {
                   onChange={e => setBranding({ ...branding, tagline: e.target.value })} />
               </div>
               <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                <div className="form-group" style={{ flex: 2 }}>
+                  <label className="form-label">Dirección <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)' }}>(boleta)</span></label>
+                  <input className="form-input" value={branding.address || ''}
+                    onChange={e => setBranding({ ...branding, address: e.target.value })} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">Teléfono</label>
+                  <input className="form-input" value={branding.phone || ''}
+                    onChange={e => setBranding({ ...branding, phone: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">RUT</label>
+                  <input className="form-input" value={branding.rut || ''}
+                    onChange={e => setBranding({ ...branding, rut: e.target.value })} />
+                </div>
+                <div className="form-group" style={{ flex: 2 }}>
+                  <label className="form-label">Mensaje al pie de boleta</label>
+                  <input className="form-input" value={branding.receipt_footer || ''}
+                    placeholder="¡Gracias por su compra!"
+                    onChange={e => setBranding({ ...branding, receipt_footer: e.target.value })} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Logo del negocio</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                  <div style={{ width: 64, height: 64, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                    {branding.logo
+                      ? <img src={branding.logo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      : <span style={{ fontSize: '1.8rem' }}>{branding.emoji || '🏪'}</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+                      <Upload size={14} /> {branding.logo ? 'Cambiar' : 'Subir logo'}
+                      <input type="file" accept="image/*" hidden onChange={handleLogoUpload} />
+                    </label>
+                    {branding.logo && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => setBranding({ ...branding, logo: null })} style={{ color: 'var(--color-danger)' }}>
+                        <Trash2 size={14} /> Quitar
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                  Si subes un logo, reemplaza al emoji en la barra lateral.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
                 <div className="form-group" style={{ flex: 1 }}>
                   <label className="form-label">Emoji / logo</label>
                   <input className="form-input" value={branding.emoji || ''} maxLength={4}
@@ -180,18 +288,32 @@ export default function Configuracion() {
               </div>
 
               <div>
-                <label className="form-label" style={{ fontWeight: 600, marginBottom: 'var(--space-xs)', display: 'block' }}>
+                <label className="form-label" style={{ fontWeight: 600, marginBottom: 2, display: 'block' }}>
                   Módulos activos
                 </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
-                  {Object.keys(CAPABILITY_LABELS).map(key => (
-                    <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={!!caps[key]}
-                        onChange={e => setCaps({ ...caps, [key]: e.target.checked })}
-                        style={{ width: 18, height: 18, cursor: 'pointer' }} />
-                      <span>{CAPABILITY_LABELS[key]}</span>
-                    </label>
-                  ))}
+                <p style={{ marginBottom: 'var(--space-sm)', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                  Activa solo lo que usa tu negocio. Cada módulo enciende su sección en el menú y su lógica en el POS.
+                </p>
+                <div className="cap-grid">
+                  {MODULES.map(({ key, label, description, Icon }) => {
+                    const active = !!caps[key];
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`cap-card ${active ? 'active' : ''}`}
+                        aria-pressed={active}
+                        onClick={() => setCaps(prev => ({ ...prev, [key]: !prev[key] }))}
+                      >
+                        <span className="cap-card-icon"><Icon size={20} /></span>
+                        <span className="cap-card-text">
+                          <span className="cap-card-label">{label}</span>
+                          <span className="cap-card-desc">{description}</span>
+                        </span>
+                        <span className="cap-card-check">{active ? <Check size={14} strokeWidth={3} /> : null}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -225,6 +347,54 @@ export default function Configuracion() {
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   Tiempo antes de cumplirse el límite de frescura para alertar sobre el vencimiento en vitrina (por defecto 24 horas).
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Printer size={16} /> Impresión de boletas (térmica)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', margin: 'var(--space-sm) 0' }}>
+                  <input
+                    type="checkbox"
+                    checked={configParams.auto_print === 'true'}
+                    onChange={(e) => setConfigParams({ ...configParams, auto_print: e.target.checked ? 'true' : 'false' })}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.9rem' }}>Imprimir la boleta automáticamente al completar una venta</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', margin: 'var(--space-sm) 0' }}>
+                  <input
+                    type="checkbox"
+                    checked={configParams.print_logo === 'true'}
+                    onChange={(e) => setConfigParams({ ...configParams, print_logo: e.target.checked ? 'true' : 'false' })}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.9rem' }}>Imprimir el logo del negocio en la boleta</span>
+                </label>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', margin: '0 0 var(--space-sm) 26px' }}>
+                  Usa el logo cargado en la pestaña <strong>Negocio</strong>. Funciona mejor con logos simples en blanco y negro.
+                </p>
+                <label className="form-label" style={{ fontSize: '0.85rem', display: 'block', marginTop: 'var(--space-sm)' }}>
+                  Nombre de la impresora (en Windows)
+                </label>
+                <input
+                  className="form-input"
+                  value={configParams.printer_name ?? ''}
+                  placeholder="POS-80"
+                  onChange={(e) => setConfigParams({ ...configParams, printer_name: e.target.value })}
+                  style={{ maxWidth: 280 }}
+                />
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+                  <button className="btn btn-primary" onClick={handleSavePrinting} disabled={savingParam}>
+                    Guardar
+                  </button>
+                  <button className="btn btn-secondary" onClick={handleTestPrint} disabled={testingPrint}>
+                    {testingPrint ? <><span className="spinner spinner-sm" /> Imprimiendo...</> : <><Printer size={16} /> Probar impresora</>}
+                  </button>
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  El botón "Imprimir Ticket" de cada venta sigue disponible para reimprimir manualmente.
                 </p>
               </div>
             </div>

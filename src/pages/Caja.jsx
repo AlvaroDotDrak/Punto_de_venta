@@ -67,6 +67,8 @@ export default function Caja() {
   const toast = useToast();
   const { currentSeller } = useSeller();
   const isAdmin = currentSeller?.role === 'admin';
+  const canCloseCash = currentSeller?.role === 'admin' || currentSeller?.can_close_cash;
+  const canCashMovements = currentSeller?.role === 'admin' || currentSeller?.can_cash_movements;
 
   const [register,    setRegister]    = useState(null);
   const [loading,     setLoading]     = useState(true);
@@ -236,8 +238,8 @@ export default function Caja() {
   return (
     <div>
       <PageHeader view={view} setView={setView} register={register}
-        onMovement={() => setShowMovementModal(true)}
-        onClose={isAdmin ? () => { setShowCloseModal(true); } : null}
+        onMovement={canCashMovements ? () => setShowMovementModal(true) : null}
+        onClose={canCloseCash ? () => { setShowCloseModal(true); } : null}
       />
 
       <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>

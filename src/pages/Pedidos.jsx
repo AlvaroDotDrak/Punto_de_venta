@@ -491,7 +491,7 @@ export default function Pedidos() {
                   minHeight: 72, padding: 6,
                   borderRight: col < 6 ? '1px solid var(--color-border)' : 'none',
                   borderBottom: '1px solid var(--color-border)',
-                  background: isToday ? 'rgba(191,90,47,0.04)' : 'transparent',
+                  background: isToday ? 'rgba(var(--color-primary-rgb),0.04)' : 'transparent',
                 }}>
                   <div style={{
                     width: 24, height: 24, borderRadius: '50%', marginBottom: 4,

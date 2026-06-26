@@ -2,7 +2,7 @@
  * Ventas (POS) — Pastelería Tía Julia
  * V4.0: Premium Artisan Edition
  */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSeller } from '../context/SellerContext';
 import { useConfig } from '../context/ConfigContext';
 import { useToast } from '../context/ToastContext';
@@ -15,7 +15,7 @@ import ReceiptModal from '../components/Ventas/ReceiptModal';
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
-  const { categories, t, hasCapability } = useConfig();
+  const { categories, t, hasCapability, branding, printing } = useConfig();
   const toast = useToast();
 
   // Categorías derivadas de la configuración del rubro
@@ -58,6 +58,13 @@ export default function Ventas() {
   const [ageConfirmProduct, setAgeConfirmProduct] = useState(null);
   const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
 
+  // Escaneo global de código de barras: el lector "teclea" muy rápido y termina
+  // en Enter. Detectamos esa ráfaga aunque el foco no esté en la barra de búsqueda.
+  const scanBufferRef = useRef('');
+  const scanTimeRef = useRef(0);
+  const scanHandlerRef = useRef(null);
+  const scanBlockedRef = useRef(false);
+
   const loadData = async () => {
     try {
       const [prods, showcase] = await Promise.all([
@@ -72,6 +79,36 @@ export default function Ventas() {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  // Listener global del lector de barras (solo si el rubro lo soporta).
+  useEffect(() => {
+    if (!hasCapability('barcode')) return;
+    const SCAN_GAP_MS = 50; // umbral entre teclas: un humano es más lento
+    const handler = (e) => {
+      const el = e.target;
+      const tag = (el?.tagName || '').toLowerCase();
+      const isField = tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable;
+      // No interferir si se escribe en un campo o si hay un modal abierto
+      if (isField || scanBlockedRef.current) return;
+
+      const now = Date.now();
+      if (now - scanTimeRef.current > SCAN_GAP_MS) scanBufferRef.current = '';
+      scanTimeRef.current = now;
+
+      if (e.key === 'Enter') {
+        const code = scanBufferRef.current.trim();
+        scanBufferRef.current = '';
+        if (code.length >= 3) {
+          e.preventDefault();
+          scanHandlerRef.current?.(code);
+        }
+        return;
+      }
+      if (e.key.length === 1) scanBufferRef.current += e.key;
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [hasCapability]);
 
   // stockMap: productId → { enteros, trozos, total }
   const stockMap = useMemo(() => {
@@ -167,6 +204,14 @@ export default function Ventas() {
     proceedAddProduct(product);
   };
 
+  // Mantener actualizados los refs que usa el listener global de escaneo
+  scanBlockedRef.current = !!(showPayment || showReceipt || showTypeModal || weightProduct || ageConfirmProduct);
+  scanHandlerRef.current = (code) => {
+    const match = products.find(p => p.barcode && p.barcode === code);
+    if (match) handleProductClick(match);
+    else toast.error(`Código no encontrado: ${code}`);
+  };
+
   const updateQuantity = (product_id, product_name, delta) => {
     setCart(prev => prev.map(i => {
       if (i.product_id !== product_id || i.product_name !== product_name) return i;
@@ -220,6 +265,15 @@ export default function Ventas() {
       setHasReceipt(false);
       setShowReceipt(true);
       toast.success(`Venta #${sale.id} completada — ${formatCurrency(cartTotal)}`);
+
+      // Impresión automática de la boleta (si está activada en Configuración)
+      if (printing?.auto_print) {
+        api.post('/print/receipt', {
+          sale_id: sale.id,
+          cash_received: paymentMethod === 'efectivo' ? (parseInt(cashReceived) || 0) : null,
+        }).catch(err => toast.error('No se pudo imprimir la boleta: ' + err.message));
+      }
+
       loadData(); // refrescar stock
     } catch (err) {
       toast.error('Error al registrar la venta: ' + err.message);
@@ -237,7 +291,7 @@ export default function Ventas() {
             <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
               <div className="search-bar" style={{ flex: 1, minWidth: 260 }}>
                 <Search className="search-icon" size={18} />
-                <input type="text" placeholder={hasCapability('barcode') ? "Buscar o escanea código..." : "Buscar delicias..."}
+                <input type="text" placeholder={hasCapability('barcode') ? "Buscar o escanea código..." : "Buscar producto..."}
                   value={search} onChange={e => setSearch(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key !== 'Enter') return;
@@ -365,7 +419,7 @@ export default function Ventas() {
                     {product.photo ? (
                       <img src={product.photo} alt={product.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
-                      <span style={{ fontSize: '2.8rem', opacity: 0.8 }}>{categoryEmoji[product.category] || '🍞'}</span>
+                      <span style={{ fontSize: '2.8rem', opacity: 0.8 }}>{categoryEmoji[product.category] || branding?.emoji || '🛒'}</span>
                     )}
                     
                     {showcaseStock && showcaseStock.total > 0 && (
@@ -443,7 +497,7 @@ export default function Ventas() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   padding: '0 6px',
-                  boxShadow: '0 4px 12px rgba(191, 90, 47, 0.4)'
+                  boxShadow: '0 4px 12px rgba(var(--color-primary-rgb), 0.4)'
                 }}>{cartCount}</span>
               )}
             </h3>
@@ -467,9 +521,9 @@ export default function Ventas() {
                 fontSize: '2.5rem',
                 marginBottom: 'var(--space-lg)',
                 boxShadow: 'var(--shadow-inset)'
-              }}>🥧</div>
+              }}>{branding?.emoji || '🛒'}</div>
               <p className="text-display" style={{ fontSize: '1.2rem', color: 'var(--color-text)', marginBottom: 8 }}>Tu pedido está vacío</p>
-              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', maxWidth: '220px', lineHeight: 1.5 }}>Selecciona delicias de la izquierda para comenzar la venta.</p>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', maxWidth: '220px', lineHeight: 1.5 }}>Selecciona productos de la izquierda para comenzar la venta.</p>
             </div>
           ) : (
             <div className="pos-cart-items" style={{ padding: '0 var(--space-md)' }}>
@@ -517,7 +571,7 @@ export default function Ventas() {
                 height: 64,
                 fontSize: '1.2rem',
                 borderRadius: 'var(--radius-lg)',
-                boxShadow: '0 12px 32px rgba(191, 90, 47, 0.4)',
+                boxShadow: '0 12px 32px rgba(var(--color-primary-rgb), 0.4)',
                 textTransform: 'uppercase',
                 letterSpacing: '1px'
               }}>

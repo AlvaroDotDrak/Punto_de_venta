@@ -234,7 +234,7 @@ def void_sale(
     sale_id: int,
     payload: VoidSaleRequest,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    seller=Depends(require_permission("can_void_sales")),
 ):
     if len(payload.reason) < 10:
         raise HTTPException(status_code=422, detail="La razón debe tener al menos 10 caracteres")
@@ -277,7 +277,7 @@ def void_sale(
         ))
 
     db.commit()
-    log_action(db, ACTIONS.VOID_SALE, admin.id, f"Venta #{sale_id} anulada: {payload.reason}")
+    log_action(db, ACTIONS.VOID_SALE, seller.id, f"Venta #{sale_id} anulada: {payload.reason}")
 
     return db.query(Sale).options(
         joinedload(Sale.items), joinedload(Sale.seller)

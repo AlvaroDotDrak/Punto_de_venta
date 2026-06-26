@@ -7,7 +7,7 @@ import { useSeller } from '../../context/SellerContext';
 import { useConfig } from '../../context/ConfigContext';
 import api from '../../utils/api';
 import { getFreshnessStatus } from '../../utils/formatters';
-import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat, Thermometer, TrendingDown, BookOpen, FileText } from 'lucide-react';
+import { ShoppingCart, Store, DollarSign, ClipboardList, Package, BarChart3, Settings, X, History, Users, Wheat, Thermometer, TrendingDown, BookOpen, FileText, ShoppingBag } from 'lucide-react';
 
 // Cada ítem puede declarar `capability` (se oculta si el rubro no la tiene) y/o
 // `termKey` (etiqueta adaptable por rubro vía terminología).
@@ -26,6 +26,7 @@ const navItems = [
   { path: '/historial', label: 'Historial Ventas', icon: History, permission: 'can_access_historial' },
   { section: 'Contabilidad' },
   { path: '/gastos', label: 'Gastos', icon: TrendingDown },
+  { path: '/compras', label: 'Compras', icon: ShoppingBag, adminOnly: true },
   { path: '/contabilidad', label: 'Contabilidad', icon: BookOpen, adminOnly: true },
   { path: '/facturas', label: 'Facturas', icon: FileText, adminOnly: true },
   { section: 'Sistema' },
@@ -77,7 +78,11 @@ export default function Sidebar({ open, onClose }) {
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`}>
       <div className="sidebar-brand">
-        <div className="sidebar-brand-icon">{branding?.emoji || '🧁'}</div>
+        <div className="sidebar-brand-icon" style={branding?.logo ? { background: '#fff', padding: 3 } : undefined}>
+          {branding?.logo
+            ? <img src={branding.logo} alt={branding.name || 'Logo'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            : (branding?.emoji || '🧁')}
+        </div>
         <div className="sidebar-brand-text">
           <h2 className="text-display" style={{ fontSize: '1.2rem' }}>{branding?.name || 'Punto de Venta'}</h2>
           <span style={{ fontSize: '0.65rem', letterSpacing: '1px' }}>{branding?.tagline || ''}</span>

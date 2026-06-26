@@ -23,6 +23,7 @@ import Vendedores from './pages/Vendedores';
 import SellerSelect from './pages/SellerSelect';
 import SetupWizard from './pages/SetupWizard';
 import Gastos from './pages/Gastos';
+import Compras from './pages/Compras';
 import Contabilidad from './pages/Contabilidad';
 import Facturas from './pages/Facturas';
 import DailyCashCheckModal from './components/DailyCashCheckModal';
@@ -182,6 +183,7 @@ export default function App() {
             <Route path="/caja" element={<Caja />} />
 
             <Route path="/gastos" element={<Gastos />} />
+            <Route path="/compras" element={<AdminRoute><Compras /></AdminRoute>} />
             <Route path="/contabilidad" element={<AdminRoute><Contabilidad /></AdminRoute>} />
             <Route path="/facturas" element={<AdminRoute><Facturas /></AdminRoute>} />
 

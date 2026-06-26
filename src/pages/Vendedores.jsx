@@ -16,7 +16,20 @@ const emptyForm = {
   active: true,
   products_access: 'none',
   can_access_insumos: false,
-  can_access_historial: false 
+  can_access_historial: false,
+  can_void_sales: false,
+  can_close_cash: false,
+  can_cash_movements: false,
+  can_view_costs: false
+};
+
+const PERMISSION_PRESETS = {
+  cajero: { products_access: 'none', can_access_insumos: false, can_access_historial: false,
+    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: false },
+  encargado: { products_access: 'view', can_access_insumos: false, can_access_historial: true,
+    can_void_sales: true, can_close_cash: true, can_cash_movements: true, can_view_costs: false },
+  bodeguero: { products_access: 'full', can_access_insumos: true, can_access_historial: false,
+    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: true },
 };
 
 export default function Vendedores() {
@@ -63,7 +76,11 @@ export default function Vendedores() {
           active: form.active,
           products_access: form.products_access,
           can_access_insumos: form.can_access_insumos,
-          can_access_historial: form.can_access_historial
+          can_access_historial: form.can_access_historial,
+          can_void_sales: form.can_void_sales,
+          can_close_cash: form.can_close_cash,
+          can_cash_movements: form.can_cash_movements,
+          can_view_costs: form.can_view_costs
         };
         if (form.pin) patch.pin = form.pin;
         await api.patch(`/sellers/${editingId}`, patch);
@@ -88,7 +105,11 @@ export default function Vendedores() {
       active: seller.active,
       products_access: seller.products_access || 'none',
       can_access_insumos: !!seller.can_access_insumos,
-      can_access_historial: !!seller.can_access_historial
+      can_access_historial: !!seller.can_access_historial,
+      can_void_sales: !!seller.can_void_sales,
+      can_close_cash: !!seller.can_close_cash,
+      can_cash_movements: !!seller.can_cash_movements,
+      can_view_costs: !!seller.can_view_costs
     });
     setShowForm(true);
   };
@@ -214,6 +235,20 @@ export default function Vendedores() {
                   <h3 className="section-title" style={{ fontSize: '1rem', marginBottom: 'var(--space-sm)' }}>Permisos adicionales</h3>
                   
                   <div className="form-group">
+                    <label className="form-label">Plantilla rápida</label>
+                    <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                      {[['cajero','Cajero'],['encargado','Encargado'],['bodeguero','Bodeguero']].map(([k,lbl]) => (
+                        <button key={k} type="button" className="btn btn-secondary btn-sm"
+                          onClick={() => setForm(prev => ({ ...prev, ...PERMISSION_PRESETS[k] }))}>{lbl}</button>
+                      ))}
+                    </div>
+                    <small style={{ color: 'var(--color-text-light)' }}>
+                      Aplica un set de permisos; podés ajustarlos abajo.
+                    </small>
+                  </div>
+
+                  <h4 className="section-title" style={{ marginTop: 'var(--space-md)', fontSize: '0.9rem' }}>Inventario</h4>
+                  <div className="form-group">
                     <label className="form-label">Productos</label>
                     <select className="form-input" value={form.products_access} onChange={e => updateField('products_access', e.target.value)}>
                       <option value="none">Sin acceso</option>
@@ -221,15 +256,33 @@ export default function Vendedores() {
                       <option value="full">Editar</option>
                     </select>
                   </div>
-
                   <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <input type="checkbox" id="can_access_insumos" checked={form.can_access_insumos} onChange={e => updateField('can_access_insumos', e.target.checked)} />
                     <label htmlFor="can_access_insumos" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Acceso a Insumos</label>
                   </div>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_view_costs" checked={form.can_view_costs} onChange={e => updateField('can_view_costs', e.target.checked)} />
+                    <label htmlFor="can_view_costs" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Ver costos y márgenes</label>
+                  </div>
 
+                  <h4 className="section-title" style={{ marginTop: 'var(--space-md)', fontSize: '0.9rem' }}>Caja</h4>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_close_cash" checked={form.can_close_cash} onChange={e => updateField('can_close_cash', e.target.checked)} />
+                    <label htmlFor="can_close_cash" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Cerrar caja</label>
+                  </div>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_cash_movements" checked={form.can_cash_movements} onChange={e => updateField('can_cash_movements', e.target.checked)} />
+                    <label htmlFor="can_cash_movements" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Ingresos/retiros de caja</label>
+                  </div>
+
+                  <h4 className="section-title" style={{ marginTop: 'var(--space-md)', fontSize: '0.9rem' }}>Ventas</h4>
                   <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <input type="checkbox" id="can_access_historial" checked={form.can_access_historial} onChange={e => updateField('can_access_historial', e.target.checked)} />
                     <label htmlFor="can_access_historial" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Acceso a Historial</label>
+                  </div>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_void_sales" checked={form.can_void_sales} onChange={e => updateField('can_void_sales', e.target.checked)} />
+                    <label htmlFor="can_void_sales" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Anular ventas</label>
                   </div>
                 </div>
               )}

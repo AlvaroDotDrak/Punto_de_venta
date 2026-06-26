@@ -8,7 +8,7 @@ import { useSeller } from '../context/SellerContext';
 import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw } from 'lucide-react';
+import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw, Barcode } from 'lucide-react';
 import ProductStatsModal from '../components/ProductStatsModal';
 import RecipeModal from '../components/Productos/RecipeModal';
 
@@ -40,6 +40,7 @@ export default function Productos() {
   const { currentSeller } = useSeller();
   const { categories, hasCapability } = useConfig();
   const canEdit = currentSeller?.role === 'admin' || currentSeller?.products_access === 'full';
+  const canViewCosts = currentSeller?.role === 'admin' || currentSeller?.can_view_costs;
 
   const categoryEmoji = useMemo(
     () => Object.fromEntries(categories.map(c => [c.value, c.emoji])),
@@ -52,6 +53,7 @@ export default function Productos() {
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const barcodeInputRef = useRef(null);
 
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
@@ -218,6 +220,7 @@ export default function Productos() {
                 <strong className="product-price">{formatCurrency(p.price)}</strong>
               </div>
               {(() => {
+                if (!canViewCosts) return null;
                 const cost = p.cost_per_unit;
                 if (!cost || !p.price) return null;
                 const margin = Math.round(((p.price - cost) / p.price) * 100);
@@ -247,6 +250,11 @@ export default function Productos() {
               {isStockCat(p.category) && p.stock != null && (
                 <small style={{ color: p.stock > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                   Stock: {p.sold_by === 'weight' ? `${p.stock} kg` : `${p.stock} unidades`}
+                </small>
+              )}
+              {hasCapability('barcode') && p.barcode && (
+                <small style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--color-text-light)', fontFamily: 'monospace', marginTop: 4 }}>
+                  <Barcode size={13} /> {p.barcode}
                 </small>
               )}
             </div>
@@ -320,9 +328,21 @@ export default function Productos() {
                 {hasCapability('barcode') && (
                   <div className="form-group">
                     <label className="form-label">Código de barras</label>
-                    <input className="form-input" value={form.barcode}
-                      onChange={e => updateField('barcode', e.target.value)}
-                      placeholder="Escanea o escribe el código" />
+                    <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                      <div style={{ position: 'relative', flex: 1 }}>
+                        <Barcode size={18} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-secondary)', pointerEvents: 'none' }} />
+                        <input ref={barcodeInputRef} className="form-input" value={form.barcode}
+                          onChange={e => updateField('barcode', e.target.value)}
+                          placeholder="Escanea o escribe el código"
+                          style={{ paddingLeft: 38, fontFamily: 'monospace' }} />
+                      </div>
+                      <button type="button" className="btn btn-secondary" onClick={() => barcodeInputRef.current?.focus()}>
+                        <Barcode size={16} /> Escanear
+                      </button>
+                    </div>
+                    <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                      Haz clic en <strong>Escanear</strong> y pasa el lector por el producto; el código se llena solo.
+                    </p>
                   </div>
                 )}
   
@@ -416,7 +436,7 @@ export default function Productos() {
                 </div>
               )}
 
-              {(isStockCat(form.category) || form.category === 'cafe') && (
+              {canViewCosts && (isStockCat(form.category) || form.category === 'cafe') && (
                 <div className="form-group">
                   <label className="form-label">Precio de costo (compra)</label>
                   <input className="form-input form-input-price" type="number" min="0" step="100"

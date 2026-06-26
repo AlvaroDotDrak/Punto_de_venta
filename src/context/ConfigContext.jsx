@@ -5,7 +5,7 @@
  */
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
-import { DEFAULT_PROFILE, hexToRgba } from '../utils/verticals';
+import { DEFAULT_PROFILE, hexToRgba, hexToRgbTriplet, darkenHex } from '../utils/verticals';
 
 const ConfigContext = createContext();
 
@@ -45,6 +45,12 @@ export function ConfigProvider({ children }) {
     root.setProperty('--color-primary-bg', hexToRgba(c.primary, 0.07));
     root.setProperty('--color-border-focus', c.primary);
     root.setProperty('--color-accent', c.accent);
+    // Tripletes para que los glows/sombras (rgba(var(--color-primary-rgb), α)) sigan la paleta
+    root.setProperty('--color-primary-rgb', hexToRgbTriplet(c.primary));
+    root.setProperty('--color-primary-light-rgb', hexToRgbTriplet(c.primary_light));
+    root.setProperty('--color-primary-dark-rgb', hexToRgbTriplet(c.primary_dark));
+    // Sidebar (y cajas oscuras) tintadas con el matiz del rubro, manteniéndose oscuras
+    root.setProperty('--color-bg-sidebar', darkenHex(c.primary, 0.15));
   }, [profile?.colors, profile?.branding?.name]);
 
   const p = profile || DEFAULT_PROFILE;
@@ -69,6 +75,7 @@ export function ConfigProvider({ children }) {
       terminology: p.terminology,
       categories: p.product_categories,
       taxRate: p.tax_rate,
+      printing: p.printing,
       hasCapability,
       t,
       refresh,

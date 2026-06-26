@@ -55,6 +55,11 @@ def build_profile(db: Session) -> dict:
         c["age_restricted"] = preset_flags.get(c["value"], False)
     tax_rate = float(_get(db, "tax_rate") or 0.19)
     setup_complete = _get(db, "setup_complete") == "true"
+    printing = {
+        "auto_print": _get(db, "auto_print") == "true",
+        "printer_name": _get(db, "printer_name") or "POS-80",
+        "print_logo": _get(db, "print_logo") == "true",
+    }
     return {
         "business_type": business_type,
         "palette": palette_id,
@@ -66,6 +71,7 @@ def build_profile(db: Session) -> dict:
         "terminology": preset.get("terminology", {}),
         "tax_rate": tax_rate,
         "setup_complete": setup_complete,
+        "printing": printing,
     }
 
 

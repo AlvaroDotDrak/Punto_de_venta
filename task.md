@@ -1,147 +1,241 @@
-# Tarea: Mejoras de backend (refactor + índices + SQLite pragmas)
+# Tarea: Permisos granulares de vendedores + plantillas de rol (presets)
 
-Tres tareas independientes de backend. No tocar frontend ni crear migraciones de columnas nuevas.
+Ampliar el sistema de permisos de `seller`. Hoy un seller solo tiene:
+`products_access` (none/view/full), `can_access_insumos`, `can_access_historial`.
+Se agregan **4 permisos nuevos** (acciones sensibles) y **plantillas de rol** para
+configurarlos rápido.
+
+La infraestructura ya existe: el helper genérico `require_permission(perm)` en
+`backend/auth.py` (línea ~122) admite cualquier columna booleana del seller y **siempre
+deja pasar al admin**. Aprovecharlo, no inventar nada nuevo.
+
+Permisos nuevos (todos booleanos, default `False`):
+
+| Permiso | Qué controla | Hoy |
+|---|---|---|
+| `can_void_sales` | Anular ventas | hardcodeado solo-admin |
+| `can_close_cash` | Cerrar la caja | hardcodeado solo-admin |
+| `can_cash_movements` | Ingresos/retiros de caja | **abierto a cualquiera** (se cierra el hueco) |
+| `can_view_costs` | Ver precio de costo y márgenes | visible para cualquiera con acceso a Productos |
+
+> **NO incluir descuentos** (`can_discount`): la función de descuentos en el POS no existe
+> todavía, así que no hay nada que permisar. Queda para otra tarea.
 
 ---
 
-## Tarea 1 — Extraer `compute_cost_per_unit` a `utils.py`
+## Reglas (OBLIGATORIAS — leer antes de tocar nada)
 
-La lógica de cálculo de costo unitario está **duplicada** en `products.py` y `accounting.py`. Hay que extraerla a una función compartida en `backend/utils.py` y reemplazar los dos usos.
+1. **No hacer commit.** Implementar, correr `npm run build`, verificar y reportar. Claude Code revisa y commitea.
+2. **Trabajar en `master` directamente.** No crear branches.
+3. **Tras cualquier cambio de frontend, correr `npm run build`.** **Nunca editar `dist/` a mano.**
+4. **Migraciones:** columnas nuevas SOLO con `_add_column_if_missing(...)` dentro de
+   `_run_migrations()` en `backend/main.py`. Nunca borrar ni recrear tablas.
+5. **Backend:** usar `datetime.now()`, nunca `datetime.utcnow()`.
+6. **Regresión cero para admin:** el admin debe seguir pudiendo hacer TODO. `require_permission`
+   ya deja pasar al admin; verificar que así sea en cada endpoint tocado.
+7. **No agregar comentarios** salvo que el WHY sea no obvio.
+8. **Convenciones:** camelCase en español (frontend), snake_case (backend), seguir la estructura existente.
+9. **Solo editar los archivos listados** en cada fase.
 
-### 1.1 Agregar función en `backend/utils.py`
+---
 
-Al final del archivo, agregar:
+## FASE 1 — Backend
 
+### 1.1. Columnas nuevas en `Seller`
+
+**`backend/models.py`** — en la clase `Seller`, después de `can_access_historial`:
 ```python
-def compute_cost_per_unit(product, showcase_type: str | None = None) -> float | None:
-    """
-    Calcula el costo unitario de un producto.
-    - Con receta: suma (last_price × quantity) de ingredientes / yield_qty
-    - Sin receta: usa cost_price directo
-    - showcase_type='trozado': divide el costo base entre product.slices
-    """
-    if product.recipes:
-        ingredient_cost = sum(
-            r.ingredient.last_price * r.quantity
-            for r in product.recipes if r.ingredient and r.ingredient.last_price
-        )
-        yield_qty = product.recipes[0].yield_qty if product.recipes else None
-        if not yield_qty or yield_qty <= 0:
-            return None
-        base_cost = ingredient_cost / yield_qty
-        if showcase_type == "trozado" and product.slices and product.slices > 0:
-            return round(base_cost / product.slices, 2)
-        return round(base_cost, 2)
-    if product.cost_price is not None:
-        return product.cost_price
-    return None
+    can_void_sales = Column(Boolean, default=False)
+    can_close_cash = Column(Boolean, default=False)
+    can_cash_movements = Column(Boolean, default=False)
+    can_view_costs = Column(Boolean, default=False)
 ```
 
-### 1.2 Reemplazar en `backend/routers/products.py`
-
-Agregar import al inicio del archivo (junto a los demás imports de `..`):
+**`backend/main.py`** — dentro de `_run_migrations()`, junto a las migraciones de `sellers`
+existentes (`can_access_insumos`, `can_access_historial`):
 ```python
-from ..utils import calculate_recipe_fraction, compute_cost_per_unit
+        # permisos granulares de vendedores
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_void_sales BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_close_cash BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_cash_movements BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_view_costs BOOLEAN DEFAULT 0")
 ```
 
-Reemplazar el bloque de cálculo inline (líneas ~34-40):
-```python
-        # ANTES — eliminar esto:
-        cost_per_unit = None
-        if p.recipes:
-            total = sum(r.ingredient.last_price * r.quantity for r in p.recipes if r.ingredient)
-            yield_qty = p.recipes[0].yield_qty
-            cost_per_unit = round(total / yield_qty, 2) if yield_qty > 0 else None
-        elif p.cost_price is not None:
-            cost_per_unit = p.cost_price
+### 1.2. Schemas
 
-        # DESPUÉS — reemplazar con:
+**`backend/schemas.py`** — agregar los 4 campos:
+- En `SellerUpdate` (todos `Optional[bool] = None`, junto a `can_access_historial`).
+- En `SellerOut` (todos `bool`, junto a `can_access_historial`).
+
+> No tocar `SellerCreate`: los permisos se asignan al editar, igual que hoy con
+> `products_access`/`can_access_*`.
+
+### 1.3. Gating en endpoints
+
+**`backend/routers/sales.py`** — endpoint `void_sale` (línea ~233). Cambiar la dependencia
+`admin=Depends(require_admin)` por:
+```python
+    seller=Depends(require_permission("can_void_sales")),
+```
+Renombrar el parámetro `admin` → `seller` y actualizar cualquier uso dentro de la función
+(p. ej. `admin.id` en el `log_action` → `seller.id`). Importar `require_permission` si no
+está ya en el import de `..auth`.
+
+**`backend/routers/cash.py`**:
+- `close_register` (línea ~172): cambiar `admin=Depends(require_admin)` por
+  `seller=Depends(require_permission("can_close_cash"))` y actualizar usos de `admin`
+  dentro de la función (→ `seller`).
+- `add_movement` (línea ~214): cambiar `seller=Depends(get_current_seller)` por
+  `seller=Depends(require_permission("can_cash_movements"))`.
+- Ajustar el import de `..auth` para incluir `require_permission` (hoy importa
+  `get_current_seller, require_admin`). Dejar `require_admin`/`get_current_seller` si otros
+  endpoints del archivo los siguen usando.
+
+**`backend/routers/products.py`** — ocultar costos a quien no tenga `can_view_costs`.
+En `list_products`, ya se arma `p_dict` por producto. Resolver una vez antes del loop si el
+seller puede ver costos, y si no, anular los campos de costo:
+```python
+def list_products(
+    active_only: bool = True,
+    db: Session = Depends(get_db),
+    seller=Depends(get_current_seller),
+):
+    ...
+    can_see_costs = seller.role == "admin" or seller.can_view_costs
+    ...
+    for p in products:
+        p_dict = {**p.__dict__}
+        p_dict["has_recipe"] = len(p.recipes) > 0
         cost_per_unit = compute_cost_per_unit(p)
+        p_dict["cost_per_unit"] = cost_per_unit if can_see_costs else None
+        if not can_see_costs:
+            p_dict["cost_price"] = None
+        p_dict["units_sold"] = units_sold_map.get(p.id, 0)
+        result.append(p_dict)
 ```
-
-### 1.3 Reemplazar en `backend/routers/accounting.py`
-
-Agregar import:
-```python
-from ..utils import calculate_vat, compute_cost_per_unit
-```
-
-En la función `get_profitability` (líneas ~462-477), reemplazar el bloque de cálculo inline:
-```python
-        # ANTES — eliminar esto:
-        cost_per_unit = None
-        if product.recipes:
-            ingredient_cost = sum(
-                r.ingredient.last_price * r.quantity
-                for r in product.recipes if r.ingredient
-            )
-            yield_qty = product.recipes[0].yield_qty
-            if yield_qty and yield_qty > 0:
-                base_cost = ingredient_cost / yield_qty
-                if showcase_type == "trozado" and product.slices and product.slices > 0:
-                    cost_per_unit = round(base_cost / product.slices, 2)
-                else:
-                    cost_per_unit = round(base_cost, 2)
-        elif product.cost_price is not None:
-            cost_per_unit = product.cost_price
-
-        # DESPUÉS — reemplazar con:
-        cost_per_unit = compute_cost_per_unit(product, showcase_type)
-```
+(El parámetro hoy es `_=Depends(get_current_seller)`; renombrarlo a `seller=` para poder
+leer el permiso.)
 
 ---
 
-## Tarea 2 — Índices en SQLite
+## FASE 2 — Frontend: Productos (ocultar costos)
 
-Agregar índices en `backend/main.py`, dentro de `_run_migrations()`, **después** de la última línea existente de `_add_column_if_missing`. Los índices usan `CREATE INDEX IF NOT EXISTS` (no necesitan try/except).
+Los nuevos campos del seller ya fluyen al frontend vía `SellerOut` → `GET /me` →
+`currentSeller`, igual que `products_access`. No hace falta tocar contexto.
 
-```python
-        # Índices para consultas frecuentes (v2.8)
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_status ON sales(status)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_items_sale_id ON sale_items(sale_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_items_product_id ON sale_items(product_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_showcase_product_status ON showcase_items(product_id, status)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_sale_id ON ingredient_movements(sale_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_type ON ingredient_movements(type)"))
-        conn.commit()
+**`src/pages/Productos.jsx`**
+
+2.1. Calcular el permiso (junto a `canEdit`, línea ~42):
+```js
+  const canViewCosts = currentSeller?.role === 'admin' || currentSeller?.can_view_costs;
 ```
+
+2.2. Barra de margen (bloque IIFE en línea ~221, `const cost = p.cost_per_unit; ...`):
+envolver para que NO se muestre si `!canViewCosts`. Como el backend ya manda
+`cost_per_unit: null` en ese caso, el `if (!cost ...) return null` existente ya lo cubre,
+**pero** agregar también el guard explícito al inicio del IIFE por robustez:
+```js
+                if (!canViewCosts) return null;
+```
+
+2.3. Campo "Precio de costo (compra)" en el formulario (línea ~437,
+`{(isStockCat(form.category) || form.category === 'cafe') && (...)}`): añadir `canViewCosts &&`
+a la condición para que sellers sin permiso no vean ni editen el costo.
 
 ---
 
-## Tarea 3 — FK constraints y WAL mode en `backend/database.py`
+## FASE 3 — Frontend: gating de acciones (Caja + Historial)
 
-SQLite no aplica FK constraints por defecto, y el modo WAL mejora lecturas concurrentes. Agregar un event listener al engine.
-
-En `backend/database.py`, agregar el import y el listener **después** de crear el engine:
-
-```python
-from sqlalchemy import create_engine, event   # agregar 'event' al import existente
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
-
-DATABASE_URL = "sqlite:///./pasteleria.db"
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
-
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys = ON")
-    cursor.execute("PRAGMA journal_mode = WAL")
-    cursor.close()
+**`src/pages/HistorialVentas.jsx`** (LEER primero) — el botón/acción de anular venta debe
+mostrarse solo si el usuario puede. Donde hoy se decide mostrar "Anular" por rol admin,
+cambiar a:
+```js
+  const canVoid = currentSeller?.role === 'admin' || currentSeller?.can_void_sales;
 ```
+y usar `canVoid` para renderizar el botón de anulación. (`currentSeller` vía `useSeller()`.)
 
-El resto del archivo (`SessionLocal`, `Base`, `get_db`) no cambia.
+**`src/pages/Caja.jsx`** (LEER primero) — dos gates:
+- Botón "Cerrar caja": mostrar solo si `currentSeller.role === 'admin' || currentSeller.can_close_cash`.
+- UI de movimientos (ingreso/retiro de efectivo): mostrar solo si
+  `currentSeller.role === 'admin' || currentSeller.can_cash_movements`.
+
+Si el seller no tiene el permiso, no renderizar el control (no basta con deshabilitar).
 
 ---
 
-## Verificación
+## FASE 4 — Frontend: Vendedores (UI agrupada + presets)
 
-- [x] `source .venv/bin/activate && python3 -c "from backend.main import app; print('OK')"` — sin errores de import
-- [x] El servidor arranca con `bash inicio.sh` sin errores
-- [x] `GET /api/products` sigue devolviendo productos con `cost_per_unit` correcto
-- [x] `GET /api/accounting/profitability` sigue funcionando
-- [x] **No hacer commit — esperar revisión**
+**`src/pages/Vendedores.jsx`**
+
+4.1. `emptyForm` (línea ~12): agregar los 4 campos nuevos en `false`:
+```js
+  can_void_sales: false,
+  can_close_cash: false,
+  can_cash_movements: false,
+  can_view_costs: false,
+```
+
+4.2. `handleSubmit` → objeto `patch` (línea ~60): incluir los 4 campos nuevos.
+
+4.3. `handleEdit` → `setForm({...})` (línea ~82): incluir los 4 (con `!!seller.xxx`).
+
+4.4. **Presets de rol.** Arriba del componente, definir las plantillas:
+```js
+const PERMISSION_PRESETS = {
+  cajero: { products_access: 'none', can_access_insumos: false, can_access_historial: false,
+    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: false },
+  encargado: { products_access: 'view', can_access_insumos: false, can_access_historial: true,
+    can_void_sales: true, can_close_cash: true, can_cash_movements: true, can_view_costs: false },
+  bodeguero: { products_access: 'full', can_access_insumos: true, can_access_historial: false,
+    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: true },
+};
+```
+En el bloque de permisos del modal (visible solo en edición + rol `seller`), agregar arriba
+una fila de botones que apliquen un preset al form (mezclándolo, sin pisar name/pin/role):
+```jsx
+<div className="form-group">
+  <label className="form-label">Plantilla rápida</label>
+  <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+    {[['cajero','Cajero'],['encargado','Encargado'],['bodeguero','Bodeguero']].map(([k,lbl]) => (
+      <button key={k} type="button" className="btn btn-secondary btn-sm"
+        onClick={() => setForm(prev => ({ ...prev, ...PERMISSION_PRESETS[k] }))}>{lbl}</button>
+    ))}
+  </div>
+  <small style={{ color: 'var(--color-text-light)' }}>
+    Aplica un set de permisos; podés ajustarlos abajo.
+  </small>
+</div>
+```
+
+4.5. **Agrupar los permisos** en el modal con subtítulos para que se entienda. Estructura
+sugerida (cada uno un checkbox como los actuales `can_access_*`):
+- **Inventario:** Productos (select actual), Acceso a Insumos, Ver costos y márgenes (`can_view_costs`).
+- **Caja:** Cerrar caja (`can_close_cash`), Ingresos/retiros de caja (`can_cash_movements`).
+- **Ventas:** Acceso a Historial, Anular ventas (`can_void_sales`).
+
+Usar el mismo patrón de `form-group` + checkbox + label que ya tienen `can_access_insumos`
+y `can_access_historial`. Para los subtítulos, reutilizar `section-title` (como ya se usa en
+"Permisos adicionales").
+
+---
+
+## Verificación final (marcar al terminar)
+
+- [ ] Backend arranca (`python -c "from backend.main import app"`); migración corre sin error.
+- [ ] `npx vitest run` — todo verde.
+- [ ] `npm run build` — sin errores.
+- [ ] **Admin:** puede anular ventas, cerrar caja, hacer movimientos de caja y ver costos (regresión cero).
+- [ ] **Seller sin permisos:** no ve el botón de anular, ni cerrar caja, ni movimientos; en
+      Productos no ve márgenes ni el campo de costo. La API devuelve 403 si fuerza esas acciones.
+- [ ] **Seller con `can_void_sales`:** puede anular; sin él, 403.
+- [ ] **Seller con `can_close_cash` / `can_cash_movements`:** puede cerrar caja / registrar
+      movimientos respectivamente; sin ellos, 403.
+- [ ] **Seller con `can_view_costs`:** ve costos y márgenes en Productos; sin él, no.
+- [ ] Presets en Vendedores aplican el set correcto y los checkboxes quedan ajustables.
+- [ ] **No hacer commit — esperar revisión de Claude Code.**
+
+## Notas
+- `require_permission(perm)` ya existe en `backend/auth.py` y deja pasar al admin; no duplicar lógica.
+- Para probar en limpio: borrar `pasteleria.db*` y levantar con `inicio_dev.bat` (puerto 8001).
+- Si `GET /me` no devuelve los campos nuevos en el frontend, verificar que el endpoint use
+  `SellerOut` (router `backend/routers/auth.py`).

@@ -551,7 +551,7 @@ export default function Dashboard() {
                   label: 'Ventas',
                   data: byHourData.data, 
                   borderColor: 'var(--color-primary)',
-                  backgroundColor: 'rgba(191, 90, 47, 0.1)',
+                  backgroundColor: 'rgba(var(--color-primary-rgb), 0.1)',
                   fill: true,
                   tension: 0.4,
                   pointRadius: 4,

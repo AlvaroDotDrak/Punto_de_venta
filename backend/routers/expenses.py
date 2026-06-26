@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..models import Expense, ExpenseCategory
+from ..models import Expense, ExpenseCategory, Supplier
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
 from ..schemas import (
@@ -73,6 +73,10 @@ def _expense_to_out(e: Expense) -> ExpenseOut:
         document_type=e.document_type or 'boleta',
         seller_id=e.seller_id,
         seller_name=e.seller.name if e.seller else "Desconocido",
+        supplier_id=e.supplier_id,
+        supplier_name=e.supplier.name if e.supplier else None,
+        payment_method=e.payment_method,
+        has_items=len(e.purchase_items) > 0,
         created_at=e.created_at,
     )
 
@@ -82,13 +86,15 @@ def list_expenses(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     category_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
     _=Depends(get_current_seller),
 ):
     q = db.query(Expense).options(
-        joinedload(Expense.category), joinedload(Expense.seller)
+        joinedload(Expense.category), joinedload(Expense.seller),
+        joinedload(Expense.supplier), joinedload(Expense.purchase_items)
     )
     if date_from:
         q = q.filter(Expense.created_at >= datetime.fromisoformat(date_from))
@@ -96,6 +102,8 @@ def list_expenses(
         q = q.filter(Expense.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
     if category_id:
         q = q.filter(Expense.category_id == category_id)
+    if supplier_id:
+        q = q.filter(Expense.supplier_id == supplier_id)
     expenses = q.order_by(Expense.created_at.desc()).offset(offset).limit(limit).all()
     return [_expense_to_out(e) for e in expenses]
 
@@ -110,6 +118,11 @@ def create_expense(
     if not category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
+    if payload.supplier_id is not None:
+        supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
+        if not supplier:
+            raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+
     expense = Expense(
         category_id=payload.category_id,
         amount=payload.amount,
@@ -117,6 +130,8 @@ def create_expense(
         receipt_photo=payload.receipt_photo,
         document_type=payload.document_type,
         seller_id=seller.id,
+        supplier_id=payload.supplier_id,
+        payment_method=payload.payment_method,
     )
     db.add(expense)
     db.commit()
@@ -124,18 +139,7 @@ def create_expense(
     log_action(db, ACTIONS.EXPENSE_CREATED, seller.id,
                f"Gasto ${payload.amount:.0f} ({payload.document_type}) en {category.name}: {payload.description or ''}")
 
-    return ExpenseOut(
-        id=expense.id,
-        category_id=expense.category_id,
-        category_name=category.name,
-        amount=expense.amount,
-        description=expense.description,
-        receipt_photo=expense.receipt_photo,
-        document_type=expense.document_type,
-        seller_id=expense.seller_id,
-        seller_name=seller.name,
-        created_at=expense.created_at,
-    )
+    return _expense_to_out(expense)
 
 
 @router.patch("/expenses/{expense_id}", response_model=ExpenseOut)

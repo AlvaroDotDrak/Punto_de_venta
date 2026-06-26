@@ -20,7 +20,7 @@ router = APIRouter(prefix="/products", tags=["products"])
 def list_products(
     active_only: bool = True,
     db: Session = Depends(get_db),
-    _=Depends(get_current_seller),
+    seller=Depends(get_current_seller),
 ):
     q = db.query(Product).options(joinedload(Product.recipes).joinedload(ProductRecipe.ingredient))
     if active_only:
@@ -36,6 +36,8 @@ def list_products(
         .all()
     )
     
+    can_see_costs = seller.role == "admin" or seller.can_view_costs
+    
     result = []
     for p in products:
         p_dict = {**p.__dict__}
@@ -43,7 +45,9 @@ def list_products(
         
         cost_per_unit = compute_cost_per_unit(p)
             
-        p_dict["cost_per_unit"] = cost_per_unit
+        p_dict["cost_per_unit"] = cost_per_unit if can_see_costs else None
+        if not can_see_costs:
+            p_dict["cost_price"] = None
         p_dict["units_sold"] = units_sold_map.get(p.id, 0)
         result.append(p_dict)
         
