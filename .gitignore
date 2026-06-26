@@ -18,6 +18,13 @@ __pycache__/
 *.pyc
 *.pyo
 pasteleria.db
+# Archivos transitorios de SQLite (WAL)
+pasteleria.db-shm
+pasteleria.db-wal
+
+# Tooling de agentes (local, no es código del proyecto)
+.claude/
+.agents/
 
 # Secrets — nunca commitear el .env real
 .env
