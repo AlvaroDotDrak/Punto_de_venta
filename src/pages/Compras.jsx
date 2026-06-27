@@ -38,6 +38,7 @@ export default function Compras() {
   const [categoryId, setCategoryId] = useState('');
   const [documentType, setDocumentType] = useState('factura');
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
+  const [pricesIncludeTax, setPricesIncludeTax] = useState(false);
   const [description, setDescription] = useState('');
   const [lines, setLines] = useState([emptyLine(0)]);
   const [submitting, setSubmitting] = useState(false);
@@ -129,10 +130,17 @@ export default function Compras() {
   const removeLine = (key) => setLines(prev => (prev.length === 1 ? prev : prev.filter(l => l.key !== key)));
 
   const { net, tax, total } = useMemo(() => {
-    const net = lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0) * (parseFloat(l.unitCost) || 0), 0);
-    const tax = documentType === 'factura' ? Math.round(net * IVA_RATE) : 0;
-    return { net: Math.round(net), tax, total: Math.round(net) + tax };
-  }, [lines, documentType]);
+    const rawSum = lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0) * (parseFloat(l.unitCost) || 0), 0);
+    // Factura con precios que ya traen IVA: el ingresado es el bruto, derivamos el neto.
+    if (documentType === 'factura' && pricesIncludeTax) {
+      const nTotal = Math.round(rawSum);
+      const nNet = Math.round(rawSum / (1 + IVA_RATE));
+      return { net: nNet, tax: nTotal - nNet, total: nTotal };
+    }
+    const nNet = Math.round(rawSum);
+    const tax = documentType === 'factura' ? Math.round(nNet * IVA_RATE) : 0;
+    return { net: nNet, tax, total: nNet + tax };
+  }, [lines, documentType, pricesIncludeTax]);
 
   const resetForm = () => {
     lineKey.current = 1;
@@ -171,6 +179,7 @@ export default function Compras() {
         supplier_id: supplierId ? parseInt(supplierId) : null,
         document_type: documentType,
         payment_method: paymentMethod,
+        prices_include_tax: documentType === 'factura' && pricesIncludeTax,
         description: description.trim() || null,
         items,
       });
@@ -228,6 +237,13 @@ export default function Compras() {
             </select>
           </div>
         </div>
+
+        {documentType === 'factura' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-md)', fontSize: '0.9rem', cursor: 'pointer' }}>
+            <input type="checkbox" checked={pricesIncludeTax} onChange={e => setPricesIncludeTax(e.target.checked)} />
+            <span>Los costos que ingreso <strong>ya incluyen IVA</strong> (se descuenta el 19% para obtener el neto, en vez de sumarlo)</span>
+          </label>
+        )}
 
         {/* Editor de líneas */}
         <div className="compra-lines-head">

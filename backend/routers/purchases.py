@@ -84,16 +84,27 @@ def create_purchase(
         if missing:
             raise HTTPException(status_code=404, detail=f"Categoría de línea no encontrada: {sorted(missing)}")
 
-    net = 0.0
+    # Si el documento es factura y los precios ya vienen con IVA, derivamos el neto
+    # hacia atrás (÷1.19) en vez de sumarle IVA encima. divisor=1 → comportamiento normal.
+    gross_input = payload.document_type == 'factura' and payload.prices_include_tax
+    divisor = (1 + IVA_RATE) if gross_input else 1.0
+
+    raw_sum = 0.0  # suma de lo ingresado tal cual (bruto si gross_input, neto si no)
     for it in payload.items:
         if it.product_id and it.ingredient_id:
             raise HTTPException(status_code=400, detail="Una línea no puede ser producto e insumo a la vez")
         if it.quantity <= 0 or it.unit_cost < 0:
             raise HTTPException(status_code=400, detail="Cantidad o costo inválido en una línea")
-        net += it.quantity * it.unit_cost
+        raw_sum += it.quantity * it.unit_cost
 
-    tax = net * IVA_RATE if payload.document_type == 'factura' else 0.0
-    total = net + tax
+    if gross_input:
+        total = raw_sum                 # lo que realmente se pagó
+        net = raw_sum / divisor
+        tax = total - net
+    else:
+        net = raw_sum
+        tax = net * IVA_RATE if payload.document_type == 'factura' else 0.0
+        total = net + tax
 
     expense = Expense(
         category_id=payload.category_id,
@@ -109,7 +120,10 @@ def create_purchase(
     db.flush()  # obtener expense.id para las líneas
 
     for it in payload.items:
-        line_total = it.quantity * it.unit_cost
+        # unit_cost y line_total se guardan SIEMPRE en neto (el divisor descuenta el
+        # IVA cuando los precios vinieron con IVA; si no, divisor=1 y queda igual).
+        net_unit_cost = it.unit_cost / divisor
+        line_total = it.quantity * net_unit_cost
         db.add(PurchaseItem(
             expense_id=expense.id,
             product_id=it.product_id,
@@ -118,7 +132,7 @@ def create_purchase(
             category_id=it.category_id if (it.category_id and it.category_id != payload.category_id) else None,
             description=it.description,
             quantity=it.quantity,
-            unit_cost=it.unit_cost,
+            unit_cost=net_unit_cost,
             line_total=line_total,
         ))
 
@@ -127,14 +141,14 @@ def create_purchase(
             if not product:
                 raise HTTPException(status_code=404, detail=f"Producto {it.product_id} no encontrado")
             product.stock = (product.stock or 0) + it.quantity
-            product.cost_price = it.unit_cost  # último costo neto de compra
+            product.cost_price = net_unit_cost  # último costo neto de compra
 
         elif it.ingredient_id:
             ingredient = db.query(Ingredient).filter(Ingredient.id == it.ingredient_id).first()
             if not ingredient:
                 raise HTTPException(status_code=404, detail=f"Insumo {it.ingredient_id} no encontrado")
             ingredient.current_stock += it.quantity
-            ingredient.last_price = it.unit_cost
+            ingredient.last_price = net_unit_cost
             db.add(IngredientMovement(
                 ingredient_id=it.ingredient_id,
                 type='purchase',

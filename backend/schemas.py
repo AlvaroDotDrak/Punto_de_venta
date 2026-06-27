@@ -474,6 +474,7 @@ class PurchaseCreate(BaseModel):
     supplier_id: Optional[int] = None
     document_type: str = 'factura'         # 'boleta' | 'factura'
     payment_method: Optional[str] = None   # 'efectivo' | 'transferencia' | 'debito'
+    prices_include_tax: bool = False       # True → los costos ingresados ya traen IVA (se deriva el neto)
     description: Optional[str] = None
     receipt_photo: Optional[str] = None
     items: list[PurchaseItemIn]
