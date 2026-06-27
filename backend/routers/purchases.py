@@ -18,13 +18,29 @@ router = APIRouter(tags=["purchases"])
 IVA_RATE = 0.19
 
 
+def _item_to_out(it: PurchaseItem, header_category_name: str) -> PurchaseItemOut:
+    return PurchaseItemOut(
+        id=it.id,
+        product_id=it.product_id,
+        ingredient_id=it.ingredient_id,
+        category_id=it.category_id,
+        # Si la línea no tiene categoría propia, hereda la de la factura.
+        category_name=(it.category.name if it.category else header_category_name),
+        description=it.description,
+        quantity=it.quantity,
+        unit_cost=it.unit_cost,
+        line_total=it.line_total,
+    )
+
+
 def _purchase_to_out(e: Expense) -> PurchaseOut:
     net = sum(it.line_total for it in e.purchase_items)
     total = e.amount
+    header_category_name = e.category.name if e.category else "Sin categoría"
     return PurchaseOut(
         id=e.id,
         category_id=e.category_id,
-        category_name=e.category.name if e.category else "Sin categoría",
+        category_name=header_category_name,
         supplier_id=e.supplier_id,
         supplier_name=e.supplier.name if e.supplier else None,
         document_type=e.document_type or 'factura',
@@ -35,7 +51,7 @@ def _purchase_to_out(e: Expense) -> PurchaseOut:
         total_amount=round(total),
         seller_name=e.seller.name if e.seller else "Desconocido",
         created_at=e.created_at,
-        items=[PurchaseItemOut.model_validate(it) for it in e.purchase_items],
+        items=[_item_to_out(it, header_category_name) for it in e.purchase_items],
     )
 
 
@@ -56,6 +72,17 @@ def create_purchase(
         supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
         if not supplier:
             raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+
+    # Categorías de línea: las que difieran de la cabecera se validan en un solo query.
+    line_category_ids = {it.category_id for it in payload.items if it.category_id and it.category_id != payload.category_id}
+    if line_category_ids:
+        found = {
+            c.id for c in db.query(ExpenseCategory.id)
+            .filter(ExpenseCategory.id.in_(line_category_ids)).all()
+        }
+        missing = line_category_ids - found
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Categoría de línea no encontrada: {sorted(missing)}")
 
     net = 0.0
     for it in payload.items:
@@ -87,6 +114,8 @@ def create_purchase(
             expense_id=expense.id,
             product_id=it.product_id,
             ingredient_id=it.ingredient_id,
+            # Solo persistimos categoría si difiere de la cabecera; null = hereda la de la factura.
+            category_id=it.category_id if (it.category_id and it.category_id != payload.category_id) else None,
             description=it.description,
             quantity=it.quantity,
             unit_cost=it.unit_cost,
@@ -137,7 +166,8 @@ def list_purchases(
         .join(PurchaseItem, PurchaseItem.expense_id == Expense.id)
         .options(
             joinedload(Expense.category), joinedload(Expense.seller),
-            joinedload(Expense.supplier), joinedload(Expense.purchase_items),
+            joinedload(Expense.supplier),
+            joinedload(Expense.purchase_items).joinedload(PurchaseItem.category),
         )
     )
     if date_from:

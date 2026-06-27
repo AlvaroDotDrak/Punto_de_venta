@@ -23,7 +23,7 @@ const KIND_OPTIONS = [
   { value: 'other', label: 'Otro', icon: Tag },
 ];
 
-const emptyLine = (key) => ({ key, kind: 'product', refId: '', description: '', quantity: '', unitCost: '' });
+const emptyLine = (key) => ({ key, kind: 'product', refId: '', description: '', quantity: '', unitCost: '', categoryId: '' });
 
 export default function Compras() {
   const toast = useToast();
@@ -156,6 +156,7 @@ export default function Compras() {
       items.push({
         product_id: l.kind === 'product' ? parseInt(l.refId) : null,
         ingredient_id: l.kind === 'ingredient' ? parseInt(l.refId) : null,
+        category_id: l.categoryId ? parseInt(l.categoryId) : null,
         description: l.description.trim(),
         quantity: qty,
         unit_cost: cost,
@@ -202,7 +203,7 @@ export default function Compras() {
             </select>
           </div>
           <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Categoría de gasto</label>
+            <label className="form-label">Categoría por defecto</label>
             <select className="form-select" value={categoryId} onChange={e => setCategoryId(e.target.value)} required>
               <option value="">Selecciona...</option>
               {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -232,6 +233,7 @@ export default function Compras() {
         <div className="compra-lines-head">
           <span style={{ width: 110 }}>Tipo</span>
           <span style={{ flex: 1, minWidth: 180 }}>Ítem / descripción</span>
+          <span style={{ width: 150 }}>Categoría</span>
           <span style={{ width: 90 }}>Cantidad</span>
           <span style={{ width: 120 }}>Costo unit. neto</span>
           <span style={{ width: 96, textAlign: 'right' }}>Subtotal</span>
@@ -261,6 +263,14 @@ export default function Compras() {
                       onCreate={(name) => setQuickCreate({ lineKey: l.key, kind: l.kind, name })}
                     />
                   )}
+                </div>
+                <div style={{ width: 150 }}>
+                  <select className="form-select form-select-sm" value={l.categoryId}
+                    onChange={e => updateLine(l.key, { categoryId: e.target.value })}
+                    title="Categoría de gasto de esta línea">
+                    <option value="">Igual a la factura</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
                 </div>
                 <div style={{ width: 90 }}>
                   <input type="number" min="0" step="any" className="form-input form-input-sm" value={l.quantity}
@@ -348,7 +358,7 @@ export default function Compras() {
                   <div style={{ borderTop: '1px solid var(--color-border)', padding: 'var(--space-md)' }}>
                     <table className="compras-lines">
                       <thead>
-                        <tr><th>Ítem</th><th style={{ width: 90, textAlign: 'right' }}>Cant.</th><th style={{ width: 120, textAlign: 'right' }}>Costo unit.</th><th style={{ width: 120, textAlign: 'right' }}>Subtotal</th></tr>
+                        <tr><th>Ítem</th><th style={{ width: 160 }}>Categoría</th><th style={{ width: 90, textAlign: 'right' }}>Cant.</th><th style={{ width: 120, textAlign: 'right' }}>Costo unit.</th><th style={{ width: 120, textAlign: 'right' }}>Subtotal</th></tr>
                       </thead>
                       <tbody>
                         {p.items.map(it => (
@@ -358,6 +368,11 @@ export default function Compras() {
                                 : it.ingredient_id ? <Wheat size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
                                 : <Tag size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />}
                               {it.description}
+                            </td>
+                            <td>
+                              <span className={`badge ${it.category_name !== p.category_name ? 'badge-warning' : 'badge-info'}`} style={{ fontSize: '0.68rem' }}>
+                                {it.category_name}
+                              </span>
                             </td>
                             <td style={{ textAlign: 'right' }}>{it.quantity}</td>
                             <td style={{ textAlign: 'right' }}>{formatCurrency(it.unit_cost)}</td>

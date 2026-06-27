@@ -301,6 +301,7 @@ class PurchaseItem(Base):
     expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=True)
+    category_id = Column(Integer, ForeignKey("expense_categories.id"), nullable=True)  # categoría de gasto de la línea (null → la de la factura)
     description = Column(String, nullable=False)     # snapshot del nombre de la línea
     quantity = Column(Float, nullable=False)
     unit_cost = Column(Float, nullable=False)        # costo neto unitario
@@ -310,6 +311,7 @@ class PurchaseItem(Base):
     expense = relationship("Expense", back_populates="purchase_items")
     product = relationship("Product")
     ingredient = relationship("Ingredient")
+    category = relationship("ExpenseCategory")
 
 
 class Invoice(Base):

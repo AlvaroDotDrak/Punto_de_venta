@@ -58,7 +58,9 @@ def get_summary(
     sales_with_receipt = sum(1 for s in sales if s.has_receipt)
 
     # ── Gastos ───────────────────────────────────────────────────────────────
-    expenses = db.query(Expense).filter(
+    expenses = db.query(Expense).options(
+        joinedload(Expense.purchase_items)
+    ).filter(
         Expense.created_at >= dt_from,
         Expense.created_at <= dt_to,
     ).all()
@@ -66,18 +68,34 @@ def get_summary(
 
     cat_map: dict[str, dict] = {}
     cat_names: dict[int, str] = {}
+
+    def _cat_name(cid: int) -> str:
+        if cid not in cat_names:
+            cat = db.query(ExpenseCategory).filter(ExpenseCategory.id == cid).first()
+            cat_names[cid] = cat.name if cat else "Sin categoría"
+        return cat_names[cid]
+
+    # Una compra con líneas en distintas categorías reparte su monto (IVA incluido)
+    # entre cada categoría según el peso neto de sus líneas. Sin líneas → cabecera.
     for e in expenses:
-        if e.category_id not in cat_names:
-            cat = db.query(ExpenseCategory).filter(ExpenseCategory.id == e.category_id).first()
-            cat_names[e.category_id] = cat.name if cat else "Sin categoría"
-        name = cat_names[e.category_id]
-        if name not in cat_map:
-            cat_map[name] = {"total": 0.0, "count": 0}
-        cat_map[name]["total"] += e.amount
-        cat_map[name]["count"] += 1
+        items = e.purchase_items
+        net = sum(it.line_total for it in items) if items else 0.0
+        if items and net > 0:
+            shares: dict[int, float] = {}
+            for it in items:
+                cid = it.category_id or e.category_id
+                shares[cid] = shares.get(cid, 0.0) + it.line_total
+            for cid, line_net in shares.items():
+                slot = cat_map.setdefault(_cat_name(cid), {"total": 0.0, "ids": set()})
+                slot["total"] += e.amount * (line_net / net)
+                slot["ids"].add(e.id)
+        else:
+            slot = cat_map.setdefault(_cat_name(e.category_id), {"total": 0.0, "ids": set()})
+            slot["total"] += e.amount
+            slot["ids"].add(e.id)
 
     expenses_by_category = [
-        ExpenseSummaryItem(category_name=name, total=v["total"], count=v["count"])
+        ExpenseSummaryItem(category_name=name, total=round(v["total"]), count=len(v["ids"]))
         for name, v in sorted(cat_map.items(), key=lambda x: x[1]["total"], reverse=True)
     ]
 

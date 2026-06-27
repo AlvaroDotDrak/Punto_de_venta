@@ -80,6 +80,8 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN supplier_id INTEGER")
         # v2.18: método de pago en gastos/compras (Fase 2)
         _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN payment_method TEXT")
+        # v2.19: categoría de gasto por línea de compra (sub-categorizar una factura mixta)
+        _add_column_if_missing(conn, "ALTER TABLE purchase_items ADD COLUMN category_id INTEGER")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))

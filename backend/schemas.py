@@ -464,6 +464,7 @@ class SupplierOut(BaseModel):
 class PurchaseItemIn(BaseModel):
     product_id: Optional[int] = None
     ingredient_id: Optional[int] = None
+    category_id: Optional[int] = None   # categoría de gasto de la línea (null → la de la factura)
     description: str
     quantity: float
     unit_cost: float          # costo neto unitario
@@ -481,6 +482,8 @@ class PurchaseItemOut(BaseModel):
     id: int
     product_id: Optional[int]
     ingredient_id: Optional[int]
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
     description: str
     quantity: float
     unit_cost: float
