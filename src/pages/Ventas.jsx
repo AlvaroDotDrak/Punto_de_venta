@@ -256,6 +256,7 @@ export default function Ventas() {
         change,
         seller: currentSeller?.name,
         date: sale.created_at,
+        hasReceipt: paymentMethod === 'tarjeta' ? true : hasReceipt,
       });
 
       setCart([]);
