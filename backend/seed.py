@@ -9,8 +9,13 @@ Siembra de datos por rubro.
 """
 from .auth import hash_pin
 from .models import ExpenseCategory, Ingredient, Product, Seller, SystemConfig
-from .verticals import get_vertical
+from .verticals import get_vertical, DEFAULT_VERTICAL
 from sqlalchemy.orm import Session
+
+
+def _get_business_type(db: Session) -> str:
+    item = db.query(SystemConfig).filter(SystemConfig.key == "business_type").first()
+    return item.value if item and item.value else DEFAULT_VERTICAL
 
 
 PRODUCTOS_DEMO = [
@@ -50,11 +55,16 @@ INGREDIENTES_DEMO = [
 
 
 def _seed_expense_categories(db: Session, business_type: str) -> None:
-    """Siembra las categorías de gasto del rubro si no hay ninguna."""
-    if db.query(ExpenseCategory).count() > 0:
-        return
+    """Agrega las categorías de gasto del rubro que aún no existan (idempotente).
+
+    Compara por nombre contra TODA la tabla (incluidas las desactivadas), así una
+    instalación existente recibe categorías nuevas sin duplicar ni resucitar las
+    que el usuario haya desactivado.
+    """
+    existing = {c.name for c in db.query(ExpenseCategory).all()}
     for c in get_vertical(business_type).get("expense_categories", []):
-        db.add(ExpenseCategory(name=c["name"], description=c.get("description")))
+        if c["name"] not in existing:
+            db.add(ExpenseCategory(name=c["name"], description=c.get("description")))
 
 
 def seed_database(db: Session) -> None:
@@ -67,7 +77,8 @@ def seed_database(db: Session) -> None:
     # Instalación establecida (ya tiene vendedores): garantizar categorías de gasto
     # por retrocompatibilidad. Una DB fresca NO se siembra aquí — la maneja el wizard.
     if db.query(Seller).count() > 0:
-        _seed_expense_categories(db, "pasteleria")
+        business_type = _get_business_type(db)
+        _seed_expense_categories(db, business_type)
         db.commit()
 
 

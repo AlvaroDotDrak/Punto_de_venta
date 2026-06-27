@@ -39,14 +39,23 @@ _GENERIC_EXPENSES = [
     {"name": "Otros", "description": "Gastos no categorizados"},
 ]
 
-# Categorías de gasto de la pastelería (idénticas al seed original — no romper).
+# Categorías de gasto de la pastelería. Separadas por naturaleza del costo para
+# distinguir materias primas (producción), reventa, embalaje y gastos operativos.
 _PASTELERIA_EXPENSES = [
-    {"name": "Insumos", "description": "Materias primas y productos para elaboración"},
+    {"name": "Materias primas", "description": "Harina, azúcar, mantequilla, huevos, chocolate, frutas, crema"},
+    {"name": "Envases y embalaje", "description": "Cajas, bolsas, papel mantequilla, cintas, blondas"},
+    {"name": "Insumos de reventa / Bebidas", "description": "Compra de bebidas y productos para reventa (visicooler)"},
+    {"name": "Aseo y limpieza", "description": "Detergentes, cloro, guantes, paños"},
+    {"name": "Insumos de boletería", "description": "Rollos térmicos de la impresora, papelería"},
     {"name": "Arriendo", "description": "Arriendo del local"},
     {"name": "Electricidad", "description": "Cuenta de luz"},
     {"name": "Gas", "description": "Gas para hornos y cocina"},
     {"name": "Agua", "description": "Cuenta de agua"},
+    {"name": "Internet y telefonía", "description": "Plan de internet, datos y teléfono"},
     {"name": "Sueldos", "description": "Remuneraciones del personal"},
+    {"name": "Imposiciones (AFP/Salud)", "description": "Cotizaciones previsionales y de salud del personal"},
+    {"name": "Contador / Honorarios", "description": "Servicios profesionales y honorarios"},
+    {"name": "Impuestos y patente", "description": "Patente municipal, contribuciones, impuestos"},
     {"name": "Transporte", "description": "Fletes, combustible, despachos"},
     {"name": "Mantención", "description": "Reparaciones y mantención de equipos"},
     {"name": "Marketing", "description": "Publicidad, redes sociales, packaging"},
