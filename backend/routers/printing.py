@@ -35,6 +35,12 @@ LINE_WIDTH = 48  # columnas de una térmica de 80mm con Font A
 
 # ── Comandos ESC/POS ─────────────────────────────────────────────────────────
 _INIT = b"\x1b@"
+# Las POS-80 clónicas arrancan en modo de caracteres chinos (multibyte): un byte
+# alto como el de "¡" se combina con el siguiente y sale un glifo chino. FS . lo
+# cancela; ESC t 2 selecciona CP850 (Latin-1), que sí trae ¡ ¿ ñ y vocales
+# acentuadas en mayúscula (CP437 no tiene la Í, salía "?").
+_CANCEL_KANJI = b"\x1c\x2e"
+_CHARSET = b"\x1b\x74\x02"
 _CENTER = b"\x1b\x61\x01"
 _LEFT = b"\x1b\x61\x00"
 _BOLD_ON = b"\x1bE\x01"
@@ -67,7 +73,7 @@ def _row(left: str, right: str) -> str:
 
 
 def _txt(s: str) -> bytes:
-    return s.encode("cp437", "replace")
+    return s.encode("cp850", "replace")
 
 
 def _printer_name(db: Session) -> str:
@@ -160,7 +166,7 @@ def _build_receipt(db: Session, sale: Sale, cash_received: float | None) -> byte
     n_items = sum(it.quantity for it in sale.items)
 
     buf = bytearray()
-    buf += _INIT + _LINESPACING
+    buf += _INIT + _CANCEL_KANJI + _CHARSET + _LINESPACING
 
     # ── Logo (opcional) ──
     if _flag(db, "print_logo"):
@@ -221,7 +227,7 @@ def _build_test(db: Session) -> bytes:
     branding = _branding(db)
     name = branding.get("name") or "Punto de Venta"
     buf = bytearray()
-    buf += _INIT + _LINESPACING
+    buf += _INIT + _CANCEL_KANJI + _CHARSET + _LINESPACING
     if _flag(db, "print_logo"):
         logo = _logo_raster(db)
         if logo:
