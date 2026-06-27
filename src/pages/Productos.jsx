@@ -235,7 +235,7 @@ export default function Productos() {
                   </div>
                 );
               })()}
-              {p.has_recipe && (
+              {hasCapability('recipes') && p.has_recipe && (
                 <div className="badge-recipe" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-success)', marginTop: '4px', marginBottom: '4px' }}>
                   <ChefHat size={14} /> Con receta
                 </div>
@@ -260,7 +260,9 @@ export default function Productos() {
             </div>
             <div className="product-card-actions">
               <button className="btn btn-ghost btn-sm" title="Estadísticas" onClick={() => setStatsProduct(p)}><BarChart2 size={14} /></button>
-              <button className="btn btn-ghost btn-sm" title="Receta (Insumos)" onClick={() => setRecipeProduct(p)}><ChefHat size={14} /></button>
+              {hasCapability('recipes') && (
+                <button className="btn btn-ghost btn-sm" title="Receta (Insumos)" onClick={() => setRecipeProduct(p)}><ChefHat size={14} /></button>
+              )}
               {canEdit && (
                 <>
                   <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
