@@ -101,6 +101,9 @@ export default function Dashboard() {
   const [topSortBy, setTopSortBy] = useState('revenue'); // 'revenue' | 'qty'
   const [topLimit, setTopLimit] = useState(10); // 10 | 50
 
+  // Métrica del gráfico por hora: ingresos ($) o cantidad de ventas (clientes)
+  const [hourMetric, setHourMetric] = useState('revenue'); // 'revenue' | 'count'
+
   useEffect(() => {
     const now = new Date();
     if (dateRange === '1d') { setStartDate(format(now, 'yyyy-MM-dd')); setEndDate(format(now, 'yyyy-MM-dd')); }
@@ -289,21 +292,28 @@ export default function Dashboard() {
     return { labels: days, data: counts };
   }, [currentSales]);
 
-  // Por Hora
+  // Por Hora — acumula ingresos ($) y cantidad de ventas (clientes) por franja horaria
   const byHourData = useMemo(() => {
     const hours = Array.from({ length: 24 }, (_, i) => i);
-    const counts = new Array(24).fill(0);
+    const revenue = new Array(24).fill(0);
+    const count = new Array(24).fill(0);
     currentSales.forEach(s => {
       const h = getHours(new Date(s.created_at));
-      counts[h] += s.total;
+      revenue[h] += s.total;
+      count[h] += 1;
     });
     // Truncar horas sin ventas extremas para mejor visualización si es necesario
-    const startHour = Math.max(0, Math.min(...currentSales.map(s => getHours(new Date(s.created_at)))) - 1);
-    const endHour = Math.min(23, Math.max(...currentSales.map(s => getHours(new Date(s.created_at)))) + 1);
-    
+    const startHour = currentSales.length
+      ? Math.max(0, Math.min(...currentSales.map(s => getHours(new Date(s.created_at)))) - 1)
+      : 0;
+    const endHour = currentSales.length
+      ? Math.min(23, Math.max(...currentSales.map(s => getHours(new Date(s.created_at)))) + 1)
+      : 23;
+
     return {
       labels: hours.slice(startHour, endHour + 1).map(h => `${h}:00`),
-      data: counts.slice(startHour, endHour + 1)
+      revenue: revenue.slice(startHour, endHour + 1),
+      count: count.slice(startHour, endHour + 1),
     };
   }, [currentSales]);
 
@@ -539,17 +549,35 @@ export default function Dashboard() {
       <div className="chart-grid">
         {/* Sales by Hour */}
         <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none', gridColumn: 'span 2' }}>
-          <div className="chart-card-title text-display">
-            <span style={{ background: 'var(--color-primary-bg)', padding: 8, borderRadius: 'var(--radius-md)' }}>⏰</span>
-            Flujo de Ventas por Hora
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xl)' }}>
+            <div className="chart-card-title text-display" style={{ marginBottom: 0 }}>
+              <span style={{ background: 'var(--color-primary-bg)', padding: 8, borderRadius: 'var(--radius-md)' }}>⏰</span>
+              Flujo de Ventas por Hora
+            </div>
+            <div className="quick-filters" style={{ border: 'none', background: 'var(--color-bg)', padding: 4, borderRadius: 'var(--radius-md)' }}>
+              <button
+                className={`quick-filter ${hourMetric === 'revenue' ? 'active' : ''}`}
+                onClick={() => setHourMetric('revenue')}
+                style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+              >
+                <DollarSign size={14} style={{ marginRight: 4 }} /> Ingresos
+              </button>
+              <button
+                className={`quick-filter ${hourMetric === 'count' ? 'active' : ''}`}
+                onClick={() => setHourMetric('count')}
+                style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+              >
+                <Users size={14} style={{ marginRight: 4 }} /> N° de Ventas
+              </button>
+            </div>
           </div>
           <div style={{ height: 300 }}>
-            <Line 
-              data={{ 
-                labels: byHourData.labels, 
-                datasets: [{ 
-                  label: 'Ventas',
-                  data: byHourData.data, 
+            <Line
+              data={{
+                labels: byHourData.labels,
+                datasets: [{
+                  label: hourMetric === 'revenue' ? 'Ingresos' : 'N° de Ventas',
+                  data: hourMetric === 'revenue' ? byHourData.revenue : byHourData.count,
                   borderColor: 'var(--color-primary)',
                   backgroundColor: 'rgba(var(--color-primary-rgb), 0.1)',
                   fill: true,
@@ -557,20 +585,34 @@ export default function Dashboard() {
                   pointRadius: 4,
                   pointHoverRadius: 6,
                   borderWidth: 3
-                }] 
-              }} 
+                }]
+              }}
               options={{
                 ...defaultOptions,
+                scales: {
+                  ...defaultOptions.scales,
+                  y: {
+                    ...defaultOptions.scales.y,
+                    beginAtZero: true,
+                    ticks: {
+                      ...defaultOptions.scales.y.ticks,
+                      precision: 0,
+                      ...(hourMetric === 'count' ? { stepSize: 1 } : {}),
+                    },
+                  },
+                },
                 plugins: {
                   ...defaultOptions.plugins,
                   tooltip: {
                     ...defaultOptions.plugins.tooltip,
                     callbacks: {
-                      label: (ctx) => ` Ingresos: ${formatCurrency(ctx.raw)}`
+                      label: (ctx) => hourMetric === 'revenue'
+                        ? ` Ingresos: ${formatCurrency(ctx.raw)}`
+                        : ` Ventas: ${ctx.raw} ${ctx.raw === 1 ? 'cliente' : 'clientes'}`
                     }
                   }
                 }
-              }} 
+              }}
             />
           </div>
         </div>
