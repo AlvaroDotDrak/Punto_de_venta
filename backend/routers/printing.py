@@ -109,7 +109,14 @@ def _logo_raster(db: Session, max_width: int = LOGO_WIDTH) -> bytes:
     try:
         if "," in logo:  # data URL: "data:image/png;base64,...."
             logo = logo.split(",", 1)[1]
-        img = Image.open(io.BytesIO(base64.b64decode(logo))).convert("L")
+        img = Image.open(io.BytesIO(base64.b64decode(logo)))
+        # PNG con transparencia: aplastar sobre fondo blanco, si no el alfa
+        # se descarta y los píxeles transparentes salen negros en la boleta.
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGBA")
+            bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(bg, img)
+        img = img.convert("L")
         w, h = img.size
         target_w = max(8, (min(max_width, w) // 8) * 8)  # múltiplo de 8
         if target_w != w:
