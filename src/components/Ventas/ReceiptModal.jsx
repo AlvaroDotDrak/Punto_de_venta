@@ -140,7 +140,7 @@ export default function ReceiptModal({ sale, onClose }) {
             {sale.hasReceipt && (
               <div style={{ textAlign: 'center', fontWeight: 800, fontSize: '0.85rem', marginBottom: 4 }}>*** BOLETA ***</div>
             )}
-            <div style={{ textAlign: 'center', fontSize: '0.75rem' }}>{footer}</div>
+            <div style={{ textAlign: 'center', fontSize: '0.75rem', whiteSpace: 'pre-line' }}>{footer}</div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>

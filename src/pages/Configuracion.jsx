@@ -215,18 +215,20 @@ export default function Configuracion() {
                     onChange={e => setBranding({ ...branding, phone: e.target.value })} />
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-                <div className="form-group" style={{ flex: 1 }}>
-                  <label className="form-label">RUT</label>
-                  <input className="form-input" value={branding.rut || ''}
-                    onChange={e => setBranding({ ...branding, rut: e.target.value })} />
-                </div>
-                <div className="form-group" style={{ flex: 2 }}>
-                  <label className="form-label">Mensaje al pie de boleta</label>
-                  <input className="form-input" value={branding.receipt_footer || ''}
-                    placeholder="¡Gracias por su compra!"
-                    onChange={e => setBranding({ ...branding, receipt_footer: e.target.value })} />
-                </div>
+              <div className="form-group">
+                <label className="form-label">RUT</label>
+                <input className="form-input" value={branding.rut || ''}
+                  onChange={e => setBranding({ ...branding, rut: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mensaje al pie de boleta <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)' }}>(podés usar varias líneas)</span></label>
+                <textarea className="form-input" rows={5} value={branding.receipt_footer || ''}
+                  placeholder={'¡Gracias por su preferencia!\nVuelva pronto\nSíguenos en Instagram: @tu_negocio'}
+                  style={{ resize: 'vertical', fontFamily: "'Courier New', monospace", lineHeight: 1.4 }}
+                  onChange={e => setBranding({ ...branding, receipt_footer: e.target.value })} />
+                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: 4 }}>
+                  Cada línea se centra sola en la boleta — no agregues espacios al inicio.
+                </p>
               </div>
               <div className="form-group">
                 <label className="form-label">Logo del negocio</label>
