@@ -178,10 +178,17 @@ dist_path = Path(__file__).parent.parent / "dist"
 if dist_path.exists():
     app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
 
+    # El shell de la SPA (index.html) y el service worker nunca se cachean: así
+    # una actualización (npm run build) se toma con un reload normal, sin Ctrl+F5.
+    # Los assets con hash sí pueden cachearse — su nombre cambia en cada build.
+    _NO_CACHE = {"Cache-Control": "no-cache, must-revalidate"}
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Catch-all: sirve el archivo si existe, sino index.html (SPA routing)."""
         file_path = dist_path / full_path
         if file_path.exists() and file_path.is_file():
+            if file_path.name in ("index.html", "sw.js"):
+                return FileResponse(str(file_path), headers=_NO_CACHE)
             return FileResponse(str(file_path))
-        return FileResponse(str(dist_path / "index.html"))
+        return FileResponse(str(dist_path / "index.html"), headers=_NO_CACHE)

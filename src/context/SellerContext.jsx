@@ -4,6 +4,7 @@
  */
 import { createContext, useContext, useState, useEffect } from 'react';
 import api, { setToken } from '../utils/api';
+import { useConfig } from './ConfigContext';
 
 const SellerContext = createContext();
 
@@ -12,6 +13,7 @@ export function useSeller() {
 }
 
 export function SellerProvider({ children }) {
+  const { refresh: refreshConfig } = useConfig();
   const [currentSeller, setCurrentSeller] = useState(null);
   const [sellers, setSellers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,14 +31,17 @@ export function SellerProvider({ children }) {
     const token = sessionStorage.getItem('authToken');
     if (!token) { setLoading(false); return; }
     api.get('/auth/me')
-      .then(seller => setCurrentSeller(seller))
+      .then(seller => { setCurrentSeller(seller); refreshConfig(); })
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [refreshConfig]);
 
   const selectSeller = (seller, token) => {
     setToken(token);
     setCurrentSeller(seller);
+    // Re-sincronizar la config (impresión, branding) por si el fetch de
+    // arranque falló con el server aún iniciando.
+    refreshConfig();
   };
 
   const logout = async () => {
