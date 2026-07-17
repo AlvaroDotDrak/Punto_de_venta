@@ -6,6 +6,8 @@ import { formatCurrency, formatDate } from '../utils/formatters';
 import { PlusCircle, Trash2, Image, X, FileText, Receipt, Tags, Truck } from 'lucide-react';
 import CategoryManagerModal from '../components/Gastos/CategoryManagerModal';
 import SupplierManagerModal from '../components/Gastos/SupplierManagerModal';
+import DateInput from '../components/DateInput';
+import DateRangePresets from '../components/DateRangePresets';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -343,30 +345,37 @@ export default function Gastos() {
         <div>
           {/* Filtros admin */}
           {isAdmin && (
-            <div className="card" style={{ marginBottom: 'var(--space-md)', display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div className="form-group" style={{ margin: 0, minWidth: 140 }}>
-                <label className="form-label">Desde</label>
-                <input type="date" className="form-input" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+            <div className="card" style={{ marginBottom: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              <DateRangePresets
+                from={filterFrom}
+                to={filterTo}
+                onSelect={(f, t) => { setFilterFrom(f); setFilterTo(t); }}
+              />
+              <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ margin: 0, minWidth: 140 }}>
+                  <label className="form-label">Desde</label>
+                  <DateInput className="form-input" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ margin: 0, minWidth: 140 }}>
+                  <label className="form-label">Hasta</label>
+                  <DateInput className="form-input" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ margin: 0, minWidth: 160 }}>
+                  <label className="form-label">Categoría</label>
+                  <select className="form-select" value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
+                    <option value="">Todas</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0, minWidth: 160 }}>
+                  <label className="form-label">Proveedor</label>
+                  <select className="form-select" value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}>
+                    <option value="">Todos</option>
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <button className="btn btn-secondary" onClick={loadExpenses}>Filtrar</button>
               </div>
-              <div className="form-group" style={{ margin: 0, minWidth: 140 }}>
-                <label className="form-label">Hasta</label>
-                <input type="date" className="form-input" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
-              </div>
-              <div className="form-group" style={{ margin: 0, minWidth: 160 }}>
-                <label className="form-label">Categoría</label>
-                <select className="form-select" value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
-                  <option value="">Todas</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div className="form-group" style={{ margin: 0, minWidth: 160 }}>
-                <label className="form-label">Proveedor</label>
-                <select className="form-select" value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}>
-                  <option value="">Todos</option>
-                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-              <button className="btn btn-secondary" onClick={loadExpenses}>Filtrar</button>
             </div>
           )}
 

@@ -6,6 +6,7 @@ import { useState, useMemo, useEffect } from 'react';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import {
   BarChart3, TrendingUp, ShoppingCart, DollarSign, Package,
   ArrowUpRight, ArrowDownRight, CreditCard, Calendar, Users,
@@ -80,6 +81,7 @@ function KpiDelta({ current, prev }) {
 
 export default function Dashboard() {
   const { currentSeller } = useSeller();
+  const { branding, categories, hasCapability } = useConfig();
   const [dateRange, setDateRange] = useState('7d');
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -178,6 +180,19 @@ export default function Dashboard() {
     return dominant;
   }, [todaySales]);
 
+  // Efectivo esperado en caja: apertura + movimientos en efectivo con su signo
+  // (gasto resta, anulación ya es negativa). Coincide con _expected_cash del backend.
+  const cashExpected = useMemo(() => {
+    if (!currentCash) return null;
+    let exp = currentCash.opening_amount || 0;
+    for (const m of (currentCash.movements || [])) {
+      const isCash = m.payment_method === 'efectivo' || m.payment_method == null;
+      if (!isCash) continue;
+      exp += m.type === 'expense' ? -m.amount : m.amount;
+    }
+    return exp;
+  }, [currentCash]);
+
   const lowStockIngredients = useMemo(() => {
     return restockSuggestions.map(item => ({
       name: item.name,
@@ -254,7 +269,10 @@ export default function Dashboard() {
     return map;
   }, [currentItems, productMap]);
 
-  const categoryEmojis = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
+  const categoryEmojis = useMemo(
+    () => Object.fromEntries((categories || []).map(c => [c.value, c.emoji])),
+    [categories]
+  );
 
   // Pago
   const paymentData = useMemo(() => {
@@ -340,7 +358,7 @@ export default function Dashboard() {
             <BarChart3 size={32} style={{ verticalAlign: 'middle', marginRight: 12, color: 'var(--color-primary)' }} />
             Panel de Control
           </h1>
-          <p style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>Resumen analítico de Pastelería Tía Julia.</p>
+          <p style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>Resumen analítico de {branding?.name || 'tu negocio'}.</p>
         </div>
         
         <div className="card glass noise-overlay" style={{ padding: 'var(--space-md)', display: 'flex', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap', border: 'none' }}>
@@ -421,15 +439,15 @@ export default function Dashboard() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.85rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>Monto Inicial:</span>
-                      <span style={{ fontWeight: 600 }}>{formatCurrency(currentCash.initial_cash)}</span>
+                      <span style={{ fontWeight: 600 }}>{formatCurrency(currentCash.opening_amount)}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Efectivo Actual:</span>
-                      <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>{formatCurrency(currentCash.current_cash)}</span>
+                      <span>Efectivo Esperado:</span>
+                      <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>{formatCurrency(cashExpected)}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: 4 }}>
                       <span>Apertura:</span>
-                      <span>{new Date(currentCash.opened_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>{currentCash.opened_by ? `${currentCash.opened_by} · ` : ''}{new Date(currentCash.opened_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   </div>
                 ) : (
@@ -449,6 +467,7 @@ export default function Dashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-md)', maxHeight: '330px', overflowY: 'auto' }}>
               
               {/* Columna Insumos Bajos */}
+              {hasCapability('recipes') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                 <h4 style={{ fontSize: '0.9rem', borderBottom: '1px solid rgba(0,0,0,0.05)', paddingBottom: 6, marginBottom: 4, fontWeight: 700 }}>🌾 Insumos Bajos</h4>
                 {lowStockIngredients.length > 0 ? (
@@ -464,8 +483,10 @@ export default function Dashboard() {
                   <p style={{ fontSize: '0.8rem', color: 'var(--color-success)', fontWeight: 600 }}>✓ Todos los insumos al día</p>
                 )}
               </div>
+              )}
 
               {/* Columna Encargos Hoy/Mañana */}
+              {hasCapability('orders') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                 <h4 style={{ fontSize: '0.9rem', borderBottom: '1px solid rgba(0,0,0,0.05)', paddingBottom: 6, marginBottom: 4, fontWeight: 700 }}>🎂 Encargos de Hoy/Mañana</h4>
                 {ordersTodayTomorrow.length > 0 ? (
@@ -488,8 +509,10 @@ export default function Dashboard() {
                   <p style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>Sin encargos para hoy o mañana</p>
                 )}
               </div>
+              )}
 
               {/* Columna Vencimiento Vitrina */}
+              {hasCapability('freshness') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                 <h4 style={{ fontSize: '0.9rem', borderBottom: '1px solid rgba(0,0,0,0.05)', paddingBottom: 6, marginBottom: 4, fontWeight: 700 }}>⏰ Vencimiento en Vitrina</h4>
                 {expiringShowcaseItems.length > 0 ? (
@@ -506,39 +529,8 @@ export default function Dashboard() {
                   <p style={{ fontSize: '0.8rem', color: 'var(--color-success)', fontWeight: 600 }}>✓ Todo fresco en vitrina</p>
                 )}
               </div>
-
-            </div>
-          </div>
-
-          {/* Tarjeta 3: Top 5 de la Semana */}
-          <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none' }}>
-            <div className="chart-card-title text-display">
-              <span style={{ background: 'var(--color-primary-bg)', padding: 8, borderRadius: 'var(--radius-md)' }}>🎖️</span>
-              Top 5 Semanal
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-              {topProductsData.slice(0, 5).length > 0 ? (
-                topProductsData.slice(0, 5).map(([name, d], idx) => {
-                  const maxVal = topProductsData[0] ? (topSortBy === 'revenue' ? topProductsData[0][1].revenue : topProductsData[0][1].qty) : 1;
-                  const currentVal = topSortBy === 'revenue' ? d.revenue : d.qty;
-                  const pct = Math.round((currentVal / maxVal) * 100);
-                  return (
-                    <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                        <span style={{ fontWeight: 600 }}>{idx + 1}. {name}</span>
-                        <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>
-                          {topSortBy === 'revenue' ? formatCurrency(d.revenue) : `${d.qty} u`}
-                        </span>
-                      </div>
-                      <div style={{ width: '100%', height: 6, background: 'rgba(0,0,0,0.05)', borderRadius: 3, overflow: 'hidden' }}>
-                        <div style={{ width: `${pct}%`, height: '100%', background: chartColors[idx % chartColors.length], borderRadius: 3 }} />
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="empty-state"><Package className="icon" size={32} /><p>Sin datos</p></div>
               )}
+
             </div>
           </div>
 
@@ -684,6 +676,38 @@ export default function Dashboard() {
                 }}
               />
             ) : <div className="empty-state"><Package className="icon" size={40} /><p>Sin datos</p></div>}
+          </div>
+        </div>
+
+        {/* Ventas por día de semana */}
+        <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none' }}>
+          <div className="chart-card-title text-display">
+            <span style={{ background: 'var(--color-primary-bg)', padding: 8, borderRadius: 'var(--radius-md)' }}>📅</span>
+            Ventas por Día
+          </div>
+          <div style={{ height: 340 }}>
+            {byDayOfWeek.data.some(v => v > 0) ? (
+              <Bar
+                data={{
+                  labels: byDayOfWeek.labels,
+                  datasets: [{
+                    data: byDayOfWeek.data,
+                    backgroundColor: 'var(--color-primary)',
+                    borderRadius: 8,
+                  }],
+                }}
+                options={{
+                  ...defaultOptions,
+                  plugins: {
+                    ...defaultOptions.plugins,
+                    tooltip: {
+                      ...defaultOptions.plugins.tooltip,
+                      callbacks: { label: (ctx) => ` ${formatCurrency(ctx.raw)}` },
+                    },
+                  },
+                }}
+              />
+            ) : <div className="empty-state"><Calendar className="icon" size={40} /><p>Sin datos</p></div>}
           </div>
         </div>
 

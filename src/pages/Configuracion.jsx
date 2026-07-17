@@ -12,7 +12,32 @@ import { hexToRgba } from '../utils/verticals';
 import {
   Settings, Download, Clock, Shield, Sliders, Store, Upload, Trash2, Check,
   CakeSlice, ClipboardList, Refrigerator, ChefHat, Utensils, Scale, Barcode, Wine, Printer,
+  Tag, Plus,
 } from 'lucide-react';
+
+// Arquetipos de categoría: traducen los flags técnicos (showcase/sliceable/stock)
+// a opciones entendibles para el dueño del negocio.
+const CATEGORY_TYPES = [
+  { id: 'simple', label: 'Simple', desc: 'Se vende por unidad. Sin inventario ni vitrina.', flags: {} },
+  { id: 'stock', label: 'Con inventario', desc: 'Controla stock numérico (bebidas, congelados).', flags: { stock: true } },
+  { id: 'showcase', label: 'Vitrina', desc: 'Va a la vitrina con control de frescura.', flags: { showcase: true } },
+  { id: 'showcase_sliceable', label: 'Vitrina por trozo', desc: 'Vitrina + venta por trozo (tortas).', flags: { showcase: true, sliceable: true }, requires: 'showcase' },
+];
+
+function archetypeOf(cat) {
+  if (cat.sliceable) return 'showcase_sliceable';
+  if (cat.showcase) return 'showcase';
+  if (cat.stock) return 'stock';
+  return 'simple';
+}
+
+function slugify(s) {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
 
 function resizeImage(file) {
   return new Promise((resolve) => {
@@ -50,18 +75,27 @@ const MODULES = [
 export default function Configuracion() {
   const toast = useToast();
   const { currentSeller } = useSeller();
+  const isAdmin = ['admin', 'dev'].includes(currentSeller?.role);
   const { profile, refresh } = useConfig();
   const [testingPrint, setTestingPrint] = useState(false);
   const [activeTab, setActiveTab] = useState('backup');
   const [auditLogs, setAuditLogs] = useState([]);
   const [backupPath, setBackupPath] = useState('');
   const [loadingBackup, setLoadingBackup] = useState(false);
+  const [restoreFile, setRestoreFile] = useState(null);       // { name, data }
+  const [restoreError, setRestoreError] = useState('');
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoreConfirmText, setRestoreConfirmText] = useState('');
+  const [restoring, setRestoring] = useState(false);
   const [configParams, setConfigParams] = useState({});
   const [savingParam, setSavingParam] = useState(false);
   const [branding, setBranding] = useState(null);
   const [caps, setCaps] = useState(null);
   const [palette, setPalette] = useState(null);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [cats, setCats] = useState(null);
+  const [catUsage, setCatUsage] = useState({});
+  const [savingCats, setSavingCats] = useState(false);
 
   useEffect(() => {
     if (activeTab === 'audit') {
@@ -72,8 +106,70 @@ export default function Configuracion() {
       setBranding({ ...profile.branding });
       setCaps({ ...profile.capabilities });
       setPalette(profile.palette);
+    } else if (activeTab === 'categorias' && profile) {
+      setCats((profile.product_categories || []).map(c => ({
+        value: c.value, label: c.label, emoji: c.emoji || '', type: archetypeOf(c),
+      })));
+      api.get('/products?active_only=false')
+        .then(prods => {
+          const usage = {};
+          for (const p of prods) usage[p.category] = (usage[p.category] || 0) + 1;
+          setCatUsage(usage);
+        })
+        .catch(() => setCatUsage({}));
     }
   }, [activeTab, profile]);
+
+  const updateCat = (i, patch) => setCats(prev => prev.map((c, idx) => idx === i ? { ...c, ...patch } : c));
+  const addCat = () => setCats(prev => [...prev, { value: '', label: '', emoji: '', type: 'simple' }]);
+  const removeCat = (i) => {
+    const c = cats[i];
+    if (c.value && catUsage[c.value] > 0) {
+      toast.error(`No se puede eliminar: ${catUsage[c.value]} producto(s) usan esta categoría`);
+      return;
+    }
+    setCats(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  const handleSaveCats = async () => {
+    if (cats.length === 0) {
+      toast.error('Debe haber al menos una categoría');
+      return;
+    }
+    if (cats.some(c => !c.label.trim())) {
+      toast.error('Cada categoría necesita un nombre');
+      return;
+    }
+    // Resolver value: las existentes conservan el suyo; las nuevas se generan del nombre
+    const used = new Set();
+    const payload = [];
+    for (const c of cats) {
+      let value = c.value || slugify(c.label);
+      if (!value) value = 'cat';
+      let unique = value, n = 2;
+      while (used.has(unique)) unique = `${value}_${n++}`;
+      used.add(unique);
+      const flags = CATEGORY_TYPES.find(t => t.id === c.type)?.flags || {};
+      payload.push({
+        value: unique,
+        label: c.label.trim(),
+        emoji: c.emoji.trim(),
+        showcase: !!flags.showcase,
+        sliceable: !!flags.sliceable,
+        stock: !!flags.stock,
+      });
+    }
+    setSavingCats(true);
+    try {
+      await api.put('/config/profile', { product_categories: payload });
+      await refresh();
+      toast.success('Categorías guardadas');
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
+    } finally {
+      setSavingCats(false);
+    }
+  };
 
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -105,6 +201,41 @@ export default function Configuracion() {
       toast.error('Error al crear backup: ' + err.message);
     } finally {
       setLoadingBackup(false);
+    }
+  };
+
+  const handleRestoreFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite volver a elegir el mismo archivo si se cancela
+    if (!file) return;
+    setRestoreError('');
+    setRestoreFile(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data || typeof data !== 'object' || !Array.isArray(data.sellers)) {
+          setRestoreError('El archivo no parece ser un backup válido de este sistema.');
+          return;
+        }
+        setRestoreFile({ name: file.name, data });
+      } catch {
+        setRestoreError('No se pudo leer el archivo: no es un JSON válido.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmRestore = async () => {
+    if (!restoreFile || restoreConfirmText !== 'RESTAURAR') return;
+    setRestoring(true);
+    try {
+      await api.post('/backup/restore?confirm=true', restoreFile.data);
+      toast.success('Backup restaurado. Recargando...');
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      toast.error('Error al restaurar: ' + err.message);
+      setRestoring(false);
     }
   };
 
@@ -158,8 +289,9 @@ export default function Configuracion() {
       <div className="tabs" style={{ marginBottom: 'var(--space-lg)' }}>
         {[
           ['backup', 'Backup'],
-          currentSeller?.role === 'admin' && ['negocio', 'Negocio'],
-          currentSeller?.role === 'admin' && ['parametros', 'Parámetros'],
+          isAdmin && ['negocio', 'Negocio'],
+          isAdmin && ['categorias', 'Categorías'],
+          isAdmin && ['parametros', 'Parámetros'],
           ['audit', 'Auditoría']
         ].filter(Boolean).map(([key, label]) => (
           <button key={key} className={`tab ${activeTab === key ? 'active' : ''}`} onClick={() => setActiveTab(key)}>
@@ -169,26 +301,117 @@ export default function Configuracion() {
       </div>
 
       {activeTab === 'backup' && (
-        <div className="card">
-          <div className="card-header"><h3 className="card-title"><Download size={18} /> Backup de datos</h3></div>
-          <div className="card-body" style={{ padding: 'var(--space-lg)' }}>
-            <p style={{ marginBottom: 'var(--space-md)', color: 'var(--color-text-secondary)' }}>
-              Los backups se guardan automáticamente cada 24 horas en <code>~/punto_de_venta_backups/</code>.
-              Puedes forzar un backup manual ahora.
-            </p>
-            <button className="btn btn-primary" onClick={handleBackup} disabled={loadingBackup}>
-              {loadingBackup ? <><span className="spinner spinner-sm" /> Generando...</> : <><Download size={16} /> Crear Backup Ahora</>}
-            </button>
-            {backupPath && (
-              <div style={{ marginTop: 'var(--space-md)', color: 'var(--color-success)', fontSize: '0.875rem' }}>
-                ✓ Guardado en: {backupPath}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+          <div className="card">
+            <div className="card-header"><h3 className="card-title"><Download size={18} /> Backup de datos</h3></div>
+            <div className="card-body" style={{ padding: 'var(--space-lg)' }}>
+              <p style={{ marginBottom: 'var(--space-md)', color: 'var(--color-text-secondary)' }}>
+                Los backups se guardan automáticamente cada 24 horas en <code>~/punto_de_venta_backups/</code>.
+                Puedes forzar un backup manual ahora.
+              </p>
+              <button className="btn btn-primary" onClick={handleBackup} disabled={loadingBackup}>
+                {loadingBackup ? <><span className="spinner spinner-sm" /> Generando...</> : <><Download size={16} /> Crear Backup Ahora</>}
+              </button>
+              {backupPath && (
+                <div style={{ marginTop: 'var(--space-md)', color: 'var(--color-success)', fontSize: '0.875rem' }}>
+                  ✓ Guardado en: {backupPath}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {isAdmin && (
+            <div className="card">
+              <div className="card-header"><h3 className="card-title"><Upload size={18} /> Restaurar backup</h3></div>
+              <div className="card-body" style={{ padding: 'var(--space-lg)' }}>
+                <p style={{ marginBottom: 'var(--space-md)', color: 'var(--color-text-secondary)' }}>
+                  Reemplaza <strong>todos</strong> los datos actuales (ventas, productos, caja, gastos, etc.)
+                  por los de un archivo <code>backup_*.json</code>. Esta acción no se puede deshacer.
+                </p>
+
+                <input
+                  type="file"
+                  accept="application/json"
+                  onChange={handleRestoreFileSelect}
+                  style={{ marginBottom: 'var(--space-sm)' }}
+                />
+
+                {restoreError && (
+                  <div style={{ color: 'var(--color-danger)', fontSize: '0.85rem', marginBottom: 'var(--space-sm)' }}>
+                    {restoreError}
+                  </div>
+                )}
+
+                {restoreFile && (
+                  <div style={{
+                    background: 'var(--color-bg)', border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)', padding: 'var(--space-md)',
+                    marginBottom: 'var(--space-md)', fontSize: '0.85rem',
+                  }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>{restoreFile.name}</div>
+                    <div style={{ color: 'var(--color-text-secondary)' }}>
+                      Exportado: {restoreFile.data.exported_at ? formatDate(restoreFile.data.exported_at) : '—'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', marginTop: 6 }}>
+                      <span>👥 {restoreFile.data.sellers?.length ?? 0} vendedores</span>
+                      <span>📦 {restoreFile.data.products?.length ?? 0} productos</span>
+                      <span>🧾 {restoreFile.data.sales?.length ?? 0} ventas</span>
+                      <span>💸 {restoreFile.data.expenses?.length ?? 0} gastos</span>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  className="btn btn-danger"
+                  disabled={!restoreFile}
+                  onClick={() => { setRestoreConfirmText(''); setShowRestoreConfirm(true); }}
+                >
+                  <Upload size={16} /> Restaurar este backup
+                </button>
               </div>
-            )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showRestoreConfirm && (
+        <div className="modal-overlay" onClick={() => !restoring && setShowRestoreConfirm(false)}>
+          <div className="modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>⚠️ Restaurar backup</h3></div>
+            <div className="modal-body">
+              <p>
+                Esto <strong>borrará todos los datos actuales</strong> y los reemplazará por los del
+                archivo <strong>{restoreFile?.name}</strong>. No se puede deshacer.
+              </p>
+              <p style={{ marginTop: 'var(--space-sm)' }}>
+                Escribe <strong>RESTAURAR</strong> para confirmar:
+              </p>
+              <input
+                className="form-input"
+                value={restoreConfirmText}
+                onChange={e => setRestoreConfirmText(e.target.value)}
+                placeholder="RESTAURAR"
+                autoFocus
+                style={{ marginTop: 'var(--space-sm)' }}
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" disabled={restoring} onClick={() => setShowRestoreConfirm(false)}>
+                Cancelar
+              </button>
+              <button
+                className="btn btn-danger"
+                disabled={restoreConfirmText !== 'RESTAURAR' || restoring}
+                onClick={handleConfirmRestore}
+              >
+                {restoring ? <><span className="spinner spinner-sm" /> Restaurando...</> : 'Sí, restaurar y reemplazar todo'}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {activeTab === 'negocio' && currentSeller?.role === 'admin' && branding && caps && (
+      {activeTab === 'negocio' && isAdmin && branding && caps && (
         <div className="card">
           <div className="card-header"><h3 className="card-title"><Store size={18} /> Identidad y módulos</h3></div>
           <div className="card-body" style={{ padding: 'var(--space-lg)' }}>
@@ -289,6 +512,7 @@ export default function Configuracion() {
                 </div>
               </div>
 
+              {currentSeller?.role === 'dev' && (
               <div>
                 <label className="form-label" style={{ fontWeight: 600, marginBottom: 2, display: 'block' }}>
                   Módulos activos
@@ -318,6 +542,7 @@ export default function Configuracion() {
                   })}
                 </div>
               </div>
+              )}
 
               <button className="btn btn-primary" onClick={handleSaveProfile} disabled={savingProfile} style={{ alignSelf: 'flex-start' }}>
                 {savingProfile ? <><span className="spinner spinner-sm" /> Guardando...</> : 'Guardar cambios'}
@@ -327,7 +552,77 @@ export default function Configuracion() {
         </div>
       )}
 
-      {activeTab === 'parametros' && currentSeller?.role === 'admin' && (
+      {activeTab === 'categorias' && isAdmin && cats && (
+        <div className="card">
+          <div className="card-header"><h3 className="card-title"><Tag size={18} /> Categorías de producto</h3></div>
+          <div className="card-body" style={{ padding: 'var(--space-lg)' }}>
+            <p style={{ marginBottom: 'var(--space-md)', fontSize: '0.85rem', color: 'var(--color-text-secondary)', maxWidth: 640 }}>
+              Crea las categorías con las que organizas tus productos. El <strong>tipo</strong> define cómo se comporta cada una
+              en el punto de venta. Una categoría con productos no se puede eliminar.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', maxWidth: 720 }}>
+              {cats.map((c, i) => {
+                const inUse = c.value && catUsage[c.value] > 0;
+                return (
+                  <div key={i} style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-start', padding: 'var(--space-sm)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-bg)' }}>
+                    <input
+                      className="form-input"
+                      value={c.emoji}
+                      maxLength={4}
+                      placeholder="🏷️"
+                      onChange={e => updateCat(i, { emoji: e.target.value })}
+                      style={{ width: 56, textAlign: 'center', fontSize: '1.2rem', flexShrink: 0 }}
+                      aria-label="Emoji"
+                    />
+                    <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                      <input
+                        className="form-input"
+                        value={c.label}
+                        placeholder="Nombre (ej. Ceviches)"
+                        onChange={e => updateCat(i, { label: e.target.value })}
+                      />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                      <select className="form-select" value={c.type} onChange={e => updateCat(i, { type: e.target.value })}>
+                        {CATEGORY_TYPES.map(t => {
+                          const blocked = t.requires && !profile.capabilities?.[t.requires];
+                          return (
+                            <option key={t.id} value={t.id} disabled={blocked}>
+                              {t.label}{blocked ? ' (módulo desactivado)' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '2px 0 0' }}>
+                        {CATEGORY_TYPES.find(t => t.id === c.type)?.desc}
+                      </p>
+                    </div>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => removeCat(i)}
+                      title={inUse ? `${catUsage[c.value]} producto(s) usan esta categoría` : 'Eliminar'}
+                      disabled={inUse}
+                      style={{ color: inUse ? 'var(--color-text-secondary)' : 'var(--color-danger)', flexShrink: 0 }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+              <button className="btn btn-secondary" onClick={addCat}>
+                <Plus size={16} /> Agregar categoría
+              </button>
+              <button className="btn btn-primary" onClick={handleSaveCats} disabled={savingCats}>
+                {savingCats ? <><span className="spinner spinner-sm" /> Guardando...</> : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'parametros' && isAdmin && (
         <div className="card">
           <div className="card-header"><h3 className="card-title"><Sliders size={18} /> Parámetros del Sistema</h3></div>
           <div className="card-body" style={{ padding: 'var(--space-lg)' }}>

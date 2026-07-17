@@ -120,8 +120,11 @@ def create_sale(
     db: Session = Depends(get_db),
     seller=Depends(get_current_seller),
 ):
-    # Verificar caja abierta
+    # La caja debe estar abierta: sin esto, las ventas en efectivo quedarían
+    # fuera del arqueo y el cierre del día no cuadraría.
     register = db.query(CashRegister).filter(CashRegister.status == "open").first()
+    if not register:
+        raise HTTPException(status_code=400, detail="La caja debe estar abierta para registrar ventas")
 
     has_receipt = True if payload.payment_method == "tarjeta" else bool(payload.has_receipt)
 
@@ -214,14 +217,15 @@ def create_sale(
 
     sale.total = server_total
 
-    # Registrar movimiento de caja si hay caja abierta y es efectivo
-    if register and payload.payment_method == "efectivo":
+    # Registrar movimiento de caja si es efectivo
+    if payload.payment_method == "efectivo":
         db.add(CashMovement(
             register_id=register.id,
             type="sale",
             amount=server_total,
             payment_method="efectivo",
             sale_id=sale.id,
+            seller_id=seller.id,
         ))
 
     db.commit()
@@ -308,6 +312,7 @@ def void_sale(
             payment_method="efectivo",
             sale_id=sale.id,
             description=f"Anulación venta #{sale.id}",
+            seller_id=seller.id,
         ))
 
     db.commit()

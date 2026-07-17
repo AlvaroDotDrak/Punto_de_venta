@@ -1,15 +1,14 @@
-from datetime import datetime, date
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import CashMovement, CashRegister
-from ..auth import get_current_seller, require_admin, require_permission
+from ..auth import get_current_seller, require_permission
 from ..audit import ACTIONS, log_action
 from ..schemas import (
     CashCloseRequest, CashMovementCreate, CashMovementOut,
     CashOpenRequest, CashRegisterOut,
-    CashHandoverRequest, CashDailyStatusOut,
 )
 
 router = APIRouter(prefix="/cash", tags=["cash"])
@@ -22,6 +21,30 @@ def _get_open_register(db: Session) -> CashRegister:
     if not register:
         raise HTTPException(status_code=400, detail="No hay caja abierta")
     return register
+
+
+def _expected_cash(db: Session, register: CashRegister) -> float:
+    """Efectivo físico esperado al cierre.
+
+    Solo los movimientos en efectivo afectan la caja (los manuales sin método se
+    asumen efectivo). Signo por tipo: venta/ingreso suman, gasto resta, anulación
+    ya viene con monto negativo. Tarjeta y transferencia no tocan el efectivo.
+    """
+    movements = db.query(CashMovement).filter(
+        CashMovement.register_id == register.id,
+    ).all()
+    expected = register.opening_amount
+    for m in movements:
+        is_cash = m.payment_method == "efectivo" or (
+            m.payment_method is None and m.type in ("expense", "income")
+        )
+        if not is_cash:
+            continue
+        if m.type == "expense":
+            expected -= m.amount
+        else:
+            expected += m.amount  # sale, income (positivos); void (ya negativo)
+    return expected
 
 
 @router.get("/current", response_model=CashRegisterOut | None)
@@ -68,88 +91,6 @@ def get_history_detail(
     return reg
 
 
-@router.get("/daily-status", response_model=CashDailyStatusOut)
-def daily_status(
-    db: Session = Depends(get_db),
-    _=Depends(get_current_seller),
-):
-    now = datetime.now()
-    if now.hour < 7:
-        return CashDailyStatusOut(needs_check=False)
-
-    register = db.query(CashRegister).filter(CashRegister.status == "open").first()
-    if not register:
-        return CashDailyStatusOut(needs_check=False)
-
-    if register.opened_at.date() >= date.today():
-        return CashDailyStatusOut(needs_check=False)
-
-    days_open = (date.today() - register.opened_at.date()).days
-    return CashDailyStatusOut(
-        needs_check=True,
-        open_since=register.opened_at.isoformat(),
-        days_open=days_open,
-    )
-
-
-@router.post("/daily-handover", response_model=CashRegisterOut, status_code=201)
-def daily_handover(
-    payload: CashHandoverRequest,
-    db: Session = Depends(get_db),
-    seller=Depends(get_current_seller),
-):
-    now = datetime.now()
-    if now.hour < 7:
-        raise HTTPException(status_code=400, detail="El cuadre diario solo está disponible después de las 7:00")
-
-    register = db.query(CashRegister).filter(CashRegister.status == "open").first()
-    if not register:
-        raise HTTPException(status_code=400, detail="No hay caja abierta")
-    if register.opened_at.date() >= date.today():
-        raise HTTPException(status_code=400, detail="La caja ya fue registrada hoy")
-
-    # Calcular monto esperado (misma lógica que close_register)
-    movements_efectivo = db.query(CashMovement).filter(
-        CashMovement.register_id == register.id,
-        CashMovement.payment_method == "efectivo",
-    ).all()
-    expected = register.opening_amount
-    for m in movements_efectivo:
-        expected += m.amount
-
-    manual = db.query(CashMovement).filter(
-        CashMovement.register_id == register.id,
-        CashMovement.payment_method == None,
-        CashMovement.type.in_(["expense", "income"]),
-    ).all()
-    for m in manual:
-        expected += m.amount if m.type == "income" else -m.amount
-
-    # Cerrar caja anterior
-    register.closed_at = now
-    register.closing_amount = payload.counted_amount
-    register.expected_amount = expected
-    register.notes = payload.notes or "Cuadre diario"
-    register.status = "closed"
-    db.commit()
-
-    log_action(db, ACTIONS.CASH_CLOSE, seller.id,
-               f"Cuadre diario. Esperado: ${expected:.0f} | Contado: ${payload.counted_amount:.0f}")
-
-    # Abrir nueva caja con el monto contado
-    new_register = CashRegister(opening_amount=payload.counted_amount, status="open")
-    db.add(new_register)
-    db.commit()
-    db.refresh(new_register)
-
-    log_action(db, ACTIONS.CASH_OPEN, seller.id,
-               f"Caja abierta automáticamente tras cuadre diario con ${payload.counted_amount:.0f}")
-
-    return db.query(CashRegister).options(
-        joinedload(CashRegister.movements)
-    ).filter(CashRegister.id == new_register.id).first()
-
-
 @router.post("/open", response_model=CashRegisterOut, status_code=201)
 def open_register(
     payload: CashOpenRequest,
@@ -160,7 +101,7 @@ def open_register(
     if existing:
         raise HTTPException(status_code=400, detail="Ya hay una caja abierta")
 
-    register = CashRegister(opening_amount=payload.opening_amount, status="open")
+    register = CashRegister(opening_amount=payload.opening_amount, status="open", opened_by=seller.name)
     db.add(register)
     db.commit()
     db.refresh(register)
@@ -176,30 +117,14 @@ def close_register(
 ):
     register = _get_open_register(db)
 
-    # Calcular monto esperado: apertura + ventas efectivo + ingresos efectivo - gastos - anulaciones
-    movements = db.query(CashMovement).filter(
-        CashMovement.register_id == register.id,
-        CashMovement.payment_method == "efectivo",
-    ).all()
-
-    expected = register.opening_amount
-    for m in movements:
-        expected += m.amount  # ventas y anulaciones ya incluyen signo
-
-    # Gastos e ingresos manuales sin método de pago (se asumen efectivo)
-    manual = db.query(CashMovement).filter(
-        CashMovement.register_id == register.id,
-        CashMovement.payment_method == None,
-        CashMovement.type.in_(["expense", "income"]),
-    ).all()
-    for m in manual:
-        expected += m.amount if m.type == "income" else -m.amount
+    expected = _expected_cash(db, register)
 
     register.closed_at = datetime.now()
     register.closing_amount = payload.closing_amount
     register.expected_amount = expected
     register.notes = payload.notes
     register.status = "closed"
+    register.closed_by = seller.name
 
     db.commit()
     log_action(db, ACTIONS.CASH_CLOSE, seller.id,
@@ -228,6 +153,7 @@ def add_movement(
         amount=payload.amount,
         description=payload.description,
         payment_method=payload.payment_method or None,
+        seller_id=seller.id,
     )
     db.add(movement)
     db.commit()

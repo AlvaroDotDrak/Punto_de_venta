@@ -3,12 +3,13 @@
  * V4.0: Premium Artisan Edition
  */
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSeller } from '../context/SellerContext';
 import { useConfig } from '../context/ConfigContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Search, MapPin, Trash2, ShoppingBag } from 'lucide-react';
+import { Search, MapPin, Trash2, ShoppingBag, Lock } from 'lucide-react';
 import TypeModal from '../components/Ventas/TypeModal';
 import PaymentModal from '../components/Ventas/PaymentModal';
 import ReceiptModal from '../components/Ventas/ReceiptModal';
@@ -17,6 +18,7 @@ export default function Ventas() {
   const { currentSeller } = useSeller();
   const { categories, t, hasCapability, branding, printing } = useConfig();
   const toast = useToast();
+  const navigate = useNavigate();
 
   // Categorías derivadas de la configuración del rubro
   const catTabs = useMemo(
@@ -42,6 +44,8 @@ export default function Ventas() {
 
   const [products, setProducts] = useState([]);
   const [showcaseItems, setShowcaseItems] = useState([]);
+  // undefined = cargando, null = caja cerrada, objeto = caja abierta
+  const [cashRegister, setCashRegister] = useState(undefined);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('todos');
   const [onlyInShowcase, setOnlyInShowcase] = useState(false);
@@ -67,12 +71,14 @@ export default function Ventas() {
 
   const loadData = async () => {
     try {
-      const [prods, showcase] = await Promise.all([
+      const [prods, showcase, register] = await Promise.all([
         api.get('/products'),
         api.get('/showcase?status=active'),
+        api.get('/cash/current'),
       ]);
       setProducts(prods);
       setShowcaseItems(showcase);
+      setCashRegister(register);
     } catch (err) {
       toast.error('Error al cargar datos: ' + err.message);
     }
@@ -278,6 +284,7 @@ export default function Ventas() {
       loadData(); // refrescar stock
     } catch (err) {
       toast.error('Error al registrar la venta: ' + err.message);
+      loadData(); // re-sincronizar estado de caja y stock (ej. caja cerrada entre medio)
     } finally {
       setProcessingPayment(false);
     }
@@ -285,6 +292,24 @@ export default function Ventas() {
 
   return (
     <div className="animate-fade-in">
+      {cashRegister === null && (
+        <div className="card" style={{
+          display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap',
+          padding: 'var(--space-md) var(--space-lg)', marginBottom: 'var(--space-md)',
+          background: 'var(--color-danger-bg)', border: '1px solid rgba(192,57,43,0.25)',
+        }}>
+          <Lock size={20} style={{ color: 'var(--color-danger)', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontWeight: 700, color: 'var(--color-danger)' }}>Caja cerrada</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+              Debes abrir la caja antes de registrar ventas.
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={() => navigate('/caja')}>
+            Abrir caja
+          </button>
+        </div>
+      )}
       <div className="pos-layout" style={{ height: 'auto', minHeight: 'calc(100vh - 120px)' }}>
         {/* LEFT: Products */}
         <div className="pos-products">
@@ -566,7 +591,7 @@ export default function Ventas() {
               <span className="amount text-display" style={{ fontSize: '2.2rem', fontWeight: 900 }}>{formatCurrency(cartTotal)}</span>
             </div>
             <button className="btn btn-primary pos-pay-btn"
-              disabled={cart.length === 0}
+              disabled={cart.length === 0 || !cashRegister}
               onClick={() => setShowPayment(true)}
               style={{
                 height: 64,

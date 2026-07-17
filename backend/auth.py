@@ -101,15 +101,22 @@ def get_current_seller(
 
 
 def require_admin(seller: Seller = Depends(get_current_seller)) -> Seller:
-    if seller.role != "admin":
+    # 'dev' (cuenta del proveedor) es superadmin: cumple todo lo de admin.
+    if seller.role not in ("admin", "dev"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Se requiere rol admin")
+    return seller
+
+
+def require_dev(seller: Seller = Depends(get_current_seller)) -> Seller:
+    if seller.role != "dev":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Se requiere rol dev")
     return seller
 
 
 def require_product_access(write: bool = False):
     """Permite acceso a admin, o a sellers según su products_access."""
     def _check(seller: Seller = Depends(get_current_seller)):
-        if seller.role == "admin":
+        if seller.role in ("admin", "dev"):
             return seller
         if write and seller.products_access == "full":
             return seller
@@ -122,7 +129,7 @@ def require_product_access(write: bool = False):
 def require_permission(perm: str):
     """Permite acceso a admin, o a sellers con el permiso booleano indicado."""
     def _check(seller: Seller = Depends(get_current_seller)):
-        if seller.role == "admin":
+        if seller.role in ("admin", "dev"):
             return seller
         if getattr(seller, perm, False):
             return seller

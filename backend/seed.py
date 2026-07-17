@@ -7,6 +7,8 @@ Siembra de datos por rubro.
 - seed_vertical(): llamado por POST /api/setup. Siembra las categorías de gasto
   del rubro elegido y, si es pastelería, los datos demo originales.
 """
+import os
+
 from .auth import hash_pin
 from .models import ExpenseCategory, Ingredient, Product, Seller, SystemConfig
 from .verticals import get_vertical, DEFAULT_VERTICAL
@@ -67,12 +69,30 @@ def _seed_expense_categories(db: Session, business_type: str) -> None:
             db.add(ExpenseCategory(name=c["name"], description=c.get("description")))
 
 
+def seed_dev_account(db: Session) -> None:
+    """Crea la cuenta dev (proveedor) en el primer arranque si está definido
+    POS_DEV_PIN en el entorno. Se hashea con el SALT de ESTA instalación, así el
+    PIN nunca queda escrito en ningún archivo del cliente. Idempotente: no recrea
+    ni pisa una cuenta dev ya existente."""
+    pin = os.environ.get("POS_DEV_PIN")
+    if not pin:
+        return
+    if db.query(Seller).filter(Seller.role == "dev").count() > 0:
+        return
+    name = os.environ.get("POS_DEV_NAME", "Soporte")
+    db.add(Seller(name=name, pin=hash_pin(pin), role="dev", active=True))
+    db.commit()
+
+
 def seed_database(db: Session) -> None:
     """Corre al arrancar. Asegura defaults inofensivos; no toca DBs ya pobladas."""
     # Default de configuración (umbral de semáforo de vitrina)
     if db.query(SystemConfig).filter(SystemConfig.key == "showcase_alert_hours").count() == 0:
         db.add(SystemConfig(key="showcase_alert_hours", value="24"))
         db.commit()
+
+    # Cuenta dev del proveedor (solo si POS_DEV_PIN está definido)
+    seed_dev_account(db)
 
     # Instalación establecida (ya tiene vendedores): garantizar categorías de gasto
     # por retrocompatibilidad. Una DB fresca NO se siembra aquí — la maneja el wizard.

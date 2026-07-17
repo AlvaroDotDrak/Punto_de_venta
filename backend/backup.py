@@ -1,15 +1,18 @@
 """
-Backup automático a archivo JSON local.
+Backup automático a archivo JSON local, con restauración.
 Equivalente a src/utils/autoBackup.js pero guarda en disco en vez de forzar descarga.
 """
 import json
 from datetime import datetime, date
 from pathlib import Path
+from sqlalchemy import DateTime, text
 from sqlalchemy.orm import Session
+from .database import engine, SessionLocal
 from .models import (
     AuditLog, CashMovement, CashRegister, Expense, ExpenseCategory,
     Ingredient, IngredientMovement, Invoice, Order, OrderItem, Product,
-    ProductRecipe, Sale, SaleItem, Seller, ShowcaseItem, SystemConfig
+    ProductRecipe, Sale, SaleItem, Seller, ShowcaseItem, Supplier,
+    PurchaseItem, SystemConfig
 )
 from .audit import ACTIONS, log_action
 
@@ -21,6 +24,32 @@ MAX_BACKUPS = 30
 _EXCLUDE_FIELDS = {
     "products": {"photo"},
     "sellers": {"photo"},
+}
+
+# Mapeo clave del JSON -> modelo. Define también el orden de inserción al
+# restaurar: los foreign_keys quedan desactivados durante la restauración, así
+# que el orden no es obligatorio, pero se mantiene padres-antes-que-hijos por
+# claridad. Debe incluir TODAS las tablas del schema.
+_MODELS_BY_KEY = {
+    "sellers": Seller,
+    "products": Product,
+    "expense_categories": ExpenseCategory,
+    "ingredients": Ingredient,
+    "system_config": SystemConfig,
+    "cash_register": CashRegister,
+    "suppliers": Supplier,
+    "orders": Order,
+    "sales": Sale,
+    "showcase_items": ShowcaseItem,
+    "sale_items": SaleItem,
+    "order_items": OrderItem,
+    "cash_movements": CashMovement,
+    "ingredient_movements": IngredientMovement,
+    "product_recipes": ProductRecipe,
+    "expenses": Expense,
+    "purchase_items": PurchaseItem,
+    "invoices": Invoice,
+    "audit_log": AuditLog,
 }
 
 
@@ -70,33 +99,19 @@ def _run_backup(db: Session) -> Path:
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = BACKUP_DIR / f"backup_{timestamp}.json"
 
-    data = {
-        "exported_at": datetime.now().isoformat(),
-        "sellers": _table_to_list(db, Seller, _EXCLUDE_FIELDS.get("sellers")),
-        "products": _table_to_list(db, Product, _EXCLUDE_FIELDS.get("products")),
-        "showcase_items": _table_to_list(db, ShowcaseItem),
-        "sales": _table_to_list(db, Sale),
-        "sale_items": _table_to_list(db, SaleItem),
-        "orders": _table_to_list(db, Order),
-        "order_items": _table_to_list(db, OrderItem),
-        "cash_register": _table_to_list(db, CashRegister),
-        "cash_movements": _table_to_list(db, CashMovement),
-        "ingredients": _table_to_list(db, Ingredient),
-        "ingredient_movements": _table_to_list(db, IngredientMovement),
-        "product_recipes": _table_to_list(db, ProductRecipe),
-        "expense_categories": _table_to_list(db, ExpenseCategory),
-        "expenses": _table_to_list(db, Expense),
-        "invoices": _table_to_list(db, Invoice),
-        "system_config": _table_to_list(db, SystemConfig),
-        "audit_log": _table_to_list(db, AuditLog),
-    }
+    data = {"exported_at": datetime.now().isoformat()}
+    for key, model in _MODELS_BY_KEY.items():
+        data[key] = _table_to_list(db, model, _EXCLUDE_FIELDS.get(key))
 
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, default=_serialize)
 
     _rotate_backups()
     log_action(db, ACTIONS.BACKUP, None, f"Backup automático: {filename.name}")
-    print(f"✓ Backup guardado en {filename}")
+    # Sin caracteres no-ASCII: en Windows con consola cp1252 (locale es-CL por
+    # defecto), un print() con un carácter no codificable revienta el arranque
+    # del servidor, justo durante el backup automático del startup.
+    print(f"Backup guardado en {filename}")
     return filename
 
 
@@ -105,3 +120,60 @@ def run_manual_backup(db: Session) -> str:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     path = _run_backup(db)
     return str(path)
+
+
+def _clean_row(model, row: dict) -> dict:
+    """Normaliza una fila del JSON a las columnas reales del modelo: rellena
+    columnas ausentes (ej. 'photo', excluido del backup) con None y convierte
+    fechas ISO ("...T...") a datetime, ya que el dialecto sqlite de SQLAlchemy
+    espera el formato que usa al escribir ("... " con espacio, sin 'T')."""
+    cleaned = {}
+    for col in model.__table__.columns:
+        val = row.get(col.name)
+        if val is not None and isinstance(col.type, DateTime) and isinstance(val, str):
+            val = datetime.fromisoformat(val)
+        cleaned[col.name] = val
+    return cleaned
+
+
+def restore_from_backup(data: dict) -> dict:
+    """
+    Reemplaza TODOS los datos actuales por los del backup (borra e inserta).
+    No es un merge: es una restauración completa, como volver a un punto en
+    el tiempo. Se desactivan foreign_keys durante la operación porque el orden
+    de inserción entre tablas con referencias cruzadas (ej. sales <-> orders)
+    no puede respetarse perfectamente con un solo pase; al final se valida con
+    PRAGMA foreign_key_check antes de confirmar.
+    """
+    counts = {}
+    with engine.connect() as conn:
+        # PRAGMA foreign_keys es no-op dentro de una transacción, así que debe
+        # ejecutarse antes que cualquier otra sentencia (que dispararía el
+        # autobegin de SQLAlchemy 2.0 e implícitamente abriría una).
+        conn.execute(text("PRAGMA foreign_keys = OFF"))
+        try:
+            for model in _MODELS_BY_KEY.values():
+                conn.execute(model.__table__.delete())
+
+            for key, model in _MODELS_BY_KEY.items():
+                rows = data.get(key) or []
+                if rows:
+                    conn.execute(model.__table__.insert(), [_clean_row(model, r) for r in rows])
+                counts[key] = len(rows)
+
+            violations = conn.execute(text("PRAGMA foreign_key_check")).fetchall()
+            if violations:
+                conn.rollback()
+                raise ValueError(f"Backup con referencias inconsistentes: {violations[:5]}")
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.execute(text("PRAGMA foreign_keys = ON"))
+
+    # Fuerza que el pool reabra conexiones nuevas (con foreign_keys=ON aplicado
+    # de nuevo por el listener de connect en database.py).
+    engine.dispose()
+    return counts

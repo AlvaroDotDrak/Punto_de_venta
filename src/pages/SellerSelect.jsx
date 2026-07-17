@@ -2,7 +2,7 @@
  * SellerSelect — Login screen with PIN authentication via API.
  * Lockout state is persisted in localStorage to survive page refreshes.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSeller } from '../context/SellerContext';
 import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
@@ -37,6 +37,13 @@ export default function SellerSelect() {
   const [, setTick] = useState(0);
   const { selectSeller } = useSeller();
   const { branding } = useConfig();
+
+  // Acceso dev oculto: 5 toques en el logo dentro de 2s revelan el login técnico
+  const [devMode, setDevMode] = useState(false);
+  const [devPin, setDevPin] = useState('');
+  const [devError, setDevError] = useState('');
+  const [devVerifying, setDevVerifying] = useState(false);
+  const devTaps = useRef([]);
 
   // Tick cada segundo para actualizar el countdown en tiempo real
   useEffect(() => {
@@ -116,6 +123,85 @@ export default function SellerSelect() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  const handleLogoTap = () => {
+    const now = Date.now();
+    devTaps.current = [...devTaps.current.filter(t => now - t < 2000), now];
+    if (devTaps.current.length >= 5) {
+      devTaps.current = [];
+      setDevMode(true);
+      setDevPin('');
+      setDevError('');
+    }
+  };
+
+  const handleDevSubmit = async (e) => {
+    e?.preventDefault();
+    if (!devPin || devVerifying) return;
+    setDevVerifying(true);
+    setDevError('');
+    try {
+      const { access_token, seller } = await api.post('/auth/dev-login', { pin: devPin });
+      selectSeller(seller, access_token);
+    } catch (err) {
+      setDevError(err.status === 429 ? 'Bloqueado por intentos fallidos. Espera unos minutos.' : 'PIN incorrecto');
+      setDevPin('');
+    } finally {
+      setDevVerifying(false);
+    }
+  };
+
+  if (devMode) {
+    return (
+      <div className="login-screen">
+        <div className="login-card">
+          <button className="btn btn-ghost btn-sm login-back"
+            onClick={() => { setDevMode(false); setDevPin(''); setDevError(''); }}>
+            <ArrowLeft size={16} /> Volver
+          </button>
+
+          <div className="seller-avatar" style={{ width: 80, height: 80, fontSize: '2rem', margin: '0 auto var(--space-md)' }}>
+            🛠️
+          </div>
+          <h2 style={{ textAlign: 'center', marginBottom: 'var(--space-xs)', fontFamily: 'var(--font-heading)' }}>
+            Acceso técnico
+          </h2>
+          <p style={{ textAlign: 'center', color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-lg)' }}>
+            Ingresa el PIN de soporte
+          </p>
+
+          <form onSubmit={handleDevSubmit}>
+            <div className="pin-input-group">
+              <Lock size={18} className="pin-icon" />
+              <input
+                type="password"
+                className="pin-input"
+                placeholder="••••"
+                value={devPin}
+                onChange={e => setDevPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                maxLength={8}
+                autoFocus
+                inputMode="numeric"
+                pattern="[0-9]*"
+              />
+            </div>
+
+            {devError && (
+              <div className="pin-error">
+                <AlertTriangle size={14} />
+                {devError}
+              </div>
+            )}
+
+            <button type="submit" className="btn btn-primary btn-lg"
+              style={{ width: '100%', marginTop: 'var(--space-md)' }} disabled={!devPin || devVerifying}>
+              {devVerifying ? <><span className="spinner spinner-sm" /> Verificando...</> : <>🔓 Ingresar</>}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   if (selectedSeller) {
     return (
       <div className="login-screen">
@@ -179,7 +265,7 @@ export default function SellerSelect() {
   return (
     <div className="login-screen">
       <div style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
-        <div style={{ fontSize: '4rem', marginBottom: 'var(--space-md)' }}>{branding?.emoji || '🧁'}</div>
+        <div onClick={handleLogoTap} style={{ fontSize: '4rem', marginBottom: 'var(--space-md)', userSelect: 'none' }}>{branding?.emoji || '🧁'}</div>
         <h1 style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>
           {branding?.name || 'Punto de Venta'}
         </h1>

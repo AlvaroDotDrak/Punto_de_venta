@@ -30,6 +30,13 @@ const PAYMENT_LABELS = {
   transferencia: '🏦 Transferencia',
 };
 
+// Diferencia (sobrante/faltante) tolerada antes de marcar el cierre en rojo.
+const CASH_DIFF_TOLERANCE = 500;
+
+// Un movimiento afecta el efectivo físico solo si es en efectivo (los manuales
+// sin método se asumen efectivo). Debe coincidir con _expected_cash del backend.
+const affectsCash = (m) => m.payment_method === 'efectivo' || m.payment_method == null;
+
 function calcSummary(register) {
   if (!register) return null;
   const movs = register.movements || [];
@@ -52,7 +59,11 @@ function calcSummary(register) {
   const totalIncomes   = incomes.reduce((s, m) => s + m.amount, 0);
   const salesCard      = sales.filter(m => m.payment_method === 'tarjeta').reduce((s, m) => s + m.amount, 0);
   const salesTransfer  = sales.filter(m => m.payment_method === 'transferencia').reduce((s, m) => s + m.amount, 0);
-  const expectedCash   = register.opening_amount + salesCash + totalIncomes - totalExpenses;
+  // Solo el efectivo entra al cálculo de caja física (ingresos/gastos en tarjeta o
+  // transferencia no mueven el cajón). Coincide con _expected_cash del backend.
+  const cashIncomes    = incomes.filter(affectsCash).reduce((s, m) => s + m.amount, 0);
+  const cashExpenses   = expenses.filter(affectsCash).reduce((s, m) => s + m.amount, 0);
+  const expectedCash   = register.opening_amount + salesCash + cashIncomes - cashExpenses;
 
   return {
     totalSales, totalExpenses, totalIncomes,
@@ -245,6 +256,7 @@ export default function Caja() {
       <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
         <Clock size={14} />
         Abierta: {formatDate(register.opened_at)} · Monto inicial: {formatCurrency(register.opening_amount)}
+        {register.opened_by && <> · por {register.opened_by}</>}
       </div>
 
       {summary && (
@@ -372,10 +384,9 @@ export default function Caja() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '6px 12px', alignItems: 'center' }}>
                   {DENOMINATIONS.map(d => (
-                    <>
-                      <span key={d.value + '-lbl'} style={{ fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap' }}>{d.label}</span>
+                    <div key={d.value} style={{ display: 'contents' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap' }}>{d.label}</span>
                       <input
-                        key={d.value + '-input'}
                         type="number" min="0"
                         className="form-input"
                         style={{ padding: '6px 10px', textAlign: 'center' }}
@@ -383,10 +394,10 @@ export default function Caja() {
                         value={denomCounts[d.value]}
                         onChange={e => setDenomCounts(prev => ({ ...prev, [d.value]: e.target.value }))}
                       />
-                      <span key={d.value + '-total'} style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', minWidth: 80, textAlign: 'right' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', minWidth: 80, textAlign: 'right' }}>
                         {formatCurrency((parseInt(denomCounts[d.value]) || 0) * d.value)}
                       </span>
-                    </>
+                    </div>
                   ))}
                 </div>
 
@@ -398,8 +409,8 @@ export default function Caja() {
                 {denomTotal > 0 && summary && (
                   <div style={{
                     marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)',
-                    background: Math.abs(diff) < 500 ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
-                    color: Math.abs(diff) < 500 ? 'var(--color-success)' : 'var(--color-danger)',
+                    background: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
+                    color: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'var(--color-success)' : 'var(--color-danger)',
                     fontWeight: 700, display: 'flex', justifyContent: 'space-between',
                   }}>
                     <span>Diferencia</span>
@@ -490,7 +501,7 @@ function MovementsTable({ movements }) {
     <div className="table-wrapper">
       <table>
         <thead>
-          <tr><th>Hora</th><th>Tipo</th><th>Descripción</th><th>Método</th><th style={{ textAlign: 'right' }}>Monto</th></tr>
+          <tr><th>Hora</th><th>Tipo</th><th>Descripción</th><th>Método</th><th>Por</th><th style={{ textAlign: 'right' }}>Monto</th></tr>
         </thead>
         <tbody>
           {movements.map(mov => (
@@ -504,6 +515,7 @@ function MovementsTable({ movements }) {
               </td>
               <td>{mov.description || '—'}</td>
               <td style={{ fontSize: '0.85rem' }}>{mov.payment_method ? PAYMENT_LABELS[mov.payment_method] || mov.payment_method : '—'}</td>
+              <td style={{ fontSize: '0.85rem' }}>{mov.seller_name || '—'}</td>
               <td style={{ textAlign: 'right', fontWeight: 600, color: (mov.type === 'expense' || mov.type === 'void') ? 'var(--color-danger)' : 'var(--color-success)' }}>
                 {(mov.type === 'expense') ? '-' : ''}{formatCurrency(Math.abs(mov.amount))}
               </td>
@@ -555,7 +567,7 @@ function HistoryList({ history, onSelect }) {
                   <td style={{ textAlign: 'right' }}>{formatCurrency(reg.opening_amount)}</td>
                   <td style={{ textAlign: 'right' }}>{reg.closing_amount != null ? formatCurrency(reg.closing_amount) : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{reg.expected_amount != null ? formatCurrency(reg.expected_amount) : '—'}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 600, color: dif == null ? undefined : Math.abs(dif) < 500 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                  <td style={{ textAlign: 'right', fontWeight: 600, color: dif == null ? undefined : Math.abs(dif) < CASH_DIFF_TOLERANCE ? 'var(--color-success)' : 'var(--color-danger)' }}>
                     {dif != null ? `${dif >= 0 ? '+' : ''}${formatCurrency(dif)}` : '—'}
                   </td>
                   <td style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={reg.notes}>
@@ -585,8 +597,8 @@ function HistoryDetail({ reg, onBack }) {
       </button>
 
       <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', marginBottom: 'var(--space-md)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-        <span><Clock size={13} style={{ verticalAlign: 'middle' }} /> Apertura: {formatDate(reg.opened_at)}</span>
-        <span><Lock size={13} style={{ verticalAlign: 'middle' }} /> Cierre: {formatDate(reg.closed_at)}</span>
+        <span><Clock size={13} style={{ verticalAlign: 'middle' }} /> Apertura: {formatDate(reg.opened_at)}{reg.opened_by ? ` · ${reg.opened_by}` : ''}</span>
+        <span><Lock size={13} style={{ verticalAlign: 'middle' }} /> Cierre: {formatDate(reg.closed_at)}{reg.closed_by ? ` · ${reg.closed_by}` : ''}</span>
         <span>Inicial: <strong>{formatCurrency(reg.opening_amount)}</strong></span>
       </div>
 
@@ -614,11 +626,11 @@ function HistoryDetail({ reg, onBack }) {
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 16px', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)',
-          background: Math.abs(diff) < 500 ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
-          color: Math.abs(diff) < 500 ? 'var(--color-success)' : 'var(--color-danger)',
+          background: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
+          color: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'var(--color-success)' : 'var(--color-danger)',
           fontWeight: 700,
         }}>
-          {Math.abs(diff) < 500 ? <TrendingUp size={18} /> : <AlertCircle size={18} />}
+          {Math.abs(diff) < CASH_DIFF_TOLERANCE ? <TrendingUp size={18} /> : <AlertCircle size={18} />}
           Diferencia del cierre: {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
         </div>
       )}

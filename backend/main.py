@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()  # Cargar .env antes de importar cualquier módulo del backend
 
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -82,6 +83,9 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN payment_method TEXT")
         # v2.19: categoría de gasto por línea de compra (sub-categorizar una factura mixta)
         _add_column_if_missing(conn, "ALTER TABLE purchase_items ADD COLUMN category_id INTEGER")
+        # v2.20: trazabilidad de quién abre y cierra la caja
+        _add_column_if_missing(conn, "ALTER TABLE cash_register ADD COLUMN opened_by TEXT")
+        _add_column_if_missing(conn, "ALTER TABLE cash_register ADD COLUMN closed_by TEXT")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
@@ -174,7 +178,12 @@ def health_check():
 
 
 # Servir el frontend React — debe ir AL FINAL para no capturar rutas /api
-dist_path = Path(__file__).parent.parent / "dist"
+# Empaquetado con PyInstaller: el dist/ se extrae en sys._MEIPASS. En ejecución
+# normal (dev/uvicorn) está junto al código fuente.
+if getattr(sys, "frozen", False):
+    dist_path = Path(sys._MEIPASS) / "dist"
+else:
+    dist_path = Path(__file__).parent.parent / "dist"
 if dist_path.exists():
     app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
 

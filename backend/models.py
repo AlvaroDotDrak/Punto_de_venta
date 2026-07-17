@@ -153,6 +153,8 @@ class CashRegister(Base):
     expected_amount = Column(Float, nullable=True)
     notes = Column(Text, nullable=True)
     status = Column(String, default="open")         # 'open' | 'closed'
+    opened_by = Column(String, nullable=True)       # nombre del vendedor que abrió (snapshot)
+    closed_by = Column(String, nullable=True)       # nombre del vendedor que cerró (snapshot)
 
     movements = relationship("CashMovement", back_populates="register")
 
@@ -167,10 +169,16 @@ class CashMovement(Base):
     description = Column(String, nullable=True)
     payment_method = Column(String, nullable=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
     register = relationship("CashRegister", back_populates="movements")
     sale = relationship("Sale", back_populates="cash_movements")
+    seller = relationship("Seller")
+
+    @property
+    def seller_name(self):
+        return self.seller.name if self.seller else None
 
 
 class Ingredient(Base):

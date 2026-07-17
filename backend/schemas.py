@@ -46,6 +46,9 @@ class LoginRequest(BaseModel):
     seller_id: int
     pin: str
 
+class DevLoginRequest(BaseModel):
+    pin: str
+
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -260,6 +263,8 @@ class CashMovementOut(BaseModel):
     description: Optional[str]
     payment_method: Optional[str]
     sale_id: Optional[int]
+    seller_id: Optional[int] = None
+    seller_name: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -273,6 +278,8 @@ class CashRegisterOut(BaseModel):
     expected_amount: Optional[float]
     notes: Optional[str]
     status: str
+    opened_by: Optional[str] = None
+    closed_by: Optional[str] = None
     movements: list[CashMovementOut] = []
 
     model_config = {"from_attributes": True}
@@ -660,13 +667,4 @@ class SetupRequest(BaseModel):
     branding: Optional[dict] = None
 
 
-class CashHandoverRequest(BaseModel):
-    counted_amount: float
-    notes: str = ""
-
-
-class CashDailyStatusOut(BaseModel):
-    needs_check: bool
-    open_since: str | None = None
-    days_open: int = 0
 

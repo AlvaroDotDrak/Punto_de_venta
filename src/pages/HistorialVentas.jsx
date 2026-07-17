@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import DateInput from '../components/DateInput';
+import DateRangePresets from '../components/DateRangePresets';
 import {
   History, Search, ChevronDown, ChevronUp, X,
   DollarSign, ShoppingCart, XCircle, Ban, AlertTriangle,
@@ -202,6 +203,14 @@ export default function HistorialVentas() {
             </button>
           )}
         </div>
+
+        <DateRangePresets
+          from={dateFrom}
+          to={dateTo}
+          minDate={!isAdmin ? minDate : undefined}
+          onSelect={(f, t) => { setDateFrom(f); setDateTo(t); }}
+          style={{ marginBottom: 'var(--space-sm)' }}
+        />
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-sm)' }}>
           {/* Fecha desde */}

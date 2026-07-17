@@ -11,12 +11,19 @@ router = APIRouter(prefix="/sellers", tags=["sellers"])
 
 
 @router.get("", response_model=list[SellerOut])
-def list_sellers(db: Session = Depends(get_db), _=Depends(require_admin)):
-    return db.query(Seller).all()
+def list_sellers(db: Session = Depends(get_db), requester=Depends(require_admin)):
+    q = db.query(Seller)
+    # Un admin del cliente no ve la cuenta dev (proveedor); un dev sí.
+    if requester.role != "dev":
+        q = q.filter(Seller.role != "dev")
+    return q.all()
 
 
 @router.post("", response_model=SellerOut, status_code=201)
 def create_seller(payload: SellerCreate, db: Session = Depends(get_db), admin=Depends(require_admin)):
+    # Solo un dev puede crear otra cuenta dev.
+    if payload.role == "dev" and admin.role != "dev":
+        raise HTTPException(status_code=403, detail="No autorizado")
     seller = Seller(
         name=payload.name,
         pin=hash_pin(payload.pin),
@@ -39,6 +46,12 @@ def update_seller(
     seller = db.query(Seller).filter(Seller.id == seller_id).first()
     if not seller:
         raise HTTPException(status_code=404, detail="Vendedor no encontrado")
+
+    # La cuenta dev solo la gestiona un dev; al admin se le oculta su existencia.
+    if seller.role == "dev" and admin.role != "dev":
+        raise HTTPException(status_code=404, detail="Vendedor no encontrado")
+    if payload.role == "dev" and admin.role != "dev":
+        raise HTTPException(status_code=403, detail="No autorizado")
 
     if payload.name is not None:
         seller.name = payload.name

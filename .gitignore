@@ -18,9 +18,18 @@ __pycache__/
 *.pyc
 *.pyo
 pasteleria.db
-# Archivos transitorios de SQLite (WAL)
+# Archivos transitorios de SQLite (WAL) y respaldos locales de la DB
 pasteleria.db-shm
 pasteleria.db-wal
+pasteleria.db.*
+
+# Empaquetado PyInstaller (.exe)
+release/
+build_pyi/
+*.spec
+
+# Helper de instalación con el PIN dev real (nunca commitear; solo el .example)
+crear_cuenta_soporte.bat
 
 # Tooling de agentes (local, no es código del proyecto)
 .claude/

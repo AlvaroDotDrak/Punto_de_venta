@@ -73,7 +73,7 @@ export default function Sidebar({ open, onClose }) {
   }, [currentSeller]);
 
   const badges = { vitrinaAlerts, pendingOrders };
-  const isAdmin = currentSeller?.role === 'admin';
+  const isAdmin = ['admin', 'dev'].includes(currentSeller?.role);
 
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`}>

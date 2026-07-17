@@ -3,10 +3,10 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import get_db, SessionLocal
 from ..models import SystemConfig, Seller
 from ..auth import require_admin, get_current_seller, hash_pin
-from ..backup import run_manual_backup
+from ..backup import run_manual_backup, restore_from_backup
 from ..seed import seed_vertical
 from ..verticals import VERTICALS, DEFAULT_VERTICAL, get_vertical, resolve_capabilities, PALETTES, get_palette, list_palettes
 from ..audit import ACTIONS, log_action
@@ -83,6 +83,37 @@ def manual_backup(db: Session = Depends(get_db), _=Depends(require_admin)):
     return {"path": path, "ok": True}
 
 
+@router.post("/backup/restore")
+def restore_backup(
+    payload: dict,
+    confirm: bool = False,
+    admin: Seller = Depends(require_admin),
+):
+    """Reemplaza TODOS los datos actuales por los de un backup JSON. Requiere
+    confirm=true explícito como fricción contra un click accidental — esta
+    acción no se puede deshacer (salvo restaurando otro backup después)."""
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Falta confirmar la restauración (confirm=true)")
+    if not isinstance(payload, dict) or "sellers" not in payload:
+        raise HTTPException(status_code=400, detail="El archivo no parece ser un backup válido")
+
+    try:
+        counts = restore_from_backup(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Sesión nueva: la de este request quedó en un pool reciclado por el
+    # restore (engine.dispose()); no reutilizarla para escribir.
+    log_db = SessionLocal()
+    try:
+        log_action(log_db, ACTIONS.RESTORE, admin.id,
+                   f"Restauración de backup ({payload.get('exported_at', '?')})")
+    finally:
+        log_db.close()
+
+    return {"ok": True, "counts": counts}
+
+
 # ── Perfil de rubro ─────────────────────────────────────────────────────────────
 
 @router.get("/config/profile", response_model=ConfigProfileOut)
@@ -95,14 +126,16 @@ def get_profile(db: Session = Depends(get_db)):
 def update_profile(
     payload: ConfigProfileUpdate,
     db: Session = Depends(get_db),
-    _=Depends(require_admin),
+    seller=Depends(require_admin),
 ):
     if payload.palette is not None and payload.palette in PALETTES:
         _set(db, "palette", payload.palette)
     if payload.branding is not None:
         merged = {**_get_json(db, "branding", {}), **payload.branding}
         _set(db, "branding", json.dumps(merged))
-    if payload.capabilities is not None:
+    # Los módulos (capabilities) solo los modifica la cuenta dev (proveedor).
+    # Si un admin del cliente envía este campo, se ignora silenciosamente.
+    if payload.capabilities is not None and seller.role == "dev":
         _set(db, "capabilities", json.dumps(payload.capabilities))
     if payload.product_categories is not None:
         _set(db, "product_categories", json.dumps(payload.product_categories))
