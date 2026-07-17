@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,26 @@ from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
 from ..utils import calculate_recipe_fraction
 
 router = APIRouter(prefix="/sales", tags=["sales"])
+
+
+def _round_half_up(x: float) -> int:
+    """Redondeo hacia arriba en .5, igual que Math.round del frontend (CLP sin decimales)."""
+    return int(math.floor(x + 0.5))
+
+
+def _authoritative_unit_price(product: Product, item_in) -> float:
+    """Precio unitario recalculado desde el producto en la DB, replicando la
+    lógica de precios de Ventas.jsx. Nunca se confía en el precio del cliente:
+    así una venta manipulada no puede fijar montos arbitrarios."""
+    if item_in.showcase_type == "trozado":
+        if product.slice_price is not None:
+            return product.slice_price
+        return _round_half_up(product.price / (product.slices or 8))
+    if item_in.showcase_type == "entero":
+        return product.price
+    if product.sold_by == "weight" and item_in.weight is not None:
+        return _round_half_up((item_in.weight or 0) * product.price)
+    return product.price
 
 
 def _handle_showcase_stock(db: Session, product_id: int, showcase_type: str, sale_id: int):
@@ -105,7 +126,7 @@ def create_sale(
     has_receipt = True if payload.payment_method == "tarjeta" else bool(payload.has_receipt)
 
     sale = Sale(
-        total=payload.total,
+        total=0,  # se fija con el total recalculado en el servidor tras el loop
         payment_method=payload.payment_method,
         seller_id=seller.id,
         order_id=payload.order_id,
@@ -116,23 +137,34 @@ def create_sale(
     db.flush()  # obtener sale.id antes de commit
 
     # Agregar items
+    server_total = 0.0
     for item_in in payload.items:
-        item = SaleItem(
-            sale_id=sale.id,
-            product_id=item_in.product_id,
-            product_name=item_in.product_name,
-            price=item_in.price,
-            quantity=item_in.quantity,
-            subtotal=item_in.subtotal,
-            showcase_type=item_in.showcase_type,
-            weight=item_in.weight,
-        )
-        db.add(item)
-
         # Obtener información del producto
         product = None
         if item_in.product_id:
             product = db.query(Product).filter(Product.id == item_in.product_id).first()
+
+        # Precio/subtotal autoritativos desde la DB. Sin producto (ítem manual sin
+        # product_id) se conserva lo enviado por el cliente: no hay de dónde recalcular.
+        if product:
+            unit_price = _authoritative_unit_price(product, item_in)
+            subtotal = unit_price * item_in.quantity
+        else:
+            unit_price = item_in.price
+            subtotal = item_in.subtotal
+        server_total += subtotal
+
+        item = SaleItem(
+            sale_id=sale.id,
+            product_id=item_in.product_id,
+            product_name=item_in.product_name,
+            price=unit_price,
+            quantity=item_in.quantity,
+            subtotal=subtotal,
+            showcase_type=item_in.showcase_type,
+            weight=item_in.weight,
+        )
+        db.add(item)
 
         # Actualizar stock vitrina si aplica
         if item_in.showcase_type and item_in.product_id:
@@ -180,19 +212,21 @@ def create_sale(
                         # Descontar stock (permite stock negativo)
                         r.ingredient.current_stock -= qty_used
 
+    sale.total = server_total
+
     # Registrar movimiento de caja si hay caja abierta y es efectivo
     if register and payload.payment_method == "efectivo":
         db.add(CashMovement(
             register_id=register.id,
             type="sale",
-            amount=payload.total,
+            amount=server_total,
             payment_method="efectivo",
             sale_id=sale.id,
         ))
 
     db.commit()
     db.refresh(sale)
-    log_action(db, ACTIONS.SALE, seller.id, f"Venta ${payload.total:.0f} - {payload.payment_method}")
+    log_action(db, ACTIONS.SALE, seller.id, f"Venta ${server_total:.0f} - {payload.payment_method}")
 
     return db.query(Sale).options(
         joinedload(Sale.items), joinedload(Sale.seller)
