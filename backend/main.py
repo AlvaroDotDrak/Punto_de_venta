@@ -183,11 +183,18 @@ if dist_path.exists():
     # Los assets con hash sí pueden cachearse — su nombre cambia en cada build.
     _NO_CACHE = {"Cache-Control": "no-cache, must-revalidate"}
 
+    _dist_root = dist_path.resolve()
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        """Catch-all: sirve el archivo si existe, sino index.html (SPA routing)."""
-        file_path = dist_path / full_path
-        if file_path.exists() and file_path.is_file():
+        """Catch-all: sirve el archivo si existe, sino index.html (SPA routing).
+
+        Resuelve la ruta y confirma que quede dentro de dist/ antes de servirla:
+        sin esto, un `..%2f` en la URL escaparía a archivos del sistema (ej. .env).
+        """
+        file_path = (dist_path / full_path).resolve()
+        within_dist = file_path == _dist_root or _dist_root in file_path.parents
+        if within_dist and file_path.is_file():
             if file_path.name in ("index.html", "sw.js"):
                 return FileResponse(str(file_path), headers=_NO_CACHE)
             return FileResponse(str(file_path))
