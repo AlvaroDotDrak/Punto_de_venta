@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Sellers ──────────────────────────────────────────────────────────────────
@@ -136,9 +136,9 @@ class ShowcaseItemOut(BaseModel):
 class SaleItemIn(BaseModel):
     product_id: Optional[int] = None
     product_name: str
-    price: float
-    quantity: int
-    subtotal: float
+    price: float = Field(ge=0)
+    quantity: int = Field(gt=0)
+    subtotal: float = Field(ge=0)
     showcase_type: Optional[str] = None   # 'entero' | 'trozado'
     weight: Optional[float] = None        # kg vendidos (sold_by='weight')
 
@@ -248,7 +248,7 @@ class CashCloseRequest(BaseModel):
 
 class CashMovementCreate(BaseModel):
     type: str                          # 'expense' | 'income'
-    amount: float
+    amount: float = Field(gt=0)
     description: Optional[str] = None
     payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia'
 
@@ -394,7 +394,7 @@ class ExpenseCategoryOut(BaseModel):
 
 class ExpenseCreate(BaseModel):
     category_id: int
-    amount: float
+    amount: float = Field(gt=0)
     description: Optional[str] = None
     receipt_photo: Optional[str] = None  # base64
     document_type: str = 'boleta'        # 'boleta' | 'factura'
@@ -403,7 +403,7 @@ class ExpenseCreate(BaseModel):
 
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
-    amount: Optional[float] = None
+    amount: Optional[float] = Field(default=None, gt=0)
     description: Optional[str] = None
     receipt_photo: Optional[str] = None
     document_type: Optional[str] = None
