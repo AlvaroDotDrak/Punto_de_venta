@@ -1,13 +1,14 @@
 import math
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import CashMovement, CashRegister, Sale, SaleItem, ShowcaseItem, Product, ProductRecipe, IngredientMovement
 from ..auth import get_current_seller, require_admin, require_permission
 from ..audit import ACTIONS, log_action
+from ._common import parse_date_from, parse_date_to
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
 from ..utils import calculate_recipe_fraction
 
@@ -217,16 +218,17 @@ def create_sale(
 
     sale.total = server_total
 
-    # Registrar movimiento de caja si es efectivo
-    if payload.payment_method == "efectivo":
-        db.add(CashMovement(
-            register_id=register.id,
-            type="sale",
-            amount=server_total,
-            payment_method="efectivo",
-            sale_id=sale.id,
-            seller_id=seller.id,
-        ))
+    # Toda venta deja movimiento de caja, sea cual sea el método: la caja es el
+    # registro completo del turno. Solo el efectivo afecta el cajón físico, y de
+    # eso ya se encarga _expected_cash filtrando por payment_method.
+    db.add(CashMovement(
+        register_id=register.id,
+        type="sale",
+        amount=server_total,
+        payment_method=payload.payment_method,
+        sale_id=sale.id,
+        seller_id=seller.id,
+    ))
 
     db.commit()
     db.refresh(sale)
@@ -239,7 +241,7 @@ def create_sale(
 
 @router.get("", response_model=list[SaleOut])
 def list_sales(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=2000),
     offset: int = 0,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -247,10 +249,12 @@ def list_sales(
     _=Depends(require_permission('can_access_historial')),
 ):
     q = db.query(Sale).options(joinedload(Sale.items), joinedload(Sale.seller))
-    if date_from:
-        q = q.filter(Sale.created_at >= datetime.fromisoformat(date_from))
-    if date_to:
-        q = q.filter(Sale.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
+    if dt_from:
+        q = q.filter(Sale.created_at >= dt_from)
+    if dt_to:
+        q = q.filter(Sale.created_at <= dt_to)
     return q.order_by(Sale.created_at.desc()).offset(offset).limit(limit).all()
 
 
@@ -302,14 +306,16 @@ def void_sale(
             mov.ingredient.current_stock += mov.quantity
         db.delete(mov)
 
-    # Movimiento de caja negativo si era efectivo
+    # Movimiento de caja negativo, con el método original de la venta (solo el
+    # efectivo descuenta del cajón; el resto es para que el resumen del turno
+    # descuente la venta anulada de su método).
     register = db.query(CashRegister).filter(CashRegister.status == "open").first()
-    if register and sale.payment_method == "efectivo":
+    if register:
         db.add(CashMovement(
             register_id=register.id,
             type="void",
             amount=-sale.total,
-            payment_method="efectivo",
+            payment_method=sale.payment_method,
             sale_id=sale.id,
             description=f"Anulación venta #{sale.id}",
             seller_id=seller.id,

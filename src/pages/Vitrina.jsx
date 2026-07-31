@@ -25,9 +25,8 @@ const FRESHNESS_META = {
 
 export default function Vitrina() {
   const toast = useToast();
-  const { currentSeller } = useSeller();
+  const { currentSeller, isAdmin } = useSeller();
   const { categories } = useConfig();
-  const isAdmin = currentSeller?.role === 'admin';
 
   const showcaseCats = useMemo(() => new Set(categories.filter(c => c.showcase).map(c => c.value)), [categories]);
   const sliceableCats = useMemo(() => new Set(categories.filter(c => c.sliceable).map(c => c.value)), [categories]);

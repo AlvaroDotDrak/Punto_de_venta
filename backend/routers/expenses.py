@@ -1,13 +1,13 @@
-from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..models import Expense, ExpenseCategory, Supplier
+from ..models import CashMovement, CashRegister, Expense, ExpenseCategory, Supplier
 from ..auth import get_current_seller, require_admin
 from ..audit import ACTIONS, log_action
+from ._common import parse_date_from, parse_date_to
 from ..schemas import (
     ExpenseCategoryCreate, ExpenseCategoryOut, ExpenseCategoryUpdate,
     ExpenseCreate, ExpenseOut, ExpenseUpdate,
@@ -62,6 +62,63 @@ def update_category(
 
 # ── Expenses ──────────────────────────────────────────────────────────────────
 
+# ── Reflejo en caja ───────────────────────────────────────────────────────────
+
+def _open_register(db: Session) -> CashRegister | None:
+    return db.query(CashRegister).filter(CashRegister.status == "open").first()
+
+
+def _sync_cash_movement(db: Session, expense: Expense, seller_id: int | None = None) -> None:
+    """Mantiene el movimiento de caja que refleja un gasto pagado en efectivo.
+
+    Un gasto en efectivo sale del cajón: si no se descuenta, el cierre aparece con
+    un faltante igual a lo gastado y nadie entiende por qué. Al revés, registrarlo
+    solo en Caja lo dejaba fuera de Contabilidad. El gasto es la fuente de verdad
+    y el movimiento es su reflejo.
+
+    Solo se toca el movimiento si su caja sigue abierta: reescribir un turno ya
+    cerrado cambiaría un cierre que alguien firmó."""
+    movement = db.query(CashMovement).filter(CashMovement.expense_id == expense.id).first()
+    es_efectivo = expense.payment_method == "efectivo"
+
+    if movement is not None:
+        if movement.register.status != "open":
+            return  # turno cerrado: se respeta lo que quedó registrado
+        if not es_efectivo:
+            db.delete(movement)
+        else:
+            movement.amount = expense.amount
+            movement.description = expense.description or "Gasto"
+        return
+
+    if not es_efectivo:
+        return
+    register = _open_register(db)
+    if register is None:
+        return  # sin caja abierta no hay cajón que descontar (el front avisa)
+    db.add(CashMovement(
+        register_id=register.id,
+        type="expense",
+        amount=expense.amount,
+        description=expense.description or "Gasto",
+        payment_method="efectivo",
+        expense_id=expense.id,
+        seller_id=seller_id if seller_id is not None else expense.seller_id,
+    ))
+
+
+def _unlink_cash_movement(db: Session, expense: Expense) -> None:
+    """Al borrar un gasto revierte su movimiento si la caja sigue abierta; si el
+    turno ya cerró, solo corta el vínculo para no alterar un cierre pasado."""
+    movement = db.query(CashMovement).filter(CashMovement.expense_id == expense.id).first()
+    if movement is None:
+        return
+    if movement.register.status == "open":
+        db.delete(movement)
+    else:
+        movement.expense_id = None
+
+
 def _expense_to_out(e: Expense) -> ExpenseOut:
     return ExpenseOut(
         id=e.id,
@@ -87,7 +144,7 @@ def list_expenses(
     date_to: Optional[str] = None,
     category_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=300),
     offset: int = 0,
     db: Session = Depends(get_db),
     _=Depends(get_current_seller),
@@ -96,10 +153,12 @@ def list_expenses(
         joinedload(Expense.category), joinedload(Expense.seller),
         joinedload(Expense.supplier), joinedload(Expense.purchase_items)
     )
-    if date_from:
-        q = q.filter(Expense.created_at >= datetime.fromisoformat(date_from))
-    if date_to:
-        q = q.filter(Expense.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
+    if dt_from:
+        q = q.filter(Expense.created_at >= dt_from)
+    if dt_to:
+        q = q.filter(Expense.created_at <= dt_to)
     if category_id:
         q = q.filter(Expense.category_id == category_id)
     if supplier_id:
@@ -134,6 +193,8 @@ def create_expense(
         payment_method=payload.payment_method,
     )
     db.add(expense)
+    db.flush()          # necesitamos el id para vincular el movimiento de caja
+    _sync_cash_movement(db, expense, seller.id)
     db.commit()
     db.refresh(expense)
     log_action(db, ACTIONS.EXPENSE_CREATED, seller.id,
@@ -160,6 +221,7 @@ def update_expense(
 
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(expense, field, value)
+    _sync_cash_movement(db, expense)
     db.commit()
     db.refresh(expense)
     log_action(db, ACTIONS.EXPENSE_UPDATED, admin.id, f"Gasto #{expense_id} actualizado")
@@ -175,6 +237,7 @@ def delete_expense(
     expense = db.query(Expense).filter(Expense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    _unlink_cash_movement(db, expense)
     db.delete(expense)
     db.commit()
     log_action(db, ACTIONS.EXPENSE_DELETED, admin.id, f"Gasto #{expense_id} eliminado")

@@ -80,7 +80,7 @@ function KpiDelta({ current, prev }) {
 }
 
 export default function Dashboard() {
-  const { currentSeller } = useSeller();
+  const { currentSeller, isAdmin } = useSeller();
   const { branding, categories, hasCapability } = useConfig();
   const [dateRange, setDateRange] = useState('7d');
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
@@ -116,7 +116,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     const { prevStart, prevEnd } = getPrevPeriod(startDate, endDate);
-    const isAdmin = currentSeller?.role === 'admin';
+    // isAdmin viene de useSeller()
     const promises = [
       api.get(`/sales?limit=2000&date_from=${startDate}&date_to=${endDate}`),
       api.get(`/sales?limit=2000&date_from=${prevStart}&date_to=${prevEnd}`),
@@ -402,7 +402,7 @@ export default function Dashboard() {
       </div>
 
       {/* Secciones de Administración */}
-      {currentSeller?.role === 'admin' && (
+      {isAdmin && (
         <div className="chart-grid" style={{ marginBottom: 'var(--space-2xl)' }}>
           {/* Tarjeta 1: Resumen de Hoy y Estado de Caja */}
           <div className="chart-card glass noise-overlay animate-slide-up" style={{ border: 'none' }}>

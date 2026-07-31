@@ -75,6 +75,7 @@ export function ConfigProvider({ children }) {
       terminology: p.terminology,
       categories: p.product_categories,
       taxRate: p.tax_rate,
+      cashDiffTolerance: p.cash_diff_tolerance ?? 500,
       printing: p.printing,
       hasCapability,
       t,

@@ -17,9 +17,8 @@ const DOC_TYPES = [
 ];
 
 export default function Gastos() {
-  const { currentSeller } = useSeller();
+  const { currentSeller, isAdmin } = useSeller();
   const toast = useToast();
-  const isAdmin = currentSeller?.role === 'admin';
   const fileInputRef = useRef(null);
 
   const [categories, setCategories] = useState([]);
@@ -41,6 +40,10 @@ export default function Gastos() {
   const [description, setDescription] = useState('');
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [documentType, setDocumentType] = useState('boleta');
+  const [paymentMethod, setPaymentMethod] = useState('efectivo');
+
+  // Solo para avisar: un gasto en efectivo con la caja cerrada no descuenta del cajón
+  const [cashOpen, setCashOpen] = useState(true);
 
   // Modal foto preview
   const [previewPhoto, setPreviewPhoto] = useState(null);
@@ -89,6 +92,7 @@ export default function Gastos() {
   useEffect(() => {
     loadCategories();
     loadSuppliers();
+    api.get('/cash/current').then(r => setCashOpen(!!r)).catch(() => setCashOpen(false));
   }, []);
 
   useEffect(() => {
@@ -122,6 +126,7 @@ export default function Gastos() {
         description: description.trim() || null,
         receipt_photo: receiptPhoto || null,
         document_type: documentType,
+        payment_method: paymentMethod,
         supplier_id: supplierId ? parseInt(supplierId) : null,
       });
       toast.success('Gasto registrado');
@@ -129,6 +134,7 @@ export default function Gastos() {
       setDescription('');
       setReceiptPhoto(null);
       setDocumentType('boleta');
+      setPaymentMethod('efectivo');
       setSupplierId('');
       if (fileInputRef.current) fileInputRef.current.value = '';
       await loadExpenses();
@@ -170,6 +176,24 @@ export default function Gastos() {
             Registrar gasto
           </h3>
           <form onSubmit={handleSubmit}>
+
+            {/* Método de pago — define si el gasto descuenta del cajón */}
+            <div className="form-group">
+              <label className="form-label">¿Cómo se pagó?</label>
+              <select className="form-input" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                <option value="efectivo">💵 Efectivo</option>
+                <option value="tarjeta">💳 Tarjeta</option>
+                <option value="debito">💳 Débito</option>
+                <option value="transferencia">🏦 Transferencia</option>
+              </select>
+              {paymentMethod === 'efectivo' && (
+                <p style={{ marginTop: 6, fontSize: '0.78rem', lineHeight: 1.4, color: cashOpen ? 'var(--color-text-secondary)' : 'var(--color-danger)' }}>
+                  {cashOpen
+                    ? 'Se descontará del efectivo esperado de la caja abierta.'
+                    : 'La caja está cerrada: este gasto se registrará en contabilidad, pero no descontará del cajón.'}
+                </p>
+              )}
+            </div>
 
             {/* Tipo de documento */}
             <div className="form-group">

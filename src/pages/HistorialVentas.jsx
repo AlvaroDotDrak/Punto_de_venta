@@ -56,10 +56,9 @@ function SellerBadge({ name }) {
 }
 
 export default function HistorialVentas() {
-  const { currentSeller } = useSeller();
+  const { currentSeller, isAdmin } = useSeller();
   const toast = useToast();
-  const isAdmin = currentSeller?.role === 'admin';
-  const canVoid = currentSeller?.role === 'admin' || currentSeller?.can_void_sales;
+  const canVoid = isAdmin || currentSeller?.can_void_sales;
   const minDate = (() => { const d = new Date(); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0]; })();
 
   const [sales, setSales] = useState([]);

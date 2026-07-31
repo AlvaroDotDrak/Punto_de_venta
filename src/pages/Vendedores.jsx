@@ -20,16 +20,21 @@ const emptyForm = {
   can_void_sales: false,
   can_close_cash: false,
   can_cash_movements: false,
-  can_view_costs: false
+  can_view_costs: false,
+  can_view_totals: false,
+  can_withdraw_cash: false
 };
 
 const PERMISSION_PRESETS = {
   cajero: { products_access: 'none', can_access_insumos: false, can_access_historial: false,
-    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: false },
+    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: false,
+    can_view_totals: false, can_withdraw_cash: false },
   encargado: { products_access: 'view', can_access_insumos: false, can_access_historial: true,
-    can_void_sales: true, can_close_cash: true, can_cash_movements: true, can_view_costs: false },
+    can_void_sales: true, can_close_cash: true, can_cash_movements: true, can_view_costs: false,
+    can_view_totals: true, can_withdraw_cash: true },
   bodeguero: { products_access: 'full', can_access_insumos: true, can_access_historial: false,
-    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: true },
+    can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: true,
+    can_view_totals: false, can_withdraw_cash: false },
 };
 
 export default function Vendedores() {
@@ -80,7 +85,9 @@ export default function Vendedores() {
           can_void_sales: form.can_void_sales,
           can_close_cash: form.can_close_cash,
           can_cash_movements: form.can_cash_movements,
-          can_view_costs: form.can_view_costs
+          can_view_costs: form.can_view_costs,
+          can_view_totals: form.can_view_totals,
+          can_withdraw_cash: form.can_withdraw_cash
         };
         if (form.pin) patch.pin = form.pin;
         await api.patch(`/sellers/${editingId}`, patch);
@@ -109,7 +116,9 @@ export default function Vendedores() {
       can_void_sales: !!seller.can_void_sales,
       can_close_cash: !!seller.can_close_cash,
       can_cash_movements: !!seller.can_cash_movements,
-      can_view_costs: !!seller.can_view_costs
+      can_view_costs: !!seller.can_view_costs,
+      can_view_totals: !!seller.can_view_totals,
+      can_withdraw_cash: !!seller.can_withdraw_cash
     });
     setShowForm(true);
   };
@@ -273,6 +282,14 @@ export default function Vendedores() {
                   <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <input type="checkbox" id="can_cash_movements" checked={form.can_cash_movements} onChange={e => updateField('can_cash_movements', e.target.checked)} />
                     <label htmlFor="can_cash_movements" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Ingresos/retiros de caja</label>
+                  </div>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_view_totals" checked={form.can_view_totals} onChange={e => updateField('can_view_totals', e.target.checked)} />
+                    <label htmlFor="can_view_totals" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Ver totales del negocio (tarjeta, transferencia, venta total)</label>
+                  </div>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_withdraw_cash" checked={form.can_withdraw_cash} onChange={e => updateField('can_withdraw_cash', e.target.checked)} />
+                    <label htmlFor="can_withdraw_cash" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Retirar efectivo del cajón (sangría)</label>
                   </div>
 
                   <h4 className="section-title" style={{ marginTop: 'var(--space-md)', fontSize: '0.9rem' }}>Ventas</h4>

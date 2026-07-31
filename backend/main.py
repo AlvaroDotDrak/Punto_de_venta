@@ -3,6 +3,7 @@ load_dotenv()  # Cargar .env antes de importar cualquier módulo del backend
 
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -13,8 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from .database import Base, SessionLocal, engine
-from .models import ProductRecipe  # Asegurar creación de la tabla
+from .models import ProductRecipe, SupplierItemAlias  # Asegurar creación de las tablas
 from .seed import seed_database
+from .utils import normalize_description
 from .backup import check_and_run_backup
 from .routers import auth, sellers, products, sales, showcase, cash, orders, ingredients, audit, config
 from .routers import expenses, invoices, accounting, recipes, suppliers, purchases, printing
@@ -30,6 +32,82 @@ def _add_column_if_missing(conn, sql: str) -> None:
             pass  # columna ya existe — esperado en DBs existentes
         else:
             raise  # cualquier otro error es crítico (tabla no existe, SQL inválido, etc.)
+
+
+def _backfill_item_aliases(conn) -> None:
+    """v2.21: siembra los alias de escaneo con las compras ya cargadas — cada línea
+    histórica que se asignó a un producto/insumo ya es una confirmación del admin.
+    Corre una sola vez (marca en system_config); el factor de pack queda en 1 porque
+    las compras viejas se cargaron en unidades de inventario."""
+    ya_corrio = conn.execute(
+        text("SELECT 1 FROM system_config WHERE key='aliases_backfilled'")
+    ).fetchone()
+    if ya_corrio:
+        return
+
+    filas = conn.execute(text(
+        "SELECT e.supplier_id, pi.description, pi.product_id, pi.ingredient_id "
+        "FROM purchase_items pi JOIN expenses e ON e.id = pi.expense_id "
+        "WHERE e.supplier_id IS NOT NULL "
+        "  AND (pi.product_id IS NOT NULL OR pi.ingredient_id IS NOT NULL) "
+        "ORDER BY pi.id ASC"
+    )).fetchall()
+
+    # El orden ascendente hace que la asignación más reciente pise a las viejas.
+    aliases = {}
+    for supplier_id, description, product_id, ingredient_id in filas:
+        clave = (supplier_id, normalize_description(description))
+        if not clave[1]:
+            continue
+        aliases[clave] = (description, product_id, ingredient_id)
+
+    for (supplier_id, norm), (raw, product_id, ingredient_id) in aliases.items():
+        conn.execute(text(
+            "INSERT OR IGNORE INTO supplier_item_aliases "
+            "(supplier_id, normalized_description, raw_description, product_id, "
+            " ingredient_id, units_per_pack, times_seen, updated_at) "
+            "VALUES (:sid, :norm, :raw, :pid, :iid, 1, 1, :now)"
+        ), {"sid": supplier_id, "norm": norm, "raw": raw, "pid": product_id,
+            "iid": ingredient_id, "now": datetime.now()})
+
+    conn.execute(text("INSERT INTO system_config (key, value) VALUES ('aliases_backfilled', 'true')"))
+    conn.commit()
+
+
+def _backfill_noncash_movements(conn) -> None:
+    """v2.24: hasta ahora solo las ventas en efectivo dejaban CashMovement, así que
+    las cajas cerradas muestran $0 en tarjeta y transferencia. Reconstruye esos
+    movimientos cruzando cada caja con las ventas de su ventana horaria.
+
+    Solo ventas 'completed': una venta anulada necesitaría su par sale+void para
+    netear, y omitir ambas da el mismo total con la mitad de filas.
+    Corre una sola vez (marca en system_config)."""
+    ya_corrio = conn.execute(
+        text("SELECT 1 FROM system_config WHERE key='noncash_movements_backfilled'")
+    ).fetchone()
+    if ya_corrio:
+        return
+
+    registers = conn.execute(text(
+        "SELECT id, opened_at, closed_at FROM cash_register WHERE closed_at IS NOT NULL"
+    )).fetchall()
+
+    for register_id, opened_at, closed_at in registers:
+        conn.execute(text(
+            "INSERT INTO cash_movements "
+            "  (register_id, type, amount, payment_method, sale_id, seller_id, created_at) "
+            "SELECT :rid, 'sale', s.total, s.payment_method, s.id, s.seller_id, s.created_at "
+            "FROM sales s "
+            "WHERE s.status = 'completed' "
+            "  AND s.payment_method != 'efectivo' "
+            "  AND s.created_at >= :desde AND s.created_at <= :hasta "
+            "  AND NOT EXISTS (SELECT 1 FROM cash_movements cm WHERE cm.sale_id = s.id)"
+        ), {"rid": register_id, "desde": opened_at, "hasta": closed_at})
+
+    conn.execute(text(
+        "INSERT INTO system_config (key, value) VALUES ('noncash_movements_backfilled', 'true')"
+    ))
+    conn.commit()
 
 
 def _run_migrations():
@@ -86,6 +164,20 @@ def _run_migrations():
         # v2.20: trazabilidad de quién abre y cierra la caja
         _add_column_if_missing(conn, "ALTER TABLE cash_register ADD COLUMN opened_by TEXT")
         _add_column_if_missing(conn, "ALTER TABLE cash_register ADD COLUMN closed_by TEXT")
+        # v2.21: la factura vende packs, el inventario cuenta unidades sueltas
+        _add_column_if_missing(conn, "ALTER TABLE purchase_items ADD COLUMN units_per_pack FLOAT DEFAULT 1")
+        # v2.22: vincular el movimiento de insumo a su compra, para poder revertirla
+        # con exactitud (antes había que adivinar por el texto de notes)
+        _add_column_if_missing(conn, "ALTER TABLE ingredient_movements ADD COLUMN expense_id INTEGER")
+        # v2.23: cargos no afectos a IVA (IABA/ILA) — suman al total sin base imponible
+        _add_column_if_missing(conn, "ALTER TABLE purchase_items ADD COLUMN taxable BOOLEAN DEFAULT 1")
+        # v2.24: ver totales del negocio (ventas, tarjeta, transferencia) en Caja
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_view_totals BOOLEAN DEFAULT 0")
+        # v2.25: retiros de efectivo (sangría) y vínculo gasto ↔ movimiento de caja
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_withdraw_cash BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE cash_movements ADD COLUMN expense_id INTEGER")
+        # v2.26: folio del documento del proveedor, para detectar facturas cargadas dos veces
+        _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN invoice_number TEXT")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
@@ -99,7 +191,20 @@ def _run_migrations():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_expense_id ON purchase_items(expense_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_product_id ON purchase_items(product_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_ingredient_id ON purchase_items(ingredient_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_expense_id ON ingredient_movements(expense_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cash_movements_expense_id ON cash_movements(expense_id)"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_expenses_supplier_invoice "
+            "ON expenses(supplier_id, invoice_number)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_alias_supplier_desc "
+            "ON supplier_item_aliases(supplier_id, normalized_description)"
+        ))
         conn.commit()
+
+        _backfill_item_aliases(conn)
+        _backfill_noncash_movements(conn)
 
         # v2.13: marca de rubro (multi-vertical). Una instalación legacy ya poblada
         # (tiene vendedores) se auto-marca como pastelería ya configurada para no

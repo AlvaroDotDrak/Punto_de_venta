@@ -55,9 +55,13 @@ export function SellerProvider({ children }) {
     setSellers(data);
   };
 
+  // 'dev' es la cuenta de soporte del proveedor: cumple todo lo de admin.
+  // Debe coincidir con require_admin del backend.
+  const isAdmin = ['admin', 'dev'].includes(currentSeller?.role);
+
   return (
     <SellerContext.Provider value={{
-      currentSeller, sellers, selectSeller, logout, loading, refreshSellers
+      currentSeller, sellers, selectSeller, logout, loading, refreshSellers, isAdmin
     }}>
       {children}
     </SellerContext.Provider>

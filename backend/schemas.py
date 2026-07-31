@@ -1,6 +1,13 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
+
+
+# Vocabularios compartidos. Antes cada módulo tenía el suyo (Compras aceptaba
+# 'debito', Caja 'tarjeta') y nada validaba: un valor basura entraba como boleta y
+# se comía el crédito fiscal del IVA sin avisar.
+PaymentMethod = Literal["efectivo", "tarjeta", "debito", "transferencia"]
+DocumentType = Literal["boleta", "factura"]
 
 
 # ── Sellers ──────────────────────────────────────────────────────────────────
@@ -22,6 +29,8 @@ class SellerUpdate(BaseModel):
     can_close_cash: Optional[bool] = None
     can_cash_movements: Optional[bool] = None
     can_view_costs: Optional[bool] = None
+    can_view_totals: Optional[bool] = None
+    can_withdraw_cash: Optional[bool] = None
 
 class SellerOut(BaseModel):
     id: int
@@ -35,6 +44,8 @@ class SellerOut(BaseModel):
     can_close_cash: bool
     can_cash_movements: bool
     can_view_costs: bool
+    can_view_totals: bool
+    can_withdraw_cash: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -243,17 +254,17 @@ class OrderOut(BaseModel):
 # ── Cash Register ─────────────────────────────────────────────────────────────
 
 class CashOpenRequest(BaseModel):
-    opening_amount: float
+    opening_amount: float = Field(ge=0)
 
 class CashCloseRequest(BaseModel):
-    closing_amount: float
+    closing_amount: float = Field(ge=0)
     notes: Optional[str] = None
 
 class CashMovementCreate(BaseModel):
-    type: str                          # 'expense' | 'income'
+    type: str                          # 'income' | 'withdrawal'
     amount: float = Field(gt=0)
     description: Optional[str] = None
-    payment_method: Optional[str] = None  # 'efectivo' | 'tarjeta' | 'transferencia'
+    payment_method: Optional[PaymentMethod] = None
 
 class CashMovementOut(BaseModel):
     id: int
@@ -263,6 +274,7 @@ class CashMovementOut(BaseModel):
     description: Optional[str]
     payment_method: Optional[str]
     sale_id: Optional[int]
+    expense_id: Optional[int] = None
     seller_id: Optional[int] = None
     seller_name: Optional[str] = None
     created_at: datetime
@@ -404,18 +416,18 @@ class ExpenseCreate(BaseModel):
     amount: float = Field(gt=0)
     description: Optional[str] = None
     receipt_photo: Optional[str] = None  # base64
-    document_type: str = 'boleta'        # 'boleta' | 'factura'
+    document_type: DocumentType = 'boleta'
     supplier_id: Optional[int] = None
-    payment_method: Optional[str] = None  # 'efectivo' | 'transferencia' | 'debito'
+    payment_method: Optional[PaymentMethod] = None
 
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
     amount: Optional[float] = Field(default=None, gt=0)
     description: Optional[str] = None
     receipt_photo: Optional[str] = None
-    document_type: Optional[str] = None
+    document_type: Optional[DocumentType] = None
     supplier_id: Optional[int] = None
-    payment_method: Optional[str] = None
+    payment_method: Optional[PaymentMethod] = None
 
 class ExpenseOut(BaseModel):
     id: int
@@ -473,14 +485,18 @@ class PurchaseItemIn(BaseModel):
     ingredient_id: Optional[int] = None
     category_id: Optional[int] = None   # categoría de gasto de la línea (null → la de la factura)
     description: str
-    quantity: float
-    unit_cost: float          # costo neto unitario
+    quantity: float           # cantidad facturada (packs/cajas) — es la que cuadra con el papel
+    unit_cost: float          # costo neto por unidad facturada
+    units_per_pack: float = 1.0   # unidades de inventario que trae cada unidad facturada
+    taxable: bool = True      # False → impuesto adicional (IABA): suma al total sin IVA
 
 class PurchaseCreate(BaseModel):
     category_id: int
     supplier_id: Optional[int] = None
-    document_type: str = 'factura'         # 'boleta' | 'factura'
-    payment_method: Optional[str] = None   # 'efectivo' | 'transferencia' | 'debito'
+    invoice_number: Optional[str] = None   # folio del documento del proveedor
+    force: bool = False                    # True → cargar aunque el folio ya exista
+    document_type: DocumentType = 'factura'
+    payment_method: Optional[PaymentMethod] = None
     prices_include_tax: bool = False       # True → los costos ingresados ya traen IVA (se deriva el neto)
     description: Optional[str] = None
     receipt_photo: Optional[str] = None
@@ -496,11 +512,14 @@ class PurchaseItemOut(BaseModel):
     quantity: float
     unit_cost: float
     line_total: float
+    units_per_pack: float = 1.0
+    taxable: bool = True
 
     model_config = {"from_attributes": True}
 
 class PurchaseOut(BaseModel):
     id: int                    # = expense id
+    invoice_number: Optional[str] = None
     category_id: int
     category_name: str
     supplier_id: Optional[int]
@@ -515,6 +534,27 @@ class PurchaseOut(BaseModel):
     created_at: datetime
     items: list[PurchaseItemOut]
 
+class PurchaseDeleteResult(BaseModel):
+    productos_revertidos: int
+    insumos_revertidos: int
+    movimientos_borrados: int
+    avisos: list[str] = []      # lo que no se pudo revertir del todo
+
+
+class SupplierItemAliasOut(BaseModel):
+    id: int
+    supplier_id: int
+    supplier_name: Optional[str]
+    raw_description: str            # texto tal cual lo emite el proveedor
+    tipo: Optional[str]             # 'product' | 'ingredient'
+    item_id: Optional[int]
+    item_name: Optional[str]
+    item_active: bool               # False → el ítem se borró/desactivó; el alias ya no se aplica
+    units_per_pack: float
+    times_seen: int
+    updated_at: datetime
+
+
 class CostHistoryEntry(BaseModel):
     expense_id: int
     date: datetime
@@ -522,6 +562,61 @@ class CostHistoryEntry(BaseModel):
     document_type: str
     quantity: float
     unit_cost: float
+
+
+# ── Escaneo de facturas con IA ────────────────────────────────────────────────
+
+class InvoiceScanRequest(BaseModel):
+    file_base64: str                 # data URI o base64 pelado (PDF/JPG/PNG/WEBP)
+    filename: Optional[str] = None
+
+
+class ScanMatch(BaseModel):
+    tipo: Optional[str] = None       # 'product' | 'ingredient' | None
+    id: Optional[int] = None
+    name: Optional[str] = None
+    score: float = 0.0
+    status: str = 'sin_match'        # 'seguro' | 'sugerencia' | 'sin_match'
+    origen: str = 'fuzzy'            # 'alias' (confirmado antes por el admin) | 'fuzzy'
+    units_per_pack: float = 1.0      # del alias; 1 si nunca se confirmó
+
+
+class ScanLineOut(BaseModel):
+    descripcion: str
+    cantidad: Optional[float] = None
+    precio_unitario: Optional[float] = None
+    total_linea: Optional[float] = None
+    pack_sugerido: Optional[float] = None   # deducido del texto ("...X6" → 6); el admin confirma
+    match: ScanMatch
+
+
+class ScanChargeOut(BaseModel):
+    concepto: str
+    monto: Optional[float] = None
+    afecto_iva: bool = True     # False → IABA/adicional; entra al form como línea sin IVA
+
+
+class ScanDocumentOut(BaseModel):
+    tipo_documento: Optional[str]
+    proveedor: Optional[str]
+    rut_proveedor: Optional[str]
+    folio: Optional[str]
+    fecha: Optional[str]
+    neto: Optional[float]
+    iva: Optional[float]
+    total: Optional[float]
+    supplier_id: Optional[int] = None      # match por RUT contra suppliers
+    supplier_name: Optional[str] = None
+    prices_include_tax: Optional[bool] = None  # inferido; None = sin evidencia
+    lineas: list[ScanLineOut]
+    cargos_extra: list[ScanChargeOut]
+    observaciones: Optional[str]
+    avisos: list[str]
+    markdown: str                    # transcripción cruda del OCR (auditoría)
+
+
+class InvoiceScanResponse(BaseModel):
+    documentos: list[ScanDocumentOut]
 
 
 # ── Invoices ──────────────────────────────────────────────────────────────────
@@ -648,6 +743,7 @@ class ConfigProfileOut(BaseModel):
     tax_rate: float
     setup_complete: bool
     printing: dict
+    cash_diff_tolerance: float
 
 
 class ConfigProfileUpdate(BaseModel):
@@ -656,6 +752,7 @@ class ConfigProfileUpdate(BaseModel):
     capabilities: Optional[dict] = None
     product_categories: Optional[list] = None
     tax_rate: Optional[float] = None
+    cash_diff_tolerance: Optional[float] = Field(default=None, ge=0)
 
 
 class SetupRequest(BaseModel):

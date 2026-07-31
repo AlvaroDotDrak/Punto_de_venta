@@ -134,19 +134,18 @@ def complete_order(
             subtotal=item.subtotal,
         ))
 
-    # Movimiento de caja si es efectivo y hay caja abierta
-    if payload.payment_method == "efectivo":
-        register = db.query(CashRegister).filter(CashRegister.status == "open").first()
-        if register:
-            register.expected_amount = (register.expected_amount or 0) + total
-            db.add(CashMovement(
-                register_id=register.id,
-                type="sale",
-                amount=total,
-                description=f"Pedido #{order.id} — {order.customer_name}",
-                payment_method="efectivo",
-                sale_id=sale.id,
-            ))
+    # Movimiento de caja si hay caja abierta, con el método real de pago.
+    # expected_amount no se toca acá: se recalcula entero al cerrar la caja.
+    register = db.query(CashRegister).filter(CashRegister.status == "open").first()
+    if register:
+        db.add(CashMovement(
+            register_id=register.id,
+            type="sale",
+            amount=total,
+            description=f"Pedido #{order.id} — {order.customer_name}",
+            payment_method=payload.payment_method,
+            sale_id=sale.id,
+        ))
 
     # Marcar pedido como entregado
     order.status = "entregado"

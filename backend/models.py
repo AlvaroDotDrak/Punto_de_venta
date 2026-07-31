@@ -24,6 +24,8 @@ class Seller(Base):
     can_close_cash = Column(Boolean, default=False)
     can_cash_movements = Column(Boolean, default=False)
     can_view_costs = Column(Boolean, default=False)
+    can_view_totals = Column(Boolean, default=False)   # ver ventas totales/tarjeta/transferencia en Caja
+    can_withdraw_cash = Column(Boolean, default=False)  # sacar efectivo del cajón (sangría)
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
@@ -164,11 +166,12 @@ class CashMovement(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     register_id = Column(Integer, ForeignKey("cash_register.id"), nullable=False)
-    type = Column(String, nullable=False)           # 'sale' | 'expense' | 'income' | 'void'
+    type = Column(String, nullable=False)           # 'sale'|'expense'|'income'|'void'|'withdrawal'
     amount = Column(Float, nullable=False)
     description = Column(String, nullable=True)
     payment_method = Column(String, nullable=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
+    expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=True)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -208,6 +211,7 @@ class IngredientMovement(Base):
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=True)  # compra que originó el movimiento
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -273,6 +277,7 @@ class Expense(Base):
     description = Column(String, nullable=True)
     receipt_photo = Column(Text, nullable=True)      # base64, mismo patrón que products.photo
     document_type = Column(String, default='boleta') # 'boleta' | 'factura'
+    invoice_number = Column(String, nullable=True)   # folio del documento del proveedor (compras)
     payment_method = Column(String, nullable=True)   # 'efectivo' | 'transferencia' | 'debito' (compras)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
@@ -311,15 +316,44 @@ class PurchaseItem(Base):
     ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=True)
     category_id = Column(Integer, ForeignKey("expense_categories.id"), nullable=True)  # categoría de gasto de la línea (null → la de la factura)
     description = Column(String, nullable=False)     # snapshot del nombre de la línea
-    quantity = Column(Float, nullable=False)
-    unit_cost = Column(Float, nullable=False)        # costo neto unitario
+    quantity = Column(Float, nullable=False)         # cantidad FACTURADA (packs, cajas...) — cuadra contra el papel
+    unit_cost = Column(Float, nullable=False)        # costo neto por unidad facturada (por pack)
     line_total = Column(Float, nullable=False)       # quantity * unit_cost (neto)
+    units_per_pack = Column(Float, nullable=False, default=1.0)  # unidades de inventario por unidad facturada
+    taxable = Column(Boolean, nullable=False, default=True)  # False → impuesto adicional (IABA/ILA): suma al total sin llevar IVA
     created_at = Column(DateTime, default=datetime.now)
 
     expense = relationship("Expense", back_populates="purchase_items")
     product = relationship("Product")
     ingredient = relationship("Ingredient")
     category = relationship("ExpenseCategory")
+
+
+class SupplierItemAlias(Base):
+    """Aprendizaje del escaneo de facturas: cada vez que el admin confirma a qué
+    producto/insumo corresponde una línea, se guarda el par (proveedor, descripción
+    normalizada) para reconocerla sola en la próxima factura.
+
+    La descripción de una factura es estable — sale del maestro de artículos del
+    proveedor — así que un acierto manual resuelve ese ítem para siempre.
+    `units_per_pack` resuelve el otro problema: la factura vende packs y el
+    inventario cuenta unidades sueltas."""
+    __tablename__ = "supplier_item_aliases"
+    __table_args__ = (UniqueConstraint('supplier_id', 'normalized_description', name='uq_alias_supplier_desc'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    normalized_description = Column(String, nullable=False)
+    raw_description = Column(String, nullable=False)   # último texto visto, para mostrarlo en la UI
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=True)
+    units_per_pack = Column(Float, nullable=False, default=1.0)
+    times_seen = Column(Integer, default=1)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    supplier = relationship("Supplier")
+    product = relationship("Product")
+    ingredient = relationship("Ingredient")
 
 
 class Invoice(Base):

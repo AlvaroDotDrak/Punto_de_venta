@@ -1,3 +1,6 @@
+import re
+import unicodedata
+
 CONVERSION_FACTORS = {
     # Masa/Peso
     ("kg", "g"): 1000.0,
@@ -9,6 +12,59 @@ CONVERSION_FACTORS = {
     ("docena", "unidad"): 12.0,
     ("unidad", "docena"): 1.0 / 12.0,
 }
+
+
+def normalize_description(text: str) -> str:
+    """Clave de comparación para descripciones de líneas de factura: sin acentos,
+    minúsculas y con la puntuación colapsada a espacios simples. Así 'VITAL S/GAS
+    6x1.6LT.' y 'Vital s/gas   6x1,6lt' caen en la misma clave.
+
+    Es a propósito una coincidencia exacta sobre el texto normalizado: el proveedor
+    emite siempre el mismo string desde su maestro de artículos, y un criterio más
+    laxo acá fusionaría ítems distintos de la misma línea de productos."""
+    if not text:
+        return ""
+    sin_acentos = ''.join(
+        c for c in unicodedata.normalize('NFD', text.lower())
+        if unicodedata.category(c) != 'Mn'
+    )
+    return re.sub(r"[^a-z0-9]+", " ", sin_acentos).strip()
+
+
+_UNIDADES_MEDIDA = r"(?:LTS?|L|ML|CC|GRS?|G|KGS?|K|OZ|MT|CM)"
+
+# El orden importa: los rótulos explícitos mandan sobre el formato "6x1.5LT".
+_PATRONES_PACK = (
+    # "PACK 6", "CAJA X12", "DISPLAY 24", "BANDEJA 6"
+    r"(?:PACK|CAJA|DISPLAY|BANDEJA|BOLSA|ESTUCHE|SET)\s*(?:DE\s*|X\s*)?(\d{1,3})\b",
+    # "6X1.5LT", "12 X 350CC" — cantidad por tamaño, el formato más común
+    rf"\b(\d{{1,3}})\s*X\s*\d+(?:[.,]\d+)?\s*{_UNIDADES_MEDIDA}\b",
+    # "12 UN", "6 UNID", "24 UNIDADES"
+    r"\b(\d{1,3})\s*(?:UN|UND|UNID|UNIDS?|UNIDADES)\b",
+    # "X6" suelto al final, sin que le siga una unidad de medida (evita "X 1.5LT")
+    rf"\bX\s*(\d{{1,3}})\b(?!\s*{_UNIDADES_MEDIDA})",
+)
+
+
+def detect_pack(description: str):
+    """Deduce cuántas unidades trae un pack a partir de la descripción de la factura
+    ("COCA COLA 350CC X6" → 6). Devuelve None si no hay señal clara.
+
+    Es solo una sugerencia para que el admin confirme: equivocarse acá desajusta el
+    stock y el costo, así que ante la duda es preferible no proponer nada."""
+    if not description:
+        return None
+    texto = unicodedata.normalize('NFD', description.upper())
+    texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')
+
+    for patron in _PATRONES_PACK:
+        m = re.search(patron, texto)
+        if m:
+            valor = int(m.group(1))
+            # Fuera de este rango casi siempre es un gramaje o un código, no un pack.
+            if 2 <= valor <= 48:
+                return float(valor)
+    return None
 
 
 def convert_unit(value: float, from_unit: str, to_unit: str) -> float:

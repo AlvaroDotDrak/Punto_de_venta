@@ -3,12 +3,13 @@
  * V3.0: consume FastAPI backend
  */
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
 import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw, Barcode } from 'lucide-react';
+import { Package, Plus, Search, X, Edit, Camera, Trash2, BarChart2, ChefHat, RotateCcw, Barcode, Zap } from 'lucide-react';
 import ProductStatsModal from '../components/ProductStatsModal';
 import RecipeModal from '../components/Productos/RecipeModal';
 
@@ -37,10 +38,10 @@ function resizeImage(file) {
 
 export default function Productos() {
   const toast = useToast();
-  const { currentSeller } = useSeller();
+  const { currentSeller, isAdmin } = useSeller();
   const { categories, hasCapability } = useConfig();
-  const canEdit = currentSeller?.role === 'admin' || currentSeller?.products_access === 'full';
-  const canViewCosts = currentSeller?.role === 'admin' || currentSeller?.can_view_costs;
+  const canEdit = isAdmin || currentSeller?.products_access === 'full';
+  const canViewCosts = isAdmin || currentSeller?.can_view_costs;
 
   const categoryEmoji = useMemo(
     () => Object.fromEntries(categories.map(c => [c.value, c.emoji])),
@@ -165,9 +166,14 @@ export default function Productos() {
       <div className="page-header">
         <h1 className="page-title"><Package size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />Productos</h1>
         {canEdit && (
-          <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(newForm()); setShowForm(true); }}>
-            <Plus size={16} /> Nuevo Producto
-          </button>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            <Link to="/productos/carga-rapida" className="btn btn-secondary">
+              <Zap size={16} /> Carga rápida
+            </Link>
+            <button className="btn btn-primary" onClick={() => { setEditingId(null); setForm(newForm()); setShowForm(true); }}>
+              <Plus size={16} /> Nuevo Producto
+            </button>
+          </div>
         )}
       </div>
 

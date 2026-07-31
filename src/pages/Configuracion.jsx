@@ -89,6 +89,7 @@ export default function Configuracion() {
   const [restoring, setRestoring] = useState(false);
   const [configParams, setConfigParams] = useState({});
   const [savingParam, setSavingParam] = useState(false);
+  const [cashTolerance, setCashTolerance] = useState('');
   const [branding, setBranding] = useState(null);
   const [caps, setCaps] = useState(null);
   const [palette, setPalette] = useState(null);
@@ -102,6 +103,7 @@ export default function Configuracion() {
       api.get('/audit?limit=100').then(setAuditLogs).catch(() => {});
     } else if (activeTab === 'parametros') {
       api.get('/config').then(setConfigParams).catch(() => {});
+      setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
     } else if (activeTab === 'negocio' && profile) {
       setBranding({ ...profile.branding });
       setCaps({ ...profile.capabilities });
@@ -236,6 +238,21 @@ export default function Configuracion() {
     } catch (err) {
       toast.error('Error al restaurar: ' + err.message);
       setRestoring(false);
+    }
+  };
+
+  const handleSaveTolerance = async () => {
+    const value = parseInt(cashTolerance);
+    if (isNaN(value) || value < 0) { toast.error('La tolerancia debe ser un número positivo o cero'); return; }
+    setSavingParam(true);
+    try {
+      await api.put('/config/profile', { cash_diff_tolerance: value });
+      await refresh();
+      toast.success('Tolerancia de caja guardada');
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
+    } finally {
+      setSavingParam(false);
     }
   };
 
@@ -644,6 +661,26 @@ export default function Configuracion() {
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   Tiempo antes de cumplirse el límite de frescura para alertar sobre el vencimiento en vitrina (por defecto 24 horas).
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  Diferencia tolerada al cerrar caja
+                </label>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  <input
+                    type="number" min="0"
+                    className="form-input"
+                    value={cashTolerance}
+                    onChange={(e) => setCashTolerance(e.target.value)}
+                  />
+                  <button className="btn btn-primary" onClick={handleSaveTolerance} disabled={savingParam}>
+                    Guardar
+                  </button>
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Sobrante o faltante que se considera normal al cuadrar el efectivo. Por debajo de este monto el cierre se marca en verde; por encima, en rojo (por defecto $500).
                 </p>
               </div>
 

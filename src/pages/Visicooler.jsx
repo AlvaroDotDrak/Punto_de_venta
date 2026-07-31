@@ -32,8 +32,7 @@ const STATUS_META = {
 
 export default function Visicooler() {
   const toast = useToast();
-  const { currentSeller } = useSeller();
-  const isAdmin = currentSeller?.role === 'admin';
+  const { currentSeller, isAdmin } = useSeller();
 
   const [products, setProducts] = useState([]);
   const [search, setSearch]     = useState('');

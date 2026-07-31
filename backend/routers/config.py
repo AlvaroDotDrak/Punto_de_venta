@@ -54,6 +54,7 @@ def build_profile(db: Session) -> dict:
     for c in product_categories:
         c["age_restricted"] = preset_flags.get(c["value"], False)
     tax_rate = float(_get(db, "tax_rate") or 0.19)
+    cash_diff_tolerance = float(_get(db, "cash_diff_tolerance") or 500)
     setup_complete = _get(db, "setup_complete") == "true"
     printing = {
         "auto_print": _get(db, "auto_print") == "true",
@@ -72,6 +73,7 @@ def build_profile(db: Session) -> dict:
         "tax_rate": tax_rate,
         "setup_complete": setup_complete,
         "printing": printing,
+        "cash_diff_tolerance": cash_diff_tolerance,
     }
 
 
@@ -141,6 +143,8 @@ def update_profile(
         _set(db, "product_categories", json.dumps(payload.product_categories))
     if payload.tax_rate is not None:
         _set(db, "tax_rate", str(payload.tax_rate))
+    if payload.cash_diff_tolerance is not None:
+        _set(db, "cash_diff_tolerance", str(payload.cash_diff_tolerance))
     db.commit()
     return build_profile(db)
 

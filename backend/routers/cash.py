@@ -1,5 +1,5 @@
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -13,7 +13,28 @@ from ..schemas import (
 
 router = APIRouter(prefix="/cash", tags=["cash"])
 
-VALID_PAYMENT_METHODS = {"efectivo", "tarjeta", "transferencia"}
+def _can_view_totals(seller) -> bool:
+    return seller.role in ("admin", "dev") or bool(getattr(seller, "can_view_totals", False))
+
+
+def _visible(register: CashRegister | None, seller, db: Session | None = None) -> CashRegisterOut | None:
+    """Recorta los movimientos que no son efectivo para quien no puede ver los
+    totales del negocio. Se filtra acá y no en el frontend: esconder la tarjeta
+    en pantalla dejaría el detalle a la vista en la respuesta de la API.
+
+    En una caja abierta rellena expected_amount con el efectivo esperado al
+    momento, para que el frontend no tenga que recalcularlo por su cuenta."""
+    if register is None:
+        return None
+    out = CashRegisterOut.model_validate(register)
+    if db is not None and register.status == "open":
+        out.expected_amount = _expected_cash(db, register)
+    if not _can_view_totals(seller):
+        out.movements = [
+            m for m in out.movements
+            if m.payment_method == "efectivo" or m.payment_method is None
+        ]
+    return out
 
 
 def _get_open_register(db: Session) -> CashRegister:
@@ -27,8 +48,9 @@ def _expected_cash(db: Session, register: CashRegister) -> float:
     """Efectivo físico esperado al cierre.
 
     Solo los movimientos en efectivo afectan la caja (los manuales sin método se
-    asumen efectivo). Signo por tipo: venta/ingreso suman, gasto resta, anulación
-    ya viene con monto negativo. Tarjeta y transferencia no tocan el efectivo.
+    asumen efectivo). Signo por tipo: venta/ingreso suman, gasto y retiro restan,
+    anulación ya viene con monto negativo. Tarjeta y transferencia no tocan el
+    efectivo.
     """
     movements = db.query(CashMovement).filter(
         CashMovement.register_id == register.id,
@@ -36,11 +58,11 @@ def _expected_cash(db: Session, register: CashRegister) -> float:
     expected = register.opening_amount
     for m in movements:
         is_cash = m.payment_method == "efectivo" or (
-            m.payment_method is None and m.type in ("expense", "income")
+            m.payment_method is None and m.type in ("expense", "income", "withdrawal")
         )
         if not is_cash:
             continue
-        if m.type == "expense":
+        if m.type in ("expense", "withdrawal"):
             expected -= m.amount
         else:
             expected += m.amount  # sale, income (positivos); void (ya negativo)
@@ -48,26 +70,32 @@ def _expected_cash(db: Session, register: CashRegister) -> float:
 
 
 @router.get("/current", response_model=CashRegisterOut | None)
-def get_current_register(db: Session = Depends(get_db), _=Depends(get_current_seller)):
-    return (
+def get_current_register(db: Session = Depends(get_db), seller=Depends(get_current_seller)):
+    register = (
         db.query(CashRegister)
         .options(joinedload(CashRegister.movements))
         .filter(CashRegister.status == "open")
         .first()
     )
+    return _visible(register, seller, db)
 
 
 @router.get("/history", response_model=list[CashRegisterOut])
 def get_history(
-    limit: int = 30,
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = 0,
     db: Session = Depends(get_db),
-    _=Depends(get_current_seller),
+    _=Depends(require_permission("can_close_cash")),
 ):
-    """Retorna las últimas cajas cerradas, sin movimientos (para listado rápido)."""
+    """Retorna las cajas cerradas, sin movimientos (para listado rápido).
+
+    Requiere can_close_cash: el historial expone las diferencias de cierre de
+    todos los turnos, no es información para cualquier vendedor."""
     return (
         db.query(CashRegister)
         .filter(CashRegister.status == "closed")
         .order_by(CashRegister.closed_at.desc())
+        .offset(max(0, offset))
         .limit(limit)
         .all()
     )
@@ -77,7 +105,7 @@ def get_history(
 def get_history_detail(
     register_id: int,
     db: Session = Depends(get_db),
-    _=Depends(get_current_seller),
+    seller=Depends(require_permission("can_close_cash")),
 ):
     """Retorna una caja cerrada con todos sus movimientos."""
     reg = (
@@ -88,7 +116,7 @@ def get_history_detail(
     )
     if not reg:
         raise HTTPException(status_code=404, detail="Caja no encontrada")
-    return reg
+    return _visible(reg, seller)
 
 
 @router.post("/open", response_model=CashRegisterOut, status_code=201)
@@ -130,9 +158,9 @@ def close_register(
     log_action(db, ACTIONS.CASH_CLOSE, seller.id,
                f"Caja cerrada. Esperado: ${expected:.0f} | Real: ${payload.closing_amount:.0f}")
 
-    return db.query(CashRegister).options(
+    return _visible(db.query(CashRegister).options(
         joinedload(CashRegister.movements)
-    ).filter(CashRegister.id == register.id).first()
+    ).filter(CashRegister.id == register.id).first(), seller)
 
 
 @router.post("/movements", response_model=CashMovementOut, status_code=201)
@@ -141,10 +169,20 @@ def add_movement(
     db: Session = Depends(get_db),
     seller=Depends(require_permission("can_cash_movements")),
 ):
-    if payload.type not in ("expense", "income"):
-        raise HTTPException(status_code=422, detail="Tipo debe ser 'expense' o 'income'")
-    if payload.payment_method and payload.payment_method not in VALID_PAYMENT_METHODS:
-        raise HTTPException(status_code=422, detail="Método de pago inválido")
+    """Movimientos manuales del cajón: ingreso de efectivo y retiro (sangría).
+
+    Los gastos NO se registran acá: van por /expenses, que además pide categoría
+    y comprobante, y desde allí se refleja el movimiento de caja. Un retiro no es
+    un gasto — la plata sigue siendo del negocio, solo cambió de lugar — por eso
+    nunca llega a Contabilidad."""
+    if payload.type not in ("income", "withdrawal"):
+        raise HTTPException(status_code=422, detail="Tipo debe ser 'income' o 'withdrawal'")
+    if payload.type == "withdrawal" and not (
+        seller.role in ("admin", "dev") or seller.can_withdraw_cash
+    ):
+        raise HTTPException(status_code=403, detail="Sin permisos para retirar efectivo")
+    if payload.type == "withdrawal" and not (payload.description or "").strip():
+        raise HTTPException(status_code=422, detail="El retiro necesita una descripción (a dónde va el dinero)")
 
     register = _get_open_register(db)
     movement = CashMovement(
@@ -161,3 +199,41 @@ def add_movement(
     log_action(db, ACTIONS.CASH_MOVEMENT, seller.id,
                f"Movimiento {payload.type}: ${payload.amount:.0f} ({payload.payment_method or 'sin método'})")
     return movement
+
+
+@router.delete("/movements/{movement_id}", status_code=204)
+def delete_movement(
+    movement_id: int,
+    db: Session = Depends(get_db),
+    seller=Depends(require_permission("can_cash_movements")),
+):
+    """Borra un movimiento manual mal ingresado (un cero de más en el monto deja
+    el cierre descuadrado y no había forma de corregirlo).
+
+    Solo movimientos manuales: los de tipo 'sale'/'void' son el reflejo de una
+    venta y borrarlos desincronizaría la caja de las ventas — esos se corrigen
+    anulando la venta. Solo en la caja abierta: reescribir un turno ya cerrado
+    invalidaría su cierre. El detalle queda en el audit log."""
+    movement = db.query(CashMovement).filter(CashMovement.id == movement_id).first()
+    if not movement:
+        raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    if movement.expense_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Este movimiento viene de un gasto. Elimina el gasto y el movimiento se revierte solo.",
+        )
+    if movement.type not in ("income", "withdrawal"):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden borrar movimientos manuales. Para corregir una venta, anúlala.",
+        )
+
+    register = _get_open_register(db)
+    if movement.register_id != register.id:
+        raise HTTPException(status_code=400, detail="El movimiento pertenece a una caja ya cerrada")
+
+    detalle = (f"Movimiento #{movement.id} eliminado: {movement.type} "
+               f"${movement.amount:.0f} — {movement.description or 'sin descripción'}")
+    db.delete(movement)
+    db.commit()
+    log_action(db, ACTIONS.CASH_MOVEMENT, seller.id, detalle)

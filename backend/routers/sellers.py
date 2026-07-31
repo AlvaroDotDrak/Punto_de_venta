@@ -67,6 +67,18 @@ def update_seller(
         seller.can_access_insumos = payload.can_access_insumos
     if payload.can_access_historial is not None:
         seller.can_access_historial = payload.can_access_historial
+    if payload.can_void_sales is not None:
+        seller.can_void_sales = payload.can_void_sales
+    if payload.can_close_cash is not None:
+        seller.can_close_cash = payload.can_close_cash
+    if payload.can_cash_movements is not None:
+        seller.can_cash_movements = payload.can_cash_movements
+    if payload.can_view_costs is not None:
+        seller.can_view_costs = payload.can_view_costs
+    if payload.can_view_totals is not None:
+        seller.can_view_totals = payload.can_view_totals
+    if payload.can_withdraw_cash is not None:
+        seller.can_withdraw_cash = payload.can_withdraw_cash
 
     db.commit()
     db.refresh(seller)

@@ -5,12 +5,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import {
   DollarSign, Lock, Unlock, Plus, ArrowDown, ArrowUp,
   Clock, X, History, ChevronRight, ChevronLeft, FileText,
-  TrendingUp, TrendingDown, AlertCircle,
+  TrendingUp, TrendingDown, AlertCircle, Trash2,
 } from 'lucide-react';
 
 // Denominaciones CLP
@@ -22,6 +23,8 @@ const DENOMINATIONS = [
   { value: 1000,  label: '$1.000'  },
   { value: 500,   label: '$500'    },
   { value: 100,   label: '$100'    },
+  { value: 50,    label: '$50'     },
+  { value: 10,    label: '$10'     },
 ];
 
 const PAYMENT_LABELS = {
@@ -30,13 +33,6 @@ const PAYMENT_LABELS = {
   transferencia: '🏦 Transferencia',
 };
 
-// Diferencia (sobrante/faltante) tolerada antes de marcar el cierre en rojo.
-const CASH_DIFF_TOLERANCE = 500;
-
-// Un movimiento afecta el efectivo físico solo si es en efectivo (los manuales
-// sin método se asumen efectivo). Debe coincidir con _expected_cash del backend.
-const affectsCash = (m) => m.payment_method === 'efectivo' || m.payment_method == null;
-
 function calcSummary(register) {
   if (!register) return null;
   const movs = register.movements || [];
@@ -44,6 +40,7 @@ function calcSummary(register) {
   const expenses   = movs.filter(m => m.type === 'expense');
   const incomes    = movs.filter(m => m.type === 'income');
   const voids      = movs.filter(m => m.type === 'void');
+  const withdrawals= movs.filter(m => m.type === 'withdrawal');
 
   // Montos brutos de ventas
   const salesGross     = sales.reduce((s, m) => s + m.amount, 0);
@@ -57,18 +54,16 @@ function calcSummary(register) {
 
   const totalExpenses  = expenses.reduce((s, m) => s + m.amount, 0);
   const totalIncomes   = incomes.reduce((s, m) => s + m.amount, 0);
+  const totalWithdrawals = withdrawals.reduce((s, m) => s + m.amount, 0);
   const salesCard      = sales.filter(m => m.payment_method === 'tarjeta').reduce((s, m) => s + m.amount, 0);
   const salesTransfer  = sales.filter(m => m.payment_method === 'transferencia').reduce((s, m) => s + m.amount, 0);
-  // Solo el efectivo entra al cálculo de caja física (ingresos/gastos en tarjeta o
-  // transferencia no mueven el cajón). Coincide con _expected_cash del backend.
-  const cashIncomes    = incomes.filter(affectsCash).reduce((s, m) => s + m.amount, 0);
-  const cashExpenses   = expenses.filter(affectsCash).reduce((s, m) => s + m.amount, 0);
-  const expectedCash   = register.opening_amount + salesCash + cashIncomes - cashExpenses;
 
+  // El efectivo esperado NO se calcula acá: lo manda el servidor en
+  // expected_amount (_expected_cash). Tenerlo en los dos lados garantizaba que
+  // tarde o temprano la pantalla mostrara un número y la DB guardara otro.
   return {
-    totalSales, totalExpenses, totalIncomes,
+    totalSales, totalExpenses, totalIncomes, totalWithdrawals,
     salesCash, salesCard, salesTransfer,
-    expectedCash,
     count: sales.length - voids.length,
     voidCount: voids.length,
   };
@@ -76,10 +71,16 @@ function calcSummary(register) {
 
 export default function Caja() {
   const toast = useToast();
-  const { currentSeller } = useSeller();
-  const isAdmin = currentSeller?.role === 'admin';
-  const canCloseCash = currentSeller?.role === 'admin' || currentSeller?.can_close_cash;
-  const canCashMovements = currentSeller?.role === 'admin' || currentSeller?.can_cash_movements;
+  const { currentSeller, isAdmin } = useSeller();
+  const { cashDiffTolerance } = useConfig();
+  const canCloseCash = isAdmin || currentSeller?.can_close_cash;
+  const canCashMovements = isAdmin || currentSeller?.can_cash_movements;
+  // Los totales del negocio (venta total, tarjeta, transferencia) son sensibles:
+  // el vendedor solo necesita el efectivo para cuadrar el cajón. El backend además
+  // recorta los movimientos que no son efectivo.
+  const canViewTotals = isAdmin || currentSeller?.can_view_totals;
+  const canWithdraw = isAdmin || currentSeller?.can_withdraw_cash;
+  const tolerance = cashDiffTolerance;
 
   const [register,    setRegister]    = useState(null);
   const [loading,     setLoading]     = useState(true);
@@ -103,8 +104,13 @@ export default function Caja() {
 
   // Movimientos
   const [movForm, setMovForm] = useState({
-    amount: '', description: '', type: 'expense', payment_method: 'efectivo',
+    amount: '', description: '', type: 'expense', payment_method: 'efectivo', category_id: '',
   });
+  const [expenseCats, setExpenseCats] = useState([]);
+
+  // Evita que un doble clic registre el movimiento (o abra/cierre la caja) dos veces
+  const [submitting, setSubmitting] = useState(false);
+  const [histHasMore, setHistHasMore] = useState(false);
 
   const loadRegister = async () => {
     try {
@@ -117,17 +123,26 @@ export default function Caja() {
     }
   };
 
-  const loadHistory = async () => {
+  const HIST_PAGE = 30;
+
+  const loadHistory = async (offset = 0) => {
     try {
-      const data = await api.get('/cash/history?limit=30');
-      setHistory(data);
+      const data = await api.get(`/cash/history?limit=${HIST_PAGE}&offset=${offset}`);
+      setHistory(prev => (offset === 0 ? data : [...prev, ...data]));
+      setHistHasMore(data.length === HIST_PAGE);
     } catch {
-      setHistory([]);
+      if (offset === 0) setHistory([]);
+      setHistHasMore(false);
     }
   };
 
   useEffect(() => { loadRegister(); }, []);
-  useEffect(() => { if (view === 'history') loadHistory(); }, [view]);
+  useEffect(() => {
+    if (showMovementModal && expenseCats.length === 0) {
+      api.get('/expense-categories').then(setExpenseCats).catch(() => {});
+    }
+  }, [showMovementModal, expenseCats.length]);
+  useEffect(() => { if (view === 'history') loadHistory(0); }, [view]);
 
   const summary = useMemo(() => calcSummary(register), [register]);
 
@@ -136,27 +151,41 @@ export default function Caja() {
     DENOMINATIONS.reduce((sum, d) => sum + (parseInt(denomCounts[d.value]) || 0) * d.value, 0),
   [denomCounts]);
 
-  const diff = summary ? denomTotal - summary.expectedCash : 0;
+  // Una caja que quedó abierta de ayer descuadra el cierre sin que nadie se entere
+  const staleHours = register?.opened_at
+    ? (Date.now() - new Date(register.opened_at).getTime()) / 36e5
+    : 0;
+
+  // Autoritativo: lo calcula el backend en _expected_cash
+  const expectedCash = register?.expected_amount ?? 0;
+  const diff = denomTotal - expectedCash;
 
   // ── HANDLERS ──────────────────────────────────────────────────────────────
 
   const handleOpenRegister = async () => {
     const amount = parseInt(openAmount);
     if (isNaN(amount) || amount < 0) { toast.error('El monto debe ser un número positivo o cero'); return; }
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await api.post('/cash/open', { opening_amount: amount });
       toast.success('Caja abierta exitosamente');
       setShowOpenModal(false);
       setOpenAmount('');
       loadRegister();
-    } catch (err) { toast.error('Error al abrir caja: ' + err.message); }
+    } catch (err) {
+      toast.error('Error al abrir caja: ' + err.message);
+    } finally { setSubmitting(false); }
   };
 
   const handleCloseRegister = async () => {
-    if (denomTotal <= 0 && !Object.values(denomCounts).some(v => parseInt(v) > 0)) {
-      toast.error('Ingresa las denominaciones para contar el efectivo');
+    // Un cajón que quedó vacío es un cierre válido (se retiró todo), pero pedimos
+    // confirmarlo para distinguirlo de haber olvidado contar.
+    if (denomTotal === 0 && !window.confirm('No ingresaste ninguna denominación. ¿Confirmas que la caja quedó con $0 en efectivo?')) {
       return;
     }
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await api.post('/cash/close', {
         closing_amount: denomTotal,
@@ -167,25 +196,57 @@ export default function Caja() {
       setCloseNotes('');
       setDenomCounts(Object.fromEntries(DENOMINATIONS.map(d => [d.value, ''])));
       loadRegister();
-    } catch (err) { toast.error('Error al cerrar caja: ' + err.message); }
+    } catch (err) {
+      toast.error('Error al cerrar caja: ' + err.message);
+    } finally { setSubmitting(false); }
   };
 
   const handleAddMovement = async () => {
     const amount = parseInt(movForm.amount);
     if (isNaN(amount) || amount <= 0) { toast.error('El monto debe ser mayor a cero'); return; }
     if (!movForm.description?.trim()) { toast.error('La descripción es obligatoria'); return; }
+    if (movForm.type === 'expense' && !movForm.category_id) {
+      toast.error('Elige la categoría del gasto'); return;
+    }
+    if (submitting) return;
+    setSubmitting(true);
     try {
-      await api.post('/cash/movements', {
-        type: movForm.type,
-        amount,
-        description: movForm.description,
-        payment_method: movForm.payment_method || null,
-      });
-      toast.success(movForm.type === 'expense' ? 'Gasto registrado' : 'Ingreso registrado');
+      if (movForm.type === 'expense') {
+        // Un gasto es un Expense de verdad (con categoría, va a Contabilidad) y el
+        // backend le crea solo el movimiento de caja si se pagó en efectivo.
+        await api.post('/expenses', {
+          category_id: parseInt(movForm.category_id),
+          amount,
+          description: movForm.description,
+          document_type: 'boleta',
+          payment_method: movForm.payment_method || null,
+        });
+        toast.success('Gasto registrado');
+      } else {
+        await api.post('/cash/movements', {
+          type: movForm.type,
+          amount,
+          description: movForm.description,
+          payment_method: movForm.type === 'withdrawal' ? 'efectivo' : (movForm.payment_method || null),
+        });
+        toast.success(movForm.type === 'withdrawal' ? 'Retiro registrado' : 'Ingreso registrado');
+      }
       setShowMovementModal(false);
-      setMovForm({ amount: '', description: '', type: 'expense', payment_method: 'efectivo' });
+      setMovForm({ amount: '', description: '', type: 'expense', payment_method: 'efectivo', category_id: '' });
       loadRegister();
-    } catch (err) { toast.error('Error: ' + err.message); }
+    } catch (err) {
+      toast.error('Error: ' + err.message);
+    } finally { setSubmitting(false); }
+  };
+
+  const handleDeleteMovement = async (mov) => {
+    const etiqueta = mov.type === 'expense' ? 'gasto' : 'ingreso';
+    if (!window.confirm(`¿Eliminar el ${etiqueta} de ${formatCurrency(mov.amount)}?\n\n${mov.description || 'Sin descripción'}`)) return;
+    try {
+      await api.delete(`/cash/movements/${mov.id}`);
+      toast.success('Movimiento eliminado');
+      loadRegister();
+    } catch (err) { toast.error('Error al eliminar: ' + err.message); }
   };
 
   const handleHistDetail = async (reg) => {
@@ -203,7 +264,7 @@ export default function Caja() {
   if (!register && view === 'current') {
     return (
       <div>
-        <PageHeader view={view} setView={setView} register={register} />
+        <PageHeader view={view} setView={setView} register={register} canCloseCash={canCloseCash} />
         <div className="empty-state">
           <Lock size={48} />
           <h3>Caja cerrada</h3>
@@ -216,7 +277,7 @@ export default function Caja() {
         <OpenModal
           show={showOpenModal} onClose={() => setShowOpenModal(false)}
           openAmount={openAmount} setOpenAmount={setOpenAmount}
-          onConfirm={handleOpenRegister}
+          onConfirm={handleOpenRegister} submitting={submitting}
         />
       </div>
     );
@@ -226,17 +287,22 @@ export default function Caja() {
   if (view === 'history') {
     return (
       <div>
-        <PageHeader view={view} setView={setView} register={register} />
+        <PageHeader view={view} setView={setView} register={register} canCloseCash={canCloseCash} />
 
         {histDetail ? (
           <HistoryDetail
             reg={histDetail}
+            canViewTotals={canViewTotals}
+            tolerance={tolerance}
             onBack={() => setHistDetail(null)}
           />
         ) : (
           <HistoryList
             history={history}
             onSelect={handleHistDetail}
+            tolerance={tolerance}
+            hasMore={histHasMore}
+            onLoadMore={() => loadHistory(history.length)}
           />
         )}
       </div>
@@ -248,7 +314,7 @@ export default function Caja() {
 
   return (
     <div>
-      <PageHeader view={view} setView={setView} register={register}
+      <PageHeader view={view} setView={setView} register={register} canCloseCash={canCloseCash}
         onMovement={canCashMovements ? () => setShowMovementModal(true) : null}
         onClose={canCloseCash ? () => { setShowCloseModal(true); } : null}
       />
@@ -259,16 +325,36 @@ export default function Caja() {
         {register.opened_by && <> · por {register.opened_by}</>}
       </div>
 
+      {staleHours >= 24 && (
+        <div className="card" style={{
+          display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+          padding: 'var(--space-md) var(--space-lg)', marginBottom: 'var(--space-md)',
+          background: 'var(--color-warning-bg, rgba(230,160,30,0.10))',
+          border: '1px solid rgba(230,160,30,0.35)', fontSize: '0.88rem',
+        }}>
+          <AlertCircle size={18} style={{ color: 'var(--color-warning, #B8860B)', flexShrink: 0 }} />
+          <span>
+            Esta caja lleva <strong>{Math.floor(staleHours / 24)} día{Math.floor(staleHours / 24) > 1 ? 's' : ''}</strong> abierta.
+            Si olvidaron cerrarla, las ventas de hoy se están sumando al turno anterior y el cierre no va a cuadrar.
+          </span>
+        </div>
+      )}
+
       {summary && (
         <div className="cash-summary-grid">
           {[
-            { label: 'Ventas del día',     value: formatCurrency(summary.totalSales),    sub: `${summary.count} transacciones`,          positive: true },
+            ...(canViewTotals ? [
+              { label: 'Ventas del día',   value: formatCurrency(summary.totalSales),    sub: `${summary.count} transacciones`, positive: true },
+            ] : []),
             { label: 'Efectivo',           value: formatCurrency(summary.salesCash),     sub: 'en ventas' },
-            { label: 'Tarjeta',            value: formatCurrency(summary.salesCard),     sub: 'débito + crédito' },
-            { label: 'Transferencia',      value: formatCurrency(summary.salesTransfer), sub: 'en ventas' },
+            ...(canViewTotals ? [
+              { label: 'Tarjeta',          value: formatCurrency(summary.salesCard),     sub: 'débito + crédito' },
+              { label: 'Transferencia',    value: formatCurrency(summary.salesTransfer), sub: 'en ventas' },
+            ] : []),
             { label: 'Ingresos manuales',  value: formatCurrency(summary.totalIncomes),  sub: 'registros manuales',                       positive: true },
-            { label: 'Gastos',             value: formatCurrency(summary.totalExpenses), sub: 'registros manuales',                       negative: true },
-            { label: 'Efectivo esperado',  value: formatCurrency(summary.expectedCash),  sub: 'apertura + efectivo',                      positive: true },
+            { label: 'Gastos',             value: formatCurrency(summary.totalExpenses), sub: 'pagados en efectivo',                      negative: true },
+            { label: 'Retiros',            value: formatCurrency(summary.totalWithdrawals), sub: 'efectivo sacado del cajón',              negative: true },
+            { label: 'Efectivo esperado',  value: formatCurrency(expectedCash),          sub: 'apertura + efectivo',                      positive: true },
           ].map(c => (
             <div key={c.label} className="cash-summary-card">
               <div className="cash-summary-label">{c.label}</div>
@@ -283,7 +369,7 @@ export default function Caja() {
         <div className="card-header">
           <h3 className="card-title">Movimientos ({movements.length})</h3>
         </div>
-        <MovementsTable movements={movements} />
+        <MovementsTable movements={movements} onDelete={canCashMovements ? handleDeleteMovement : null} />
       </div>
 
       {/* Modal: Registrar movimiento */}
@@ -298,23 +384,46 @@ export default function Caja() {
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Tipo</label>
                 <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                  {[['expense', '↑ Gasto'], ['income', '↓ Ingreso']].map(([t, lbl]) => (
+                  {[
+                    ['expense', '↑ Gasto'],
+                    ...(canWithdraw ? [['withdrawal', '↑ Retiro']] : []),
+                    ['income', '↓ Ingreso'],
+                  ].map(([t, lbl]) => (
                     <button key={t} className={`btn ${movForm.type === t ? 'btn-primary' : 'btn-secondary'}`}
                       onClick={() => setMovForm(f => ({ ...f, type: t }))}>
                       {lbl}
                     </button>
                   ))}
                 </div>
+                <p style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                  {movForm.type === 'expense' && 'Plata que sale y es gasto del negocio (proveedor, insumos). Se registra en Gastos y descuenta del cajón.'}
+                  {movForm.type === 'withdrawal' && 'Efectivo que sacás del cajón para guardarlo. NO es un gasto: la plata sigue siendo del negocio, por eso no entra a Contabilidad.'}
+                  {movForm.type === 'income' && 'Efectivo que entra al cajón sin ser una venta (aporte de sencillo, devolución).'}
+                </p>
               </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Método de pago</label>
-                <select className="form-input" value={movForm.payment_method}
-                  onChange={e => setMovForm(f => ({ ...f, payment_method: e.target.value }))}>
-                  <option value="efectivo">💵 Efectivo</option>
-                  <option value="tarjeta">💳 Tarjeta</option>
-                  <option value="transferencia">🏦 Transferencia</option>
-                </select>
-              </div>
+
+              {movForm.type === 'expense' && (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Categoría del gasto</label>
+                  <select className="form-input" value={movForm.category_id}
+                    onChange={e => setMovForm(f => ({ ...f, category_id: e.target.value }))}>
+                    <option value="">Selecciona una categoría…</option>
+                    {expenseCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {movForm.type !== 'withdrawal' && (
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Método de pago</label>
+                  <select className="form-input" value={movForm.payment_method}
+                    onChange={e => setMovForm(f => ({ ...f, payment_method: e.target.value }))}>
+                    <option value="efectivo">💵 Efectivo</option>
+                    <option value="tarjeta">💳 Tarjeta</option>
+                    <option value="transferencia">🏦 Transferencia</option>
+                  </select>
+                </div>
+              )}
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Monto</label>
                 <input type="number" className="form-input" placeholder="Ej: 5000"
@@ -322,13 +431,16 @@ export default function Caja() {
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Descripción</label>
-                <input type="text" className="form-input" placeholder="Ej: Compra de azúcar"
+                <input type="text" className="form-input"
+                  placeholder={movForm.type === 'withdrawal' ? 'Ej: Retiro a caja fuerte' : 'Ej: Compra de azúcar'}
                   value={movForm.description} onChange={e => setMovForm(f => ({ ...f, description: e.target.value }))} />
               </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowMovementModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleAddMovement}>Registrar</button>
+              <button className="btn btn-primary" onClick={handleAddMovement} disabled={submitting}>
+                {submitting ? 'Registrando…' : 'Registrar'}
+              </button>
             </div>
           </div>
         </div>
@@ -357,12 +469,17 @@ export default function Caja() {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                     {[
-                      ['Ventas (' + summary.count + ')',    formatCurrency(summary.totalSales),    false],
+                      ...(canViewTotals ? [
+                        ['Ventas (' + summary.count + ')',  formatCurrency(summary.totalSales),    false],
+                      ] : []),
                       ['Efectivo ventas',                    formatCurrency(summary.salesCash),     false],
-                      ['Tarjeta',                            formatCurrency(summary.salesCard),     false],
-                      ['Transferencia',                      formatCurrency(summary.salesTransfer), false],
+                      ...(canViewTotals ? [
+                        ['Tarjeta',                          formatCurrency(summary.salesCard),     false],
+                        ['Transferencia',                    formatCurrency(summary.salesTransfer), false],
+                      ] : []),
                       ['Ingresos manuales',                  formatCurrency(summary.totalIncomes),  false],
                       ['Gastos',                             formatCurrency(summary.totalExpenses), true],
+                      ['Retiros',                            formatCurrency(summary.totalWithdrawals), true],
                     ].map(([lbl, val, neg]) => (
                       <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '4px 8px', borderRadius: 6, background: 'var(--color-bg)' }}>
                         <span style={{ color: 'var(--color-text-secondary)' }}>{lbl}</span>
@@ -371,7 +488,7 @@ export default function Caja() {
                     ))}
                     <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 700, padding: '6px 8px', borderRadius: 6, background: 'var(--color-primary-bg)', color: 'var(--color-primary)' }}>
                       <span>Efectivo esperado</span>
-                      <span>{formatCurrency(summary.expectedCash)}</span>
+                      <span>{formatCurrency(expectedCash)}</span>
                     </div>
                   </div>
                 </div>
@@ -409,8 +526,8 @@ export default function Caja() {
                 {denomTotal > 0 && summary && (
                   <div style={{
                     marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius-md)',
-                    background: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
-                    color: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'var(--color-success)' : 'var(--color-danger)',
+                    background: Math.abs(diff) < tolerance ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
+                    color: Math.abs(diff) < tolerance ? 'var(--color-success)' : 'var(--color-danger)',
                     fontWeight: 700, display: 'flex', justifyContent: 'space-between',
                   }}>
                     <span>Diferencia</span>
@@ -434,8 +551,8 @@ export default function Caja() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setShowCloseModal(false)}>Cancelar</button>
-              <button className="btn btn-danger" onClick={handleCloseRegister}>
-                <Lock size={16} /> Cerrar Caja — {formatCurrency(denomTotal)}
+              <button className="btn btn-danger" onClick={handleCloseRegister} disabled={submitting}>
+                <Lock size={16} /> {submitting ? 'Cerrando…' : `Cerrar Caja — ${formatCurrency(denomTotal)}`}
               </button>
             </div>
           </div>
@@ -445,7 +562,7 @@ export default function Caja() {
       <OpenModal
         show={showOpenModal} onClose={() => setShowOpenModal(false)}
         openAmount={openAmount} setOpenAmount={setOpenAmount}
-        onConfirm={handleOpenRegister}
+        onConfirm={handleOpenRegister} submitting={submitting}
       />
     </div>
   );
@@ -453,7 +570,7 @@ export default function Caja() {
 
 // ── SUB-COMPONENTES ────────────────────────────────────────────────────────
 
-function PageHeader({ view, setView, register, onMovement, onClose }) {
+function PageHeader({ view, setView, register, canCloseCash, onMovement, onClose }) {
   return (
     <div className="page-header">
       <h1 className="page-title">
@@ -462,12 +579,14 @@ function PageHeader({ view, setView, register, onMovement, onClose }) {
       </h1>
       <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center', flexWrap: 'wrap' }}>
         {/* Toggle historial */}
-        <button
-          className={`btn ${view === 'history' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setView(v => v === 'history' ? 'current' : 'history')}
-        >
-          <History size={16} /> Historial
-        </button>
+        {canCloseCash && (
+          <button
+            className={`btn ${view === 'history' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setView(v => v === 'history' ? 'current' : 'history')}
+          >
+            <History size={16} /> Historial
+          </button>
+        )}
 
         {/* Acciones caja abierta */}
         {register && view === 'current' && (
@@ -489,7 +608,7 @@ function PageHeader({ view, setView, register, onMovement, onClose }) {
   );
 }
 
-function MovementsTable({ movements }) {
+function MovementsTable({ movements, onDelete }) {
   if (movements.length === 0) {
     return (
       <div className="empty-state" style={{ padding: 'var(--space-xl)' }}>
@@ -501,7 +620,7 @@ function MovementsTable({ movements }) {
     <div className="table-wrapper">
       <table>
         <thead>
-          <tr><th>Hora</th><th>Tipo</th><th>Descripción</th><th>Método</th><th>Por</th><th style={{ textAlign: 'right' }}>Monto</th></tr>
+          <tr><th>Hora</th><th>Tipo</th><th>Descripción</th><th>Método</th><th>Por</th><th style={{ textAlign: 'right' }}>Monto</th>{onDelete && <th></th>}</tr>
         </thead>
         <tbody>
           {movements.map(mov => (
@@ -512,13 +631,24 @@ function MovementsTable({ movements }) {
                 {mov.type === 'expense' && <span className="badge badge-danger"><ArrowUp size={12} /> Gasto</span>}
                 {mov.type === 'income'  && <span className="badge badge-info"><ArrowDown size={12} /> Ingreso</span>}
                 {mov.type === 'void'    && <span className="badge badge-warning"><ArrowUp size={12} /> Anulación</span>}
+                {mov.type === 'withdrawal' && <span className="badge badge-warning"><ArrowUp size={12} /> Retiro</span>}
               </td>
               <td>{mov.description || '—'}</td>
               <td style={{ fontSize: '0.85rem' }}>{mov.payment_method ? PAYMENT_LABELS[mov.payment_method] || mov.payment_method : '—'}</td>
               <td style={{ fontSize: '0.85rem' }}>{mov.seller_name || '—'}</td>
-              <td style={{ textAlign: 'right', fontWeight: 600, color: (mov.type === 'expense' || mov.type === 'void') ? 'var(--color-danger)' : 'var(--color-success)' }}>
-                {(mov.type === 'expense') ? '-' : ''}{formatCurrency(Math.abs(mov.amount))}
+              <td style={{ textAlign: 'right', fontWeight: 600, color: ['expense', 'void', 'withdrawal'].includes(mov.type) ? 'var(--color-danger)' : 'var(--color-success)' }}>
+                {(mov.type === 'expense' || mov.type === 'withdrawal') ? '-' : ''}{formatCurrency(Math.abs(mov.amount))}
               </td>
+              {onDelete && (
+                <td style={{ textAlign: 'right' }}>
+                  {(mov.type === 'income' || mov.type === 'withdrawal') && !mov.expense_id && (
+                    <button className="btn btn-ghost btn-sm" title="Eliminar movimiento"
+                      onClick={() => onDelete(mov)} style={{ color: 'var(--color-danger)', padding: 4 }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -527,7 +657,7 @@ function MovementsTable({ movements }) {
   );
 }
 
-function HistoryList({ history, onSelect }) {
+function HistoryList({ history, onSelect, tolerance, hasMore, onLoadMore }) {
   if (history.length === 0) {
     return (
       <div className="empty-state">
@@ -567,7 +697,7 @@ function HistoryList({ history, onSelect }) {
                   <td style={{ textAlign: 'right' }}>{formatCurrency(reg.opening_amount)}</td>
                   <td style={{ textAlign: 'right' }}>{reg.closing_amount != null ? formatCurrency(reg.closing_amount) : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{reg.expected_amount != null ? formatCurrency(reg.expected_amount) : '—'}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 600, color: dif == null ? undefined : Math.abs(dif) < CASH_DIFF_TOLERANCE ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                  <td style={{ textAlign: 'right', fontWeight: 600, color: dif == null ? undefined : Math.abs(dif) < tolerance ? 'var(--color-success)' : 'var(--color-danger)' }}>
                     {dif != null ? `${dif >= 0 ? '+' : ''}${formatCurrency(dif)}` : '—'}
                   </td>
                   <td style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={reg.notes}>
@@ -580,11 +710,16 @@ function HistoryList({ history, onSelect }) {
           </tbody>
         </table>
       </div>
+      {hasMore && (
+        <div style={{ padding: 'var(--space-md)', textAlign: 'center' }}>
+          <button className="btn btn-secondary btn-sm" onClick={onLoadMore}>Cargar más</button>
+        </div>
+      )}
     </div>
   );
 }
 
-function HistoryDetail({ reg, onBack }) {
+function HistoryDetail({ reg, canViewTotals, tolerance, onBack }) {
   const summary = useMemo(() => calcSummary(reg), [reg]);
   const movements = [...(reg.movements || [])].reverse();
   const diff = reg.closing_amount != null && reg.expected_amount != null
@@ -605,12 +740,17 @@ function HistoryDetail({ reg, onBack }) {
       {summary && (
         <div className="cash-summary-grid" style={{ marginBottom: 'var(--space-md)' }}>
           {[
-            { label: 'Ventas',             value: formatCurrency(summary.totalSales),    positive: true },
+            ...(canViewTotals ? [
+              { label: 'Ventas',           value: formatCurrency(summary.totalSales),    positive: true },
+            ] : []),
             { label: 'Efectivo ventas',    value: formatCurrency(summary.salesCash) },
-            { label: 'Tarjeta',            value: formatCurrency(summary.salesCard) },
-            { label: 'Transferencia',      value: formatCurrency(summary.salesTransfer) },
+            ...(canViewTotals ? [
+              { label: 'Tarjeta',          value: formatCurrency(summary.salesCard) },
+              { label: 'Transferencia',    value: formatCurrency(summary.salesTransfer) },
+            ] : []),
             { label: 'Ingresos manuales',  value: formatCurrency(summary.totalIncomes),  positive: true },
             { label: 'Gastos',             value: formatCurrency(summary.totalExpenses), negative: true },
+            { label: 'Retiros',            value: formatCurrency(summary.totalWithdrawals), negative: true },
             { label: 'Efectivo esperado',  value: formatCurrency(reg.expected_amount),   positive: true },
             { label: 'Efectivo contado',   value: formatCurrency(reg.closing_amount) },
           ].map(c => (
@@ -626,11 +766,11 @@ function HistoryDetail({ reg, onBack }) {
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 16px', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)',
-          background: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
-          color: Math.abs(diff) < CASH_DIFF_TOLERANCE ? 'var(--color-success)' : 'var(--color-danger)',
+          background: Math.abs(diff) < tolerance ? 'rgba(46,139,87,0.08)' : 'rgba(192,57,43,0.08)',
+          color: Math.abs(diff) < tolerance ? 'var(--color-success)' : 'var(--color-danger)',
           fontWeight: 700,
         }}>
-          {Math.abs(diff) < CASH_DIFF_TOLERANCE ? <TrendingUp size={18} /> : <AlertCircle size={18} />}
+          {Math.abs(diff) < tolerance ? <TrendingUp size={18} /> : <AlertCircle size={18} />}
           Diferencia del cierre: {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
         </div>
       )}
@@ -652,7 +792,7 @@ function HistoryDetail({ reg, onBack }) {
   );
 }
 
-function OpenModal({ show, onClose, openAmount, setOpenAmount, onConfirm }) {
+function OpenModal({ show, onClose, openAmount, setOpenAmount, onConfirm, submitting }) {
   if (!show) return null;
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -673,8 +813,8 @@ function OpenModal({ show, onClose, openAmount, setOpenAmount, onConfirm }) {
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={onConfirm}>
-            <Unlock size={16} /> Abrir Caja
+          <button className="btn btn-primary" onClick={onConfirm} disabled={submitting}>
+            <Unlock size={16} /> {submitting ? 'Abriendo…' : 'Abrir Caja'}
           </button>
         </div>
       </div>
