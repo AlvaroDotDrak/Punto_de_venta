@@ -669,7 +669,9 @@ class IncomeSummaryItem(BaseModel):
 class AccountingSummary(BaseModel):
     date_from: str
     date_to: str
-    total_income: float
+    total_income: float          # neto cobrado (ya con los descuentos aplicados)
+    total_discounts: float = 0   # pesos regalados en promociones
+    total_income_gross: float = 0  # lo que se habría cobrado sin descuentos
     total_income_cash: float
     total_income_card: float
     total_income_transfer: float

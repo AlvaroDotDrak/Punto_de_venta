@@ -51,6 +51,9 @@ def get_summary(
     ).all()
 
     total_income = sum(s.total for s in sales)
+    # El descuento ya está restado de `total`. Se reporta aparte porque, si no, la
+    # plata regalada en promociones desaparece: solo se vería que se vendió menos.
+    total_discounts = sum(s.discount_amount or 0 for s in sales)
     total_income_cash = sum(s.total for s in sales if s.payment_method == "efectivo")
     total_income_card = sum(s.total for s in sales if s.payment_method == "tarjeta")
     total_income_transfer = sum(s.total for s in sales if s.payment_method == "transferencia")
@@ -148,6 +151,8 @@ def get_summary(
         date_from=date_from,
         date_to=date_to,
         total_income=total_income,
+        total_discounts=total_discounts,
+        total_income_gross=total_income + total_discounts,
         total_income_cash=total_income_cash,
         total_income_card=total_income_card,
         total_income_transfer=total_income_transfer,
@@ -194,6 +199,9 @@ def export_report(
     ).all()
 
     total_income = sum(s.total for s in sales)
+    # El descuento ya está restado de `total`. Se reporta aparte porque, si no, la
+    # plata regalada en promociones desaparece: solo se vería que se vendió menos.
+    total_discounts = sum(s.discount_amount or 0 for s in sales)
     total_expenses = sum(e.amount for e in expenses)
     period_label = f"{date_from} al {date_to}"
 
@@ -217,13 +225,14 @@ def export_report(
     # ── Hoja 1: Resumen ───────────────────────────────────────────────────────
     ws1 = wb.active
     ws1.title = "Resumen"
-    ws1.append(["Período", "Total Ingresos", "Total Gastos", "Utilidad Neta",
+    ws1.append(["Período", "Total Ingresos", "Descuentos otorgados", "Total Gastos", "Utilidad Neta",
                 "Ventas c/boleta", "Ventas s/boleta",
                 "Débito Fiscal IVA", "Crédito Fiscal IVA", "IVA Estimado a Pagar"])
     style_header_row(ws1)
     ws1.append([
         period_label,
         total_income,
+        total_discounts,
         total_expenses,
         total_income - total_expenses,
         sum(1 for s in sales if s.has_receipt),
@@ -238,7 +247,7 @@ def export_report(
 
     # ── Hoja 2: Detalle Ventas ────────────────────────────────────────────────
     ws2 = wb.create_sheet("Detalle Ventas")
-    ws2.append(["Fecha", "Monto", "Método Pago", "Con Boleta", "Vendedor", "Estado"])
+    ws2.append(["Fecha", "Subtotal", "Descuento", "Monto", "Método Pago", "Con Boleta", "Vendedor", "Estado"])
     style_header_row(ws2)
 
     seller_cache: dict[int, str] = {}
@@ -248,13 +257,15 @@ def export_report(
             seller_cache[s.seller_id] = sel.name if sel else "Desconocido"
         ws2.append([
             s.created_at.strftime("%d/%m/%Y %H:%M"),
+            s.subtotal if s.subtotal is not None else s.total,
+            s.discount_amount or 0,
             s.total,
             s.payment_method,
             "Sí" if s.has_receipt else "No",
             seller_cache[s.seller_id],
             s.status,
         ])
-    for col, width in [("A", 18), ("B", 12), ("C", 16), ("D", 12), ("E", 18), ("F", 12)]:
+    for col, width in [("A", 18), ("B", 12), ("C", 12), ("D", 12), ("E", 16), ("F", 12), ("G", 18), ("H", 12)]:
         ws2.column_dimensions[col].width = width
 
     # ── Hoja 3: Detalle Gastos ────────────────────────────────────────────────

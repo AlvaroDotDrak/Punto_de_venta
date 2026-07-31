@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
-import { TrendingUp, TrendingDown, DollarSign, FileDown, Receipt, Scale, AlertCircle, Trash2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, FileDown, Receipt, Scale, AlertCircle, Trash2, Tag } from 'lucide-react';
 import {
   Chart as ChartJS,
   ArcElement, Tooltip, Legend,
@@ -569,6 +569,15 @@ export default function Contabilidad() {
               sub={`${summary.sales_count} ventas`}
               color="var(--color-success)"
             />
+            {summary.total_discounts > 0 && (
+              <SummaryCard
+                icon={<Tag size={22} />}
+                label="Descuentos otorgados"
+                value={formatCurrency(summary.total_discounts)}
+                sub={`de ${formatCurrency(summary.total_income_gross)} sin descuento`}
+                color="#B45309"
+              />
+            )}
             <SummaryCard
               icon={<TrendingDown size={22} />}
               label="Total Gastos"
