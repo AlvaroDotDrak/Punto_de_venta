@@ -36,6 +36,7 @@ pyinstaller --noconfirm --onefile --name PuntoVenta ^
     --specpath build_pyi ^
     --add-data "%~dp0dist;dist" ^
     --collect-submodules uvicorn ^
+    --collect-all pypdfium2 ^
     --hidden-import win32print ^
     --hidden-import win32timezone ^
     --hidden-import openpyxl ^
