@@ -16,10 +16,15 @@ if not exist ".venv\" (
     call .venv\Scripts\activate.bat
 )
 
-:: Compilar frontend si dist/ no existe
-if not exist "dist\" (
-    echo Compilando frontend...
-    npm run build
+:: Compilar el frontend SIEMPRE (dist\ no viaja en el repo: tras un git pull
+:: quedaba el bundle viejo y los cambios de pantalla no aparecian).
+echo Compilando frontend...
+call npm run build
+if errorlevel 1 (
+    echo.
+    echo Error: fallo npm run build. Corre "npm install" y vuelve a intentar.
+    pause
+    exit /b 1
 )
 
 :: Detectar navegador para modo kiosko (pantalla completa, sin barra)

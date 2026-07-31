@@ -25,10 +25,21 @@ if not exist ".venv\" (
     call .venv\Scripts\activate.bat
 )
 
-:: Compilar frontend si dist/ no existe
-if not exist "dist\" (
+:: Compilar el frontend SIEMPRE. Antes solo lo hacia si dist\ no existia, y como
+:: dist\ no viaja en el repo (esta en .gitignore), tras un git pull quedaba el
+:: bundle viejo y los cambios de pantalla no aparecian.
+:: Para saltarlo (arranque rapido sin tocar el frontend): inicio.bat --sin-build
+if /i "%~1"=="--sin-build" (
+    echo Saltando la compilacion del frontend.
+) else (
     echo Compilando frontend...
-    npm run build
+    call npm run build
+    if errorlevel 1 (
+        echo.
+        echo Error: fallo npm run build. Corre "npm install" y vuelve a intentar.
+        pause
+        exit /b 1
+    )
 )
 
 :: Detectar navegador para modo kiosko (pantalla completa, sin barra)
