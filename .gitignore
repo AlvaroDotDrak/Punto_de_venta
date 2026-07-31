@@ -54,3 +54,7 @@ crear_cuenta_soporte.bat
 # Facturas reales de proveedores usadas para probar el escaneo con IA.
 # Son documentos de clientes (RUT, folios, montos): no van al repo.
 facturas_prueba/
+
+# Copias de trabajo de bases de datos de clientes (dev_cliente.sh).
+# Contienen datos reales del negocio y sus PINs: nunca al repo.
+_clientes/
