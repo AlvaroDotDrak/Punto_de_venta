@@ -1,5 +1,4 @@
 import io
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -10,6 +9,7 @@ from ..database import get_db
 from ..models import Expense, ExpenseCategory, Invoice, Sale, SaleItem, Seller, Product, IngredientMovement, ProductRecipe
 from ..auth import require_admin
 from ..audit import ACTIONS, log_action
+from ._common import parse_date_from, parse_date_to
 from ..schemas import AccountingSummary, ExpenseSummaryItem, IncomeSummaryItem, LossesReport, LossSummaryItem, LossReasonItem
 
 from ..utils import calculate_vat, compute_cost_per_unit
@@ -40,8 +40,8 @@ def get_summary(
     db: Session = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    dt_from = datetime.fromisoformat(date_from)
-    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
 
     # ── Ventas ───────────────────────────────────────────────────────────────
     sales = db.query(Sale).filter(
@@ -176,8 +176,8 @@ def export_report(
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
 
-    dt_from = datetime.fromisoformat(date_from)
-    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
 
     sales = db.query(Sale).filter(
         Sale.status == "completed",
@@ -336,8 +336,8 @@ def get_losses_report(
     db: Session = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    dt_from = datetime.fromisoformat(date_from)
-    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
 
     # Obtener todos los movimientos de tipo "loss"
     movements = (
@@ -428,8 +428,8 @@ def get_profitability(
     db: Session = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    dt_from = datetime.fromisoformat(date_from)
-    dt_to = datetime.fromisoformat(date_to + "T23:59:59")
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
 
     sale_items = (
         db.query(SaleItem)

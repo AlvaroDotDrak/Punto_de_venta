@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -51,7 +51,7 @@ def update_ingredient(
 
 @router.get("/movements/global", response_model=list[IngredientMovementOut])
 def list_global_movements(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _=Depends(require_permission('can_access_insumos')),
 ):
@@ -98,7 +98,7 @@ def get_restock_suggestions(
 @router.get("/{ingredient_id}/movements", response_model=list[IngredientMovementOut])
 def list_movements(
     ingredient_id: int,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     _=Depends(require_permission('can_access_insumos')),
 ):

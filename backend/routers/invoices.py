@@ -1,13 +1,13 @@
-from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Invoice, Sale
 from ..auth import require_admin
 from ..audit import ACTIONS, log_action
+from ._common import parse_date_from, parse_date_to
 from ..schemas import InvoiceCreate, InvoiceOut
 
 router = APIRouter(tags=["invoices"])
@@ -17,16 +17,18 @@ router = APIRouter(tags=["invoices"])
 def list_invoices(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     offset: int = 0,
     db: Session = Depends(get_db),
     _=Depends(require_admin),
 ):
     q = db.query(Invoice)
-    if date_from:
-        q = q.filter(Invoice.created_at >= datetime.fromisoformat(date_from))
-    if date_to:
-        q = q.filter(Invoice.created_at <= datetime.fromisoformat(date_to + "T23:59:59"))
+    dt_from = parse_date_from(date_from)
+    dt_to = parse_date_to(date_to)
+    if dt_from:
+        q = q.filter(Invoice.created_at >= dt_from)
+    if dt_to:
+        q = q.filter(Invoice.created_at <= dt_to)
     return q.order_by(Invoice.created_at.desc()).offset(offset).limit(limit).all()
 
 

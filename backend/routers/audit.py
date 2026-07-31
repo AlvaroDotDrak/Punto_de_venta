@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/audit", tags=["audit"])
 
 @router.get("", response_model=list[AuditLogOut])
 def list_audit_logs(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     seller_id: int | None = None,
     db: Session = Depends(get_db),
     _=Depends(require_admin),
