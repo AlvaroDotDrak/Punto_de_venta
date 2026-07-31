@@ -2,7 +2,7 @@
 # Levanta el POS contra la base de datos de un cliente, en Linux, para inspeccionar
 # o preparar una entrega (cargar fotos, cerrar una caja, corregir datos).
 #
-#   bash dev_cliente.sh /ruta/a/la/carpeta/del/cliente [puerto]
+#   bash dev_cliente.sh /ruta/a/la/carpeta/del/cliente [puerto] [--sin-build]
 #
 # Trabaja SIEMPRE sobre una copia en ./_clientes/<nombre>/ — el original no se toca.
 # Volver a correrlo reutiliza esa copia; para empezar de cero, borra la carpeta.
@@ -55,8 +55,12 @@ set +a
 source .venv/bin/activate
 
 # dist/ se resuelve relativo a backend/main.py, no al cwd, así que basta con que
-# esté compilado en el proyecto.
-[ -d dist ] || npm run build
+# esté compilado en el proyecto. Se recompila SIEMPRE: con "solo si no existe"
+# quedaba servido el bundle viejo y los cambios de pantalla no aparecían.
+if [ "${3:-}" != "--sin-build" ]; then
+    echo "Compilando frontend..."
+    npm run build || { echo "Error: falló npm run build. Corre 'npm install'."; exit 1; }
+fi
 
 echo
 echo "Base:   $TRABAJO/pasteleria.db"
