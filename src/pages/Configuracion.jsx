@@ -91,6 +91,12 @@ export default function Configuracion() {
   const [savingParam, setSavingParam] = useState(false);
   const [cashTolerance, setCashTolerance] = useState('');
   const [discount, setDiscount] = useState({ enabled: false, percent: '', label: '', valid_until: '' });
+  const [mail, setMail] = useState({
+    smtp_enabled: false, smtp_host: 'smtp.gmail.com', smtp_port: '587',
+    smtp_user: '', smtp_password: '', report_recipients: '',
+  });
+  const [mailPassSet, setMailPassSet] = useState(false);
+  const [sendingTest, setSendingTest] = useState(false);
   const [branding, setBranding] = useState(null);
   const [caps, setCaps] = useState(null);
   const [palette, setPalette] = useState(null);
@@ -103,7 +109,18 @@ export default function Configuracion() {
     if (activeTab === 'audit') {
       api.get('/audit?limit=100').then(setAuditLogs).catch(() => {});
     } else if (activeTab === 'parametros') {
-      api.get('/config').then(setConfigParams).catch(() => {});
+      api.get('/config').then(c => {
+        setConfigParams(c);
+        setMail({
+          smtp_enabled: c.smtp_enabled === 'true',
+          smtp_host: c.smtp_host || 'smtp.gmail.com',
+          smtp_port: c.smtp_port || '587',
+          smtp_user: c.smtp_user || '',
+          smtp_password: '',            // nunca vuelve del servidor
+          report_recipients: c.report_recipients || '',
+        });
+        setMailPassSet(c.smtp_password_set === 'true');
+      }).catch(() => {});
       setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
       const d = profile?.discount || {};
       setDiscount({
@@ -285,6 +302,43 @@ export default function Configuracion() {
       toast.error('Error al guardar: ' + err.message);
     } finally {
       setSavingParam(false);
+    }
+  };
+
+  const handleSaveMail = async () => {
+    if (mail.smtp_enabled && !mail.report_recipients.trim()) {
+      toast.error('Indica al menos un correo destinatario'); return;
+    }
+    setSavingParam(true);
+    try {
+      await api.put('/config/smtp_enabled', { value: mail.smtp_enabled ? 'true' : 'false' });
+      await api.put('/config/smtp_host', { value: mail.smtp_host.trim() });
+      await api.put('/config/smtp_port', { value: String(parseInt(mail.smtp_port) || 587) });
+      await api.put('/config/smtp_user', { value: mail.smtp_user.trim() });
+      await api.put('/config/report_recipients', { value: mail.report_recipients.trim() });
+      // Solo se escribe si el admin tipeó una nueva: vacío = dejar la que había.
+      if (mail.smtp_password) {
+        await api.put('/config/smtp_password', { value: mail.smtp_password });
+        setMailPassSet(true);
+        setMail(m => ({ ...m, smtp_password: '' }));
+      }
+      toast.success('Configuración de correo guardada');
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
+    } finally {
+      setSavingParam(false);
+    }
+  };
+
+  const handleTestMail = async () => {
+    setSendingTest(true);
+    try {
+      const r = await api.post('/cash/report/send');
+      toast.success('Resumen enviado a ' + r.recipients.join(', '));
+    } catch (err) {
+      toast.error('No se pudo enviar: ' + err.message);
+    } finally {
+      setSendingTest(false);
     }
   };
 
@@ -693,6 +747,47 @@ export default function Configuracion() {
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   Tiempo antes de cumplirse el límite de frescura para alertar sobre el vencimiento en vitrina (por defecto 24 horas).
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  Resumen del turno por correo
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-sm)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={mail.smtp_enabled}
+                    onChange={e => setMail(m => ({ ...m, smtp_enabled: e.target.checked }))} />
+                  <span>Enviar el resumen al cerrar la caja</span>
+                </label>
+                <div style={{ display: 'grid', gap: 'var(--space-sm)' }}>
+                  <input type="text" className="form-input" placeholder="Correos que reciben (separados por coma)"
+                    value={mail.report_recipients}
+                    onChange={e => setMail(m => ({ ...m, report_recipients: e.target.value }))} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 'var(--space-sm)' }}>
+                    <input type="text" className="form-input" placeholder="Servidor SMTP"
+                      value={mail.smtp_host} onChange={e => setMail(m => ({ ...m, smtp_host: e.target.value }))} />
+                    <input type="number" className="form-input" placeholder="Puerto"
+                      value={mail.smtp_port} onChange={e => setMail(m => ({ ...m, smtp_port: e.target.value }))} />
+                  </div>
+                  <input type="email" className="form-input" placeholder="Cuenta que envía (ej: pos.negocio@gmail.com)"
+                    value={mail.smtp_user} onChange={e => setMail(m => ({ ...m, smtp_user: e.target.value }))} />
+                  <input type="password" className="form-input" autoComplete="new-password"
+                    placeholder={mailPassSet ? 'Contraseña guardada — escribe una nueva para cambiarla' : 'Contraseña de aplicación de Gmail'}
+                    value={mail.smtp_password} onChange={e => setMail(m => ({ ...m, smtp_password: e.target.value }))} />
+                </div>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+                  <button className="btn btn-primary" onClick={handleSaveMail} disabled={savingParam}>
+                    Guardar correo
+                  </button>
+                  <button className="btn btn-secondary" onClick={handleTestMail} disabled={sendingTest || !mailPassSet}>
+                    {sendingTest ? 'Enviando…' : 'Enviar prueba ahora'}
+                  </button>
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Con Gmail hay que usar una <strong>contraseña de aplicación</strong> (Cuenta de Google → Seguridad →
+                  Verificación en 2 pasos → Contraseñas de aplicaciones), no la contraseña normal. Conviene una cuenta
+                  dedicada para enviar, no la personal: la contraseña queda guardada en la base de datos del local.
+                  Si al cerrar la caja no hay internet, el cierre se guarda igual y solo se pierde ese correo.
                 </p>
               </div>
 

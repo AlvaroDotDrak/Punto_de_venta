@@ -6,6 +6,7 @@ from ..database import get_db
 from ..models import CashMovement, CashRegister
 from ..auth import get_current_seller, require_permission
 from ..audit import ACTIONS, log_action
+from ..mailer import send_close_summary_async, get_mail_config, is_configured, build_summary, send_mail
 from ..schemas import (
     CashCloseRequest, CashMovementCreate, CashMovementOut,
     CashOpenRequest, CashRegisterOut,
@@ -158,9 +159,44 @@ def close_register(
     log_action(db, ACTIONS.CASH_CLOSE, seller.id,
                f"Caja cerrada. Esperado: ${expected:.0f} | Real: ${payload.closing_amount:.0f}")
 
+    # En segundo plano: si el correo falla (sin internet, credenciales malas), el
+    # cierre ya quedó guardado igual.
+    send_close_summary_async(register.id)
+
     return _visible(db.query(CashRegister).options(
         joinedload(CashRegister.movements)
     ).filter(CashRegister.id == register.id).first(), seller)
+
+
+@router.post("/report/send")
+def send_report_now(
+    register_id: int | None = None,
+    db: Session = Depends(get_db),
+    admin=Depends(require_permission("can_close_cash")),
+):
+    """Envía el resumen a mano: para probar la configuración o para mirar cómo va
+    el día sin estar en el local. Sin `register_id` usa la caja abierta; si no hay,
+    la última cerrada."""
+    cfg = get_mail_config(db)
+    if not is_configured(cfg):
+        raise HTTPException(status_code=400, detail="Falta configurar el correo (servidor, cuenta y destinatarios)")
+
+    if register_id:
+        register = db.query(CashRegister).filter(CashRegister.id == register_id).first()
+    else:
+        register = (db.query(CashRegister).filter(CashRegister.status == "open").first()
+                    or db.query(CashRegister).order_by(CashRegister.closed_at.desc()).first())
+    if not register:
+        raise HTTPException(status_code=404, detail="No hay ninguna caja para reportar")
+
+    asunto, html = build_summary(db, register)
+    try:
+        send_mail(cfg, asunto, html)
+    except Exception as e:  # noqa: BLE001 — el error de SMTP se muestra tal cual al admin
+        raise HTTPException(status_code=502, detail=f"No se pudo enviar: {e}")
+
+    log_action(db, ACTIONS.REPORT_SENT, admin.id, f"Resumen de la caja #{register.id} enviado a {', '.join(cfg['recipients'])}")
+    return {"ok": True, "recipients": cfg["recipients"]}
 
 
 @router.post("/movements", response_model=CashMovementOut, status_code=201)

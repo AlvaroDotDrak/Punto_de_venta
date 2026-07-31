@@ -242,10 +242,24 @@ def setup(payload: SetupRequest, db: Session = Depends(get_db)):
 
 # ── Config genérica (key/value) ─────────────────────────────────────────────────
 
+# Claves que nunca salen por la API: son secretos, no configuración visible.
+SENSITIVE_KEYS = {"smtp_password"}
+
+
 @router.get("/config", response_model=dict[str, str])
-def get_config(db: Session = Depends(get_db), _=Depends(get_current_seller)):
+def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
+    """Solo admin: devuelve la configuración cruda, que incluye datos de negocio.
+    Antes la veía cualquier vendedor autenticado.
+
+    Los secretos no se devuelven nunca —ni al admin— para que no queden dando
+    vueltas en el navegador ni en un log de red. En su lugar va un flag que dice
+    si están configurados; para cambiarlos se escriben, no se leen."""
     configs = db.query(SystemConfig).all()
-    return {c.key: c.value for c in configs}
+    out = {c.key: c.value for c in configs if c.key not in SENSITIVE_KEYS}
+    for key in SENSITIVE_KEYS:
+        actual = next((c.value for c in configs if c.key == key), None)
+        out[f"{key}_set"] = "true" if actual else "false"
+    return out
 
 
 @router.put("/config/{key}")
