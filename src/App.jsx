@@ -14,6 +14,7 @@ import Vitrina from './pages/Vitrina';
 import Visicooler from './pages/Visicooler';
 import Pedidos from './pages/Pedidos';
 import Productos from './pages/Productos';
+import CargaRapida from './pages/CargaRapida';
 import Insumos from './pages/Insumos';
 import Caja from './pages/Caja';
 import Dashboard from './pages/Dashboard';
@@ -163,6 +164,7 @@ export default function App() {
             <Route path="/facturas" element={<AdminRoute><Facturas /></AdminRoute>} />
 
             <Route path="/productos" element={<PermissionRoute permission="products_access"><Productos /></PermissionRoute>} />
+            <Route path="/productos/carga-rapida" element={<PermissionRoute permission="products_access"><CargaRapida /></PermissionRoute>} />
             <Route path="/insumos" element={<PermissionRoute permission="can_access_insumos"><Insumos /></PermissionRoute>} />
             <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
             <Route path="/configuracion" element={<AdminRoute><Configuracion /></AdminRoute>} />

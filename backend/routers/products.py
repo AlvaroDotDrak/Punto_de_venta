@@ -1,3 +1,8 @@
+import base64
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -105,6 +110,98 @@ def restock_product(
     db.refresh(product)
     log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, f"Restock {product.name}: +{payload.quantity} (total: {product.stock})")
     return product
+
+
+# Open Food Facts: base abierta de productos empaquetados. Sin API key; solo
+# pide un User-Agent identificable. Un timeout corto para que un internet lento
+# no congele el loop de carga rápida.
+OFF_URL = ("https://world.openfoodfacts.org/api/v2/product/{barcode}.json"
+           "?fields=product_name,product_name_es,brands,quantity,image_front_small_url")
+OFF_USER_AGENT = "PuntoDeVentaPOS/2.0"
+OFF_TIMEOUT = 4
+
+
+def _off_display_name(data: dict) -> str:
+    """Arma 'Marca Nombre Gramaje' sin duplicar lo que el nombre ya incluye."""
+    name = (data.get("product_name_es") or data.get("product_name") or "").strip()
+    if not name:
+        return ""
+    brand = (data.get("brands") or "").split(",")[0].strip()
+    quantity = (data.get("quantity") or "").strip()
+    parts = []
+    if brand and brand.lower() not in name.lower():
+        parts.append(brand)
+    parts.append(name)
+    if quantity and quantity.lower() not in name.lower():
+        parts.append(quantity)
+    return " ".join(parts)
+
+
+def _off_fetch_photo(url: str) -> Optional[str]:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": OFF_USER_AGENT})
+        with urllib.request.urlopen(req, timeout=OFF_TIMEOUT) as resp:
+            raw = resp.read()
+        if not raw or len(raw) > 500_000:
+            return None
+        return "data:image/jpeg;base64," + base64.b64encode(raw).decode()
+    except Exception:
+        return None  # sin foto el lookup igual sirve
+
+
+@router.get("/lookup/{barcode}")
+def lookup_barcode(
+    barcode: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_product_access(write=True)),
+):
+    """Autocompletado para la carga rápida: primero la DB local (detecta
+    duplicados), después Open Food Facts. Nunca lanza 500 por problemas de red —
+    devuelve found=False con error='offline' y el frontend degrada a tipeo manual."""
+    barcode = barcode.strip()
+    if not barcode:
+        raise HTTPException(status_code=422, detail="Código de barras vacío")
+
+    existing = (
+        db.query(Product)
+        .filter(Product.barcode == barcode)
+        .order_by(Product.active.desc())
+        .first()
+    )
+    if existing:
+        return {
+            "found": True,
+            "source": "local",
+            "product_id": existing.id,
+            "name": existing.name,
+            "price": existing.price,
+            "stock": existing.stock,
+            "active": existing.active,
+        }
+
+    try:
+        req = urllib.request.Request(
+            OFF_URL.format(barcode=urllib.parse.quote(barcode)),
+            headers={"User-Agent": OFF_USER_AGENT},
+        )
+        with urllib.request.urlopen(req, timeout=OFF_TIMEOUT) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"found": False, "source": "none"}
+        return {"found": False, "source": "none", "error": "offline"}
+    except Exception:
+        return {"found": False, "source": "none", "error": "offline"}
+
+    product_data = payload.get("product") or {}
+    name = _off_display_name(product_data)
+    if payload.get("status") != 1 or not name:
+        return {"found": False, "source": "none"}
+
+    image_url = product_data.get("image_front_small_url")
+    photo = _off_fetch_photo(image_url) if image_url else None
+
+    return {"found": True, "source": "openfoodfacts", "name": name, "photo": photo}
 
 
 @router.get("/{product_id}/stats")
