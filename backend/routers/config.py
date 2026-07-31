@@ -10,6 +10,7 @@ from ..backup import run_manual_backup, restore_from_backup
 from ..seed import seed_vertical
 from ..verticals import VERTICALS, DEFAULT_VERTICAL, get_vertical, resolve_capabilities, PALETTES, get_palette, list_palettes
 from ..audit import ACTIONS, log_action
+from .. import invoice_ai
 from ..schemas import SystemConfigUpdate, ConfigProfileOut, ConfigProfileUpdate, SetupRequest
 
 router = APIRouter(prefix="", tags=["config"])
@@ -55,6 +56,9 @@ def build_profile(db: Session) -> dict:
         c["age_restricted"] = preset_flags.get(c["value"], False)
     tax_rate = float(_get(db, "tax_rate") or 0.19)
     cash_diff_tolerance = float(_get(db, "cash_diff_tolerance") or 500)
+    # Depende del entorno (ZAI_API_KEY), no de la config guardada: sin key el
+    # endpoint responde 503, así que el botón no debe siquiera aparecer.
+    invoice_scan = invoice_ai.is_available()
     setup_complete = _get(db, "setup_complete") == "true"
     printing = {
         "auto_print": _get(db, "auto_print") == "true",
@@ -74,6 +78,7 @@ def build_profile(db: Session) -> dict:
         "setup_complete": setup_complete,
         "printing": printing,
         "cash_diff_tolerance": cash_diff_tolerance,
+        "invoice_scan": invoice_scan,
     }
 
 

@@ -76,6 +76,7 @@ export function ConfigProvider({ children }) {
       categories: p.product_categories,
       taxRate: p.tax_rate,
       cashDiffTolerance: p.cash_diff_tolerance ?? 500,
+      invoiceScanEnabled: p.invoice_scan === true,
       printing: p.printing,
       hasCapability,
       t,

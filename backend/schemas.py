@@ -744,6 +744,7 @@ class ConfigProfileOut(BaseModel):
     setup_complete: bool
     printing: dict
     cash_diff_tolerance: float
+    invoice_scan: bool = False
 
 
 class ConfigProfileUpdate(BaseModel):

@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../context/ToastContext';
+import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { ShoppingBag, Plus, Trash2, Truck, FileText, Receipt, ChevronDown, ChevronUp, Package, Wheat, Tag, ScanLine, AlertTriangle, X, BookOpen } from 'lucide-react';
@@ -31,6 +32,7 @@ const emptyLine = (key) => ({ key, kind: 'product', refId: '', description: '', 
 
 export default function Compras() {
   const toast = useToast();
+  const { invoiceScanEnabled } = useConfig();
   const lineKey = useRef(1);
 
   const [categories, setCategories] = useState([]);
@@ -371,13 +373,17 @@ export default function Compras() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
           <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 600 }}>Nueva factura de compra</h3>
           <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAliases(true)}
-              title="Ver y borrar las equivalencias que aprendió el escaneo">
-              <BookOpen size={14} /> Equivalencias
-            </button>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowScan(true)}>
-              <ScanLine size={14} /> Escanear factura
-            </button>
+            {invoiceScanEnabled && (
+              <>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAliases(true)}
+                  title="Ver y borrar las equivalencias que aprendió el escaneo">
+                  <BookOpen size={14} /> Equivalencias
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowScan(true)}>
+                  <ScanLine size={14} /> Escanear factura
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -754,11 +760,11 @@ export default function Compras() {
         </div>
       )}
 
-      {showScan && (
+      {showScan && invoiceScanEnabled && (
         <ScanInvoiceModal onApply={applyScan} onClose={() => setShowScan(false)} />
       )}
 
-      {showAliases && (
+      {showAliases && invoiceScanEnabled && (
         <AliasManagerModal suppliers={suppliers} onClose={() => setShowAliases(false)} />
       )}
 
