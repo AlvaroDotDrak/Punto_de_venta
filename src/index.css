@@ -1131,7 +1131,66 @@ tbody tr:last-child td {
   box-shadow: var(--shadow-md);
 }
 
+/* Pestañas de carritos paralelos (varios clientes a la vez) */
+.pos-cart-tabs {
+  display: flex;
+  gap: 6px;
+  padding: var(--space-sm) var(--space-sm) 0;
+  flex-shrink: 0;
+}
+
+.pos-cart-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pos-cart-tab:hover {
+  border-color: var(--color-primary);
+}
+
+.pos-cart-tab-num {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.pos-cart-tab-info {
+  font-size: 0.68rem;
+  font-weight: 600;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.pos-cart-tab.filled {
+  color: var(--color-primary);
+  border-color: rgba(var(--color-primary-rgb), 0.35);
+  background: rgba(var(--color-primary-rgb), 0.06);
+}
+
+.pos-cart-tab.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(var(--color-primary-rgb), 0.3);
+}
+
+.pos-cart-tab.active .pos-cart-tab-info {
+  opacity: 0.85;
+}
+
 .pos-cart-header {
+  flex-shrink: 0;
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--color-border);
   display: flex;
@@ -1140,14 +1199,18 @@ tbody tr:last-child td {
   background: var(--color-background);
 }
 
+/* min-height:0 es imprescindible: sin él, el min-height:auto de flex impide que
+   este panel se encoja bajo el alto de su contenido y el scroll nunca se activa. */
 .pos-cart-items {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--space-xs) 0;
 }
 
 .pos-cart-item {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--space-sm);
   padding: 6px var(--space-md);
@@ -1256,6 +1319,7 @@ tbody tr:last-child td {
 
 .pos-cart-empty {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1271,6 +1335,7 @@ tbody tr:last-child td {
 }
 
 .pos-cart-footer {
+  flex-shrink: 0;
   border-top: 2px solid var(--color-border);
   padding: var(--space-md) var(--space-lg);
   background: var(--color-background);
@@ -4206,3 +4271,50 @@ tbody tr:last-child td {
   border-color: var(--color-primary);
   color: #fff;
 }
+
+/* ── Progreso del escaneo de facturas ─────────────────────────────────────── */
+
+.scan-progress-bar {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.07);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  position: relative;
+}
+
+.scan-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width 0.25s ease;
+}
+
+/* Indeterminada: el backend no reporta avance por página, así que la barra
+   comunica "sigue trabajando", no un porcentaje inventado. */
+.scan-progress-fill.indeterminate {
+  width: 40%;
+  animation: scanIndeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes scanIndeterminate {
+  0%   { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-progress-fill.indeterminate {
+    animation-duration: 3s;
+  }
+}
+
+.scan-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+
+.scan-stage-done { color: var(--color-text-secondary); }
+
+.scan-spin { animation: spin 1s linear infinite; }

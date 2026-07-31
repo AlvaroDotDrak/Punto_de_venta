@@ -14,6 +14,31 @@ import TypeModal from '../components/Ventas/TypeModal';
 import PaymentModal from '../components/Ventas/PaymentModal';
 import ReceiptModal from '../components/Ventas/ReceiptModal';
 
+const CART_COUNT = 3;
+const CARTS_KEY = 'pos_carts';
+
+const emptyCarts = () => Array.from({ length: CART_COUNT }, () => []);
+
+// Los carritos se persisten para que sobrevivan a navegar a otra página, a un
+// F5 accidental y al cierre del navegador en modo kiosko.
+const loadCarts = () => {
+  try {
+    const raw = localStorage.getItem(CARTS_KEY);
+    if (!raw) return { carts: emptyCarts(), active: 0 };
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data?.carts)) return { carts: emptyCarts(), active: 0 };
+    const carts = emptyCarts().map((fallback, i) =>
+      Array.isArray(data.carts[i]) ? data.carts[i] : fallback
+    );
+    const active = Number.isInteger(data.active) && data.active >= 0 && data.active < CART_COUNT
+      ? data.active
+      : 0;
+    return { carts, active };
+  } catch {
+    return { carts: emptyCarts(), active: 0 };
+  }
+};
+
 export default function Ventas() {
   const { currentSeller } = useSeller();
   const { categories, t, hasCapability, branding, printing } = useConfig();
@@ -49,7 +74,7 @@ export default function Ventas() {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('todos');
   const [onlyInShowcase, setOnlyInShowcase] = useState(false);
-  const [cart, setCart] = useState([]);
+  const [{ carts, active: activeCart }, setCartState] = useState(loadCarts);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
   const [cashReceived, setCashReceived] = useState('');
@@ -61,6 +86,31 @@ export default function Ventas() {
   const [weightProduct, setWeightProduct] = useState(null);
   const [ageConfirmProduct, setAgeConfirmProduct] = useState(null);
   const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
+
+  const cart = carts[activeCart];
+
+  // Aplica el cambio solo al carrito activo; los demás quedan intactos.
+  const setCart = (updater) => setCartState(prev => ({
+    ...prev,
+    carts: prev.carts.map((c, i) => (
+      i === prev.active ? (typeof updater === 'function' ? updater(c) : updater) : c
+    )),
+  }));
+
+  const switchCart = (index) => setCartState(prev => ({ ...prev, active: index }));
+
+  const clearActiveCart = () => {
+    if (cart.length > 0 && !window.confirm(`¿Vaciar el carrito ${activeCart + 1}?`)) return;
+    setCart([]);
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CARTS_KEY, JSON.stringify({ carts, active: activeCart }));
+    } catch (err) {
+      console.error('No se pudieron guardar los carritos:', err);
+    }
+  }, [carts, activeCart]);
 
   // Escaneo global de código de barras: el lector "teclea" muy rápido y termina
   // en Enter. Detectamos esa ráfaga aunque el foco no esté en la barra de búsqueda.
@@ -506,10 +556,31 @@ export default function Ventas() {
 
         {/* RIGHT: Cart */}
         <div className="pos-cart glass noise-overlay" style={{ border: 'none', boxShadow: 'var(--shadow-xl)', borderRadius: 'var(--radius-xl)', height: 'calc(100vh - 140px)', position: 'sticky', top: 80 }}>
+          <div className="pos-cart-tabs">
+            {carts.map((c, i) => {
+              const count = c.reduce((s, it) => s + it.quantity, 0);
+              const total = c.reduce((s, it) => s + it.subtotal, 0);
+              const isActive = i === activeCart;
+              return (
+                <button
+                  key={i}
+                  className={`pos-cart-tab${isActive ? ' active' : ''}${count > 0 ? ' filled' : ''}`}
+                  onClick={() => switchCart(i)}
+                  title={count > 0 ? `Carrito ${i + 1} — ${count} ítems, ${formatCurrency(total)}` : `Carrito ${i + 1} (vacío)`}
+                >
+                  <span className="pos-cart-tab-num">{i + 1}</span>
+                  <span className="pos-cart-tab-info">
+                    {count > 0 ? `${count} · ${formatCurrency(total)}` : 'Vacío'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
           <div className="pos-cart-header" style={{ background: 'transparent', padding: 'var(--space-lg)' }}>
             <h3 className="text-display" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 12, fontSize: '1.4rem' }}>
               <ShoppingBag size={24} className="icon" style={{ color: 'var(--color-primary)' }} />
-              Carrito
+              Carrito {activeCart + 1}
               {cartCount > 0 && (
                 <span className="animate-scale-in" style={{
                   background: 'var(--color-primary)',
@@ -528,7 +599,7 @@ export default function Ventas() {
               )}
             </h3>
             {cart.length > 0 && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setCart([])} style={{ color: 'var(--color-danger)' }}>
+              <button className="btn btn-ghost btn-sm" onClick={clearActiveCart} style={{ color: 'var(--color-danger)' }}>
                 <Trash2 size={16} />
               </button>
             )}
