@@ -90,6 +90,7 @@ export default function Configuracion() {
   const [configParams, setConfigParams] = useState({});
   const [savingParam, setSavingParam] = useState(false);
   const [cashTolerance, setCashTolerance] = useState('');
+  const [discount, setDiscount] = useState({ enabled: false, percent: '', label: '', valid_until: '' });
   const [branding, setBranding] = useState(null);
   const [caps, setCaps] = useState(null);
   const [palette, setPalette] = useState(null);
@@ -104,6 +105,13 @@ export default function Configuracion() {
     } else if (activeTab === 'parametros') {
       api.get('/config').then(setConfigParams).catch(() => {});
       setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
+      const d = profile?.discount || {};
+      setDiscount({
+        enabled: !!d.enabled,
+        percent: d.percent ? String(d.percent) : '',
+        label: d.label && d.label !== 'Descuento' ? d.label : '',
+        valid_until: d.valid_until || '',
+      });
     } else if (activeTab === 'negocio' && profile) {
       setBranding({ ...profile.branding });
       setCaps({ ...profile.capabilities });
@@ -249,6 +257,30 @@ export default function Configuracion() {
       await api.put('/config/profile', { cash_diff_tolerance: value });
       await refresh();
       toast.success('Tolerancia de caja guardada');
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
+    } finally {
+      setSavingParam(false);
+    }
+  };
+
+  const handleSaveDiscount = async () => {
+    const percent = parseFloat(discount.percent);
+    if (discount.enabled && !(percent > 0 && percent <= 100)) {
+      toast.error('El porcentaje debe estar entre 0 y 100'); return;
+    }
+    setSavingParam(true);
+    try {
+      await api.put('/config/profile', {
+        discount: {
+          enabled: discount.enabled,
+          percent: Number.isFinite(percent) ? percent : 0,
+          label: discount.label.trim() || 'Descuento',
+          valid_until: discount.valid_until || '',
+        },
+      });
+      await refresh();
+      toast.success('Descuento guardado');
     } catch (err) {
       toast.error('Error al guardar: ' + err.message);
     } finally {
@@ -661,6 +693,33 @@ export default function Configuracion() {
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   Tiempo antes de cumplirse el límite de frescura para alertar sobre el vencimiento en vitrina (por defecto 24 horas).
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  Descuento en ventas
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-sm)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={discount.enabled}
+                    onChange={e => setDiscount(d => ({ ...d, enabled: e.target.checked }))} />
+                  <span>Activar descuento</span>
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 150px', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
+                  <input type="number" min="0" max="100" step="0.5" className="form-input" placeholder="%"
+                    value={discount.percent} onChange={e => setDiscount(d => ({ ...d, percent: e.target.value }))} />
+                  <input type="text" className="form-input" maxLength={40} placeholder="Nombre (ej: Promo martes)"
+                    value={discount.label} onChange={e => setDiscount(d => ({ ...d, label: e.target.value }))} />
+                  <input type="date" className="form-input" title="Último día en que se puede aplicar"
+                    value={discount.valid_until} onChange={e => setDiscount(d => ({ ...d, valid_until: e.target.value }))} />
+                </div>
+                <button className="btn btn-primary" onClick={handleSaveDiscount} disabled={savingParam}>
+                  Guardar descuento
+                </button>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Las vendedoras con el permiso "Aplicar el descuento configurado" podrán aplicarlo o no en cada venta,
+                  pero no pueden cambiar el porcentaje. Si pones una fecha, el descuento se apaga solo ese día a medianoche
+                  — sin fecha queda activo hasta que lo desactives a mano.
                 </p>
               </div>
 

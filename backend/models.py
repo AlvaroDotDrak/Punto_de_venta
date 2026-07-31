@@ -26,6 +26,7 @@ class Seller(Base):
     can_view_costs = Column(Boolean, default=False)
     can_view_totals = Column(Boolean, default=False)   # ver ventas totales/tarjeta/transferencia en Caja
     can_withdraw_cash = Column(Boolean, default=False)  # sacar efectivo del cajón (sangría)
+    can_apply_discount = Column(Boolean, default=False)  # aplicar el descuento configurado a una venta
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
@@ -79,7 +80,10 @@ class Sale(Base):
     __tablename__ = "sales"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    total = Column(Float, nullable=False)
+    total = Column(Float, nullable=False)             # lo efectivamente cobrado (ya con descuento)
+    subtotal = Column(Float, nullable=True)           # bruto antes del descuento
+    discount_percent = Column(Float, default=0)       # snapshot del % aplicado
+    discount_amount = Column(Float, default=0)        # pesos descontados
     payment_method = Column(String, nullable=False)  # 'efectivo' | 'tarjeta' | 'transferencia'
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)

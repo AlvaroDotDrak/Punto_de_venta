@@ -31,6 +31,7 @@ class SellerUpdate(BaseModel):
     can_view_costs: Optional[bool] = None
     can_view_totals: Optional[bool] = None
     can_withdraw_cash: Optional[bool] = None
+    can_apply_discount: Optional[bool] = None
 
 class SellerOut(BaseModel):
     id: int
@@ -46,6 +47,7 @@ class SellerOut(BaseModel):
     can_view_costs: bool
     can_view_totals: bool
     can_withdraw_cash: bool
+    can_apply_discount: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -161,6 +163,9 @@ class SaleCreate(BaseModel):
     payment_method: str
     order_id: Optional[int] = None
     has_receipt: Optional[bool] = False
+    # El cliente solo pide aplicar el descuento; el porcentaje lo pone el servidor
+    # desde la configuración. Nunca se acepta un monto o un % del cliente.
+    apply_discount: bool = False
     items: list[SaleItemIn]
 
 class SaleItemOut(BaseModel):
@@ -178,6 +183,9 @@ class SaleItemOut(BaseModel):
 class SaleOut(BaseModel):
     id: int
     total: float
+    subtotal: Optional[float] = None
+    discount_percent: float = 0
+    discount_amount: float = 0
     payment_method: str
     seller_id: int
     order_id: Optional[int]
@@ -745,6 +753,14 @@ class ConfigProfileOut(BaseModel):
     printing: dict
     cash_diff_tolerance: float
     invoice_scan: bool = False
+    discount: dict = {}
+
+
+class DiscountUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    percent: Optional[float] = Field(default=None, ge=0, le=100)
+    label: Optional[str] = None
+    valid_until: Optional[str] = None   # 'YYYY-MM-DD' o '' para quitar el vencimiento
 
 
 class ConfigProfileUpdate(BaseModel):
@@ -754,6 +770,7 @@ class ConfigProfileUpdate(BaseModel):
     product_categories: Optional[list] = None
     tax_rate: Optional[float] = None
     cash_diff_tolerance: Optional[float] = Field(default=None, ge=0)
+    discount: Optional[DiscountUpdate] = None
 
 
 class SetupRequest(BaseModel):

@@ -128,6 +128,12 @@ export default function ReceiptModal({ sale, onClose }) {
             <Row left="Articulos:" right={String(nItems)} />
             <div style={{ borderTop: '1px solid #000', margin: '10px 0' }} />
 
+            {sale.discountAmount > 0 && (
+              <>
+                <Row left="Subtotal" right={formatCurrency(sale.subtotal)} />
+                <Row left={`${sale.discountLabel || 'Descuento'} ${sale.discountPercent}%`} right={`- ${formatCurrency(sale.discountAmount)}`} />
+              </>
+            )}
             <Row left="TOTAL" right={formatCurrency(sale.total)} bold big />
             {isCash && sale.cashReceived > 0 && (
               <>

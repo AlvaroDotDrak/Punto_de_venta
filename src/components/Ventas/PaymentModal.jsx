@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Banknote, CreditCard, Smartphone, Check } from 'lucide-react';
+import { X, Banknote, CreditCard, Smartphone, Check, Tag } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
 const METHODS = [
@@ -12,6 +12,11 @@ const BILLS = [1000, 2000, 5000, 10000, 20000];
 
 export default function PaymentModal({
   total,
+  subtotal,
+  discount,
+  applyDiscount,
+  canApplyDiscount,
+  onToggleDiscount,
   paymentMethod,
   cashReceived,
   change,
@@ -82,10 +87,36 @@ export default function PaymentModal({
             <span style={{ color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', fontSize: '0.7rem', fontWeight: 800, letterSpacing: '1px' }}>
               Total
             </span>
-            <span className="text-display" style={{ fontSize: '2rem', fontWeight: 900 }}>
-              {formatCurrency(total)}
-            </span>
+            <div style={{ textAlign: 'right' }}>
+              {applyDiscount && (
+                <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.55)', textDecoration: 'line-through' }}>
+                  {formatCurrency(subtotal)}
+                </div>
+              )}
+              <span className="text-display" style={{ fontSize: '2rem', fontWeight: 900 }}>
+                {formatCurrency(total)}
+              </span>
+            </div>
           </div>
+
+          {/* Descuento configurado por el admin. La cajera decide si aplicarlo;
+              el porcentaje no se puede tocar acá — lo fija y valida el servidor. */}
+          {discount?.active && canApplyDiscount && (
+            <button
+              type="button"
+              onClick={onToggleDiscount}
+              className={`btn ${applyDiscount ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ width: '100%', marginBottom: 'var(--space-md)', justifyContent: 'space-between', height: 48 }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Tag size={16} />
+                {discount.label} −{discount.percent}%
+              </span>
+              <span style={{ fontWeight: 800 }}>
+                {applyDiscount ? `− ${formatCurrency(subtotal - total)}` : 'Aplicar'}
+              </span>
+            </button>
+          )}
 
           {/* Métodos de pago */}
           <div className="payment-methods" style={{ gap: 8, marginBottom: 'var(--space-md)' }}>

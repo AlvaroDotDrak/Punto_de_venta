@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -41,6 +42,37 @@ def _get_json(db: Session, key: str, default):
         return default
 
 
+def _build_discount(db: Session) -> dict:
+    """Descuento configurado por el admin para aplicar al total de una venta.
+
+    `active` lo resuelve el servidor (no el frontend) porque también es la
+    condición que valida sales.py al cobrar: una sola fuente de verdad.
+    El vencimiento evita el olvido caro — una promo de un día que queda prendida
+    sigue regalando plata sin que nadie lo note."""
+    enabled = _get(db, "discount_enabled") == "true"
+    try:
+        percent = float(_get(db, "discount_percent") or 0)
+    except ValueError:
+        percent = 0.0
+    valid_until = _get(db, "discount_valid_until") or None
+
+    vencido = False
+    if valid_until:
+        try:
+            vencido = date.fromisoformat(valid_until) < date.today()
+        except ValueError:
+            valid_until = None
+
+    return {
+        "enabled": enabled,
+        "percent": percent,
+        "label": _get(db, "discount_label") or "Descuento",
+        "valid_until": valid_until,
+        "expired": vencido,
+        "active": enabled and percent > 0 and not vencido,
+    }
+
+
 def build_profile(db: Session) -> dict:
     """Resuelve el bundle de configuración del rubro (preset + overrides de la instancia)."""
     business_type = _get(db, "business_type") or DEFAULT_VERTICAL
@@ -59,6 +91,7 @@ def build_profile(db: Session) -> dict:
     # Depende del entorno (ZAI_API_KEY), no de la config guardada: sin key el
     # endpoint responde 503, así que el botón no debe siquiera aparecer.
     invoice_scan = invoice_ai.is_available()
+    discount = _build_discount(db)
     setup_complete = _get(db, "setup_complete") == "true"
     printing = {
         "auto_print": _get(db, "auto_print") == "true",
@@ -79,6 +112,7 @@ def build_profile(db: Session) -> dict:
         "printing": printing,
         "cash_diff_tolerance": cash_diff_tolerance,
         "invoice_scan": invoice_scan,
+        "discount": discount,
     }
 
 
@@ -150,6 +184,16 @@ def update_profile(
         _set(db, "tax_rate", str(payload.tax_rate))
     if payload.cash_diff_tolerance is not None:
         _set(db, "cash_diff_tolerance", str(payload.cash_diff_tolerance))
+    if payload.discount is not None:
+        d = payload.discount
+        if d.enabled is not None:
+            _set(db, "discount_enabled", "true" if d.enabled else "false")
+        if d.percent is not None:
+            _set(db, "discount_percent", str(d.percent))
+        if d.label is not None:
+            _set(db, "discount_label", d.label.strip() or "Descuento")
+        if d.valid_until is not None:
+            _set(db, "discount_valid_until", d.valid_until or "")
     db.commit()
     return build_profile(db)
 

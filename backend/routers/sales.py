@@ -9,6 +9,7 @@ from ..models import CashMovement, CashRegister, Sale, SaleItem, ShowcaseItem, P
 from ..auth import get_current_seller, require_admin, require_permission
 from ..audit import ACTIONS, log_action
 from ._common import parse_date_from, parse_date_to
+from .config import _build_discount
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
 from ..utils import calculate_recipe_fraction
 
@@ -216,6 +217,26 @@ def create_sale(
                         # Descontar stock (permite stock negativo)
                         r.ingredient.current_stock -= qty_used
 
+    # Descuento: el cliente solo pide aplicarlo. El porcentaje sale de la config
+    # del negocio y se valida acá — si viniera del cliente, cualquiera con la
+    # consola abierta se haría un 90%.
+    discount_percent = 0.0
+    discount_amount = 0.0
+    if payload.apply_discount:
+        if not (seller.role in ("admin", "dev") or seller.can_apply_discount):
+            raise HTTPException(status_code=403, detail="Sin permisos para aplicar descuentos")
+        discount = _build_discount(db)
+        if not discount["active"]:
+            detalle = ("El descuento venció el " + discount["valid_until"]
+                       if discount["expired"] else "No hay un descuento activo")
+            raise HTTPException(status_code=400, detail=detalle)
+        discount_percent = discount["percent"]
+        discount_amount = _round_half_up(server_total * discount_percent / 100)
+
+    sale.subtotal = server_total
+    sale.discount_percent = discount_percent
+    sale.discount_amount = discount_amount
+    server_total = server_total - discount_amount
     sale.total = server_total
 
     # Toda venta deja movimiento de caja, sea cual sea el método: la caja es el
@@ -232,7 +253,9 @@ def create_sale(
 
     db.commit()
     db.refresh(sale)
-    log_action(db, ACTIONS.SALE, seller.id, f"Venta ${server_total:.0f} - {payload.payment_method}")
+    detalle_desc = (f" · {discount_percent:g}% dcto (-${discount_amount:.0f})" if discount_amount else "")
+    log_action(db, ACTIONS.SALE, seller.id,
+               f"Venta ${server_total:.0f} - {payload.payment_method}{detalle_desc}")
 
     return db.query(Sale).options(
         joinedload(Sale.items), joinedload(Sale.seller)

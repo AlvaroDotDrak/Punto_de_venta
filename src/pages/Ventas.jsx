@@ -41,7 +41,7 @@ const loadCarts = () => {
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
-  const { categories, t, hasCapability, branding, printing } = useConfig();
+  const { categories, t, hasCapability, branding, printing, discount } = useConfig();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -86,6 +86,9 @@ export default function Ventas() {
   const [weightProduct, setWeightProduct] = useState(null);
   const [ageConfirmProduct, setAgeConfirmProduct] = useState(null);
   const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
+  const [applyDiscount, setApplyDiscount] = useState(false);
+
+  const canApplyDiscount = ['admin', 'dev'].includes(currentSeller?.role) || currentSeller?.can_apply_discount;
 
   const cart = carts[activeCart];
 
@@ -280,7 +283,10 @@ export default function Ventas() {
   const removeFromCart = (product_id, product_name) =>
     setCart(prev => prev.filter(i => !(i.product_id === product_id && i.product_name === product_name)));
 
-  const cartTotal = cart.reduce((s, i) => s + i.subtotal, 0);
+  const cartSubtotal = cart.reduce((s, i) => s + i.subtotal, 0);
+  const discountActive = discount?.active && canApplyDiscount && applyDiscount;
+  const discountAmount = discountActive ? Math.round(cartSubtotal * discount.percent / 100) : 0;
+  const cartTotal = cartSubtotal - discountAmount;
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
   const change = paymentMethod === 'efectivo' ? Math.max(0, (parseInt(cashReceived) || 0) - cartTotal) : 0;
 
@@ -292,6 +298,7 @@ export default function Ventas() {
         total: cartTotal,
         payment_method: paymentMethod,
         has_receipt: paymentMethod === 'tarjeta' ? true : hasReceipt,
+        apply_discount: discountActive,
         items: cart.map(i => ({
           product_id: i.product_id,
           product_name: i.product_name,
@@ -306,7 +313,11 @@ export default function Ventas() {
       setLastSale({
         id: sale.id,
         items: cart,
-        total: cartTotal,
+        total: sale.total,
+        subtotal: sale.subtotal,
+        discountPercent: sale.discount_percent,
+        discountAmount: sale.discount_amount,
+        discountLabel: discount?.label,
         paymentMethod,
         cashReceived: paymentMethod === 'efectivo' ? parseInt(cashReceived) || 0 : 0,
         change,
@@ -317,6 +328,7 @@ export default function Ventas() {
 
       setCart([]);
       setShowPayment(false);
+      setApplyDiscount(false);
       setCashReceived('');
       setPaymentMethod('efectivo');
       setHasReceipt(false);
@@ -735,6 +747,11 @@ export default function Ventas() {
       {showPayment && (
         <PaymentModal
           total={cartTotal}
+        subtotal={cartSubtotal}
+        discount={discount}
+        applyDiscount={discountActive}
+        canApplyDiscount={canApplyDiscount}
+        onToggleDiscount={() => setApplyDiscount(v => !v)}
           paymentMethod={paymentMethod}
           cashReceived={cashReceived}
           change={change}

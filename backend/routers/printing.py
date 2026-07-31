@@ -213,6 +213,9 @@ def _build_receipt(db: Session, sale: Sale, cash_received: float | None) -> byte
     buf += b"\n"
 
     # ── Total (negrita + doble alto) ──
+    if (sale.discount_amount or 0) > 0:
+        buf += _txt(_row("Subtotal", _money(sale.subtotal or 0))) + b"\n"
+        buf += _txt(_row(f"Descuento {sale.discount_percent:g}%", "-" + _money(sale.discount_amount))) + b"\n"
     buf += _TALL_ON + _txt(_row("TOTAL", _money(sale.total))) + b"\n" + _TALL_OFF
 
     if sale.payment_method == "efectivo" and cash_received:

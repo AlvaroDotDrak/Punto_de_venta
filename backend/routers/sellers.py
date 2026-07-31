@@ -79,6 +79,8 @@ def update_seller(
         seller.can_view_totals = payload.can_view_totals
     if payload.can_withdraw_cash is not None:
         seller.can_withdraw_cash = payload.can_withdraw_cash
+    if payload.can_apply_discount is not None:
+        seller.can_apply_discount = payload.can_apply_discount
 
     db.commit()
     db.refresh(seller)
