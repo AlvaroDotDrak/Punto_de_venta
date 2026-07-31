@@ -50,3 +50,7 @@ crear_cuenta_soporte.bat
 *.njsproj
 *.sln
 *.sw?
+
+# Facturas reales de proveedores usadas para probar el escaneo con IA.
+# Son documentos de clientes (RUT, folios, montos): no van al repo.
+facturas_prueba/
