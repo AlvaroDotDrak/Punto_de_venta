@@ -42,17 +42,25 @@ if [ ! -f "$TRABAJO/.env" ]; then
     exit 1
 fi
 
+[ -d .venv ] || { echo "Falta .venv. Corre inicio.sh primero."; exit 1; }
+source .venv/bin/activate
+
 # El .env del cliente DEBE ganar: load_dotenv() de main.py busca hacia arriba desde
 # backend/ y encontraría el .env del proyecto, con otro PIN_SALT — y entonces
 # ningún PIN de los vendedores del cliente validaría. Como load_dotenv no pisa
 # variables ya definidas, exportarlas acá resuelve el conflicto.
-set -a
-# shellcheck disable=SC1090
-source "$TRABAJO/.env"
-set +a
-
-[ -d .venv ] || { echo "Falta .venv. Corre inicio.sh primero."; exit 1; }
-source .venv/bin/activate
+#
+# Se parsea con dotenv, NO con `source`: los .env que vuelven de una instalación
+# Windows traen CRLF y `source` mete el \r dentro del valor. Un PIN_SALT con un
+# byte de más hashea distinto y ningún PIN valida — con el agravante de que el
+# error se ve como "PIN incorrecto", que manda a buscar el problema a otro lado.
+eval "$(python -c "
+import shlex
+from dotenv import dotenv_values
+for k, v in dotenv_values('$TRABAJO/.env').items():
+    if v is not None:
+        print(f'export {k}={shlex.quote(v)}')
+")"
 
 # dist/ se resuelve relativo a backend/main.py, no al cwd, así que basta con que
 # esté compilado en el proyecto. Se recompila SIEMPRE: con "solo si no existe"
