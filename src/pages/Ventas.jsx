@@ -41,7 +41,7 @@ const loadCarts = () => {
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
-  const { categories, t, hasCapability, branding, printing, discount } = useConfig();
+  const { categories, t, hasCapability, branding, printing, discount, weightEntryMode } = useConfig();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -197,7 +197,7 @@ export default function Ventas() {
     return list;
   }, [products, activeCategory, search, onlyInShowcase, stockMap, sortOrder]);
 
-  const addToCart = (product, overridePrice, overrideName, showcaseType = null, weight = null) => {
+  const addToCart = (product, overridePrice, overrideName, showcaseType = null, weight = null, amount = null) => {
     const price = overridePrice ?? product.price;
     const name = overrideName ?? product.name;
     setCart(prev => {
@@ -220,6 +220,7 @@ export default function Ventas() {
         photo: product.photo || null,
         showcase_type: showcaseType,
         weight,
+        amount,
       }];
     });
   };
@@ -307,6 +308,7 @@ export default function Ventas() {
           subtotal: i.subtotal,
           showcase_type: i.showcase_type,
           weight: i.weight ?? null,
+          amount: i.amount ?? null,
         })),
       });
 
@@ -711,9 +713,16 @@ export default function Ventas() {
       {weightProduct && (
         <WeightModal
           product={weightProduct}
-          onConfirm={(kg) => {
-            const portion = Math.round(kg * weightProduct.price);
-            addToCart(weightProduct, portion, `${weightProduct.name} (${kg} kg)`, null, kg);
+          mode={weightEntryMode}
+          onConfirm={(valor) => {
+            if (weightEntryMode === 'amount') {
+              const monto = Math.round(valor);
+              const kg = weightProduct.price ? valor / weightProduct.price : 0;
+              addToCart(weightProduct, monto, `${weightProduct.name} (${formatCurrency(monto)})`, null, kg, monto);
+            } else {
+              const portion = Math.round(valor * weightProduct.price);
+              addToCart(weightProduct, portion, `${weightProduct.name} (${valor} kg)`, null, valor);
+            }
             setWeightProduct(null);
           }}
           onClose={() => setWeightProduct(null)}
@@ -775,11 +784,15 @@ export default function Ventas() {
   );
 }
 
-function WeightModal({ product, onConfirm, onClose }) {
-  const [kg, setKg] = useState('');
-  const value = parseFloat(kg);
+function WeightModal({ product, mode, onConfirm, onClose }) {
+  // mode 'amount': la balanza ya calculó el precio y la cajera tipea ese monto.
+  // mode 'kg': tipea los kilos y el sistema multiplica por el precio por kilo.
+  const porMonto = mode === 'amount';
+  const [valor, setValor] = useState('');
+  const value = parseFloat(valor);
   const valid = Number.isFinite(value) && value > 0;
-  const subtotal = valid ? Math.round(value * product.price) : 0;
+  const subtotal = porMonto ? Math.round(value || 0) : (valid ? Math.round(value * product.price) : 0);
+  const kgEstimado = porMonto && valid && product.price ? value / product.price : null;
 
   const submit = (e) => {
     e?.preventDefault();
@@ -801,20 +814,29 @@ function WeightModal({ product, onConfirm, onClose }) {
         <form onSubmit={submit}>
           <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Peso (kg)</label>
+              <label className="form-label">{porMonto ? 'Monto que marca la balanza' : 'Peso (kg)'}</label>
               <input
                 className="form-input"
-                type="number" min="0" step="0.01" inputMode="decimal"
-                placeholder="Ej: 0.75"
-                value={kg}
+                type="number" min="0" step={porMonto ? '1' : '0.01'} inputMode="decimal"
+                placeholder={porMonto ? 'Ej: 12400' : 'Ej: 0.75'}
+                value={valor}
                 autoFocus
-                onChange={e => setKg(e.target.value)}
+                onChange={e => setValor(e.target.value)}
                 style={{ fontSize: '1.4rem', fontWeight: 700, textAlign: 'center' }}
               />
             </div>
             <div style={{ textAlign: 'center', fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-primary)' }}>
-              {valid ? `${value} kg × ${formatCurrency(product.price)} = ${formatCurrency(subtotal)}` : 'Ingresa el peso'}
+              {!valid
+                ? (porMonto ? 'Ingresa el monto' : 'Ingresa el peso')
+                : porMonto
+                  ? formatCurrency(subtotal)
+                  : `${value} kg × ${formatCurrency(product.price)} = ${formatCurrency(subtotal)}`}
             </div>
+            {porMonto && kgEstimado !== null && (
+              <div style={{ textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+                ≈ {kgEstimado.toFixed(2)} kg — se descuentan del stock
+              </div>
+            )}
           </div>
           <div className="modal-footer">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancelar</button>

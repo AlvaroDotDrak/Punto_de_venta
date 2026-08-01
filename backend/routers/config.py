@@ -42,6 +42,11 @@ def _get_json(db: Session, key: str, default):
         return default
 
 
+def _get_weight_mode(db: Session) -> str:
+    modo = _get(db, "weight_entry_mode") or "kg"
+    return modo if modo in ("kg", "amount") else "kg"
+
+
 def _build_discount(db: Session) -> dict:
     """Descuento configurado por el admin para aplicar al total de una venta.
 
@@ -92,6 +97,9 @@ def build_profile(db: Session) -> dict:
     # endpoint responde 503, así que el botón no debe siquiera aparecer.
     invoice_scan = invoice_ai.is_available()
     discount = _build_discount(db)
+    # 'kg' → la cajera tipea los kilos y el servidor multiplica por el precio/kg.
+    # 'amount' → la balanza ya calculó el precio y la cajera tipea ese monto.
+    weight_entry_mode = _get_weight_mode(db)
     setup_complete = _get(db, "setup_complete") == "true"
     printing = {
         "auto_print": _get(db, "auto_print") == "true",
@@ -113,6 +121,7 @@ def build_profile(db: Session) -> dict:
         "cash_diff_tolerance": cash_diff_tolerance,
         "invoice_scan": invoice_scan,
         "discount": discount,
+        "weight_entry_mode": weight_entry_mode,
     }
 
 
@@ -184,6 +193,8 @@ def update_profile(
         _set(db, "tax_rate", str(payload.tax_rate))
     if payload.cash_diff_tolerance is not None:
         _set(db, "cash_diff_tolerance", str(payload.cash_diff_tolerance))
+    if payload.weight_entry_mode is not None and payload.weight_entry_mode in ("kg", "amount"):
+        _set(db, "weight_entry_mode", payload.weight_entry_mode)
     if payload.discount is not None:
         d = payload.discount
         if d.enabled is not None:

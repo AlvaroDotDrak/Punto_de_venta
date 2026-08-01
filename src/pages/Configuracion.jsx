@@ -97,6 +97,7 @@ export default function Configuracion() {
   });
   const [mailPassSet, setMailPassSet] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
+  const [weightMode, setWeightMode] = useState('kg');
   const [branding, setBranding] = useState(null);
   const [caps, setCaps] = useState(null);
   const [palette, setPalette] = useState(null);
@@ -122,6 +123,7 @@ export default function Configuracion() {
         setMailPassSet(c.smtp_password_set === 'true');
       }).catch(() => {});
       setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
+      setWeightMode(profile?.weight_entry_mode || 'kg');
       const d = profile?.discount || {};
       setDiscount({
         enabled: !!d.enabled,
@@ -278,6 +280,17 @@ export default function Configuracion() {
       toast.error('Error al guardar: ' + err.message);
     } finally {
       setSavingParam(false);
+    }
+  };
+
+  const handleSaveWeightMode = async (modo) => {
+    setWeightMode(modo);
+    try {
+      await api.put('/config/profile', { weight_entry_mode: modo });
+      await refresh();
+      toast.success('Modo de venta por peso actualizado');
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
     }
   };
 
@@ -747,6 +760,29 @@ export default function Configuracion() {
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   Tiempo antes de cumplirse el límite de frescura para alertar sobre el vencimiento en vitrina (por defecto 24 horas).
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  Venta por peso: qué ingresa la cajera
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
+                  {[
+                    ['kg', 'Los kilos', 'El sistema multiplica por el precio por kilo'],
+                    ['amount', 'El monto', 'La balanza ya calculó el precio y se tipea ese número'],
+                  ].map(([val, titulo, ayuda]) => (
+                    <button key={val} type="button" onClick={() => handleSaveWeightMode(val)}
+                      className={`btn ${weightMode === val ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ flexDirection: 'column', alignItems: 'flex-start', height: 'auto', padding: 'var(--space-sm) var(--space-md)', textAlign: 'left' }}>
+                      <strong>{titulo}</strong>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 400, opacity: 0.85, whiteSpace: 'normal' }}>{ayuda}</span>
+                    </button>
+                  ))}
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Con "el monto", el stock en kilos se estima dividiendo el monto por el precio por kilo del producto,
+                  así el inventario sigue moviéndose. Mantené ese precio actualizado para que la estimación sirva.
                 </p>
               </div>
 

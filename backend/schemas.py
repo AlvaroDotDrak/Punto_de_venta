@@ -156,7 +156,10 @@ class SaleItemIn(BaseModel):
     quantity: int = Field(gt=0)
     subtotal: float = Field(ge=0)
     showcase_type: Optional[str] = None   # 'entero' | 'trozado'
-    weight: Optional[float] = None        # kg vendidos (sold_by='weight')
+    weight: Optional[float] = None        # kg vendidos (sold_by='weight', modo 'kg')
+    # Modo 'amount': la balanza ya calculó el precio y la cajera tipea ese monto.
+    # Es la única cifra que el servidor no puede recalcular — ver sales.py.
+    amount: Optional[float] = Field(default=None, gt=0)
 
 class SaleCreate(BaseModel):
     total: float
@@ -756,6 +759,7 @@ class ConfigProfileOut(BaseModel):
     cash_diff_tolerance: float
     invoice_scan: bool = False
     discount: dict = {}
+    weight_entry_mode: str = "kg"
 
 
 class DiscountUpdate(BaseModel):
@@ -773,6 +777,7 @@ class ConfigProfileUpdate(BaseModel):
     tax_rate: Optional[float] = None
     cash_diff_tolerance: Optional[float] = Field(default=None, ge=0)
     discount: Optional[DiscountUpdate] = None
+    weight_entry_mode: Optional[str] = None
 
 
 class SetupRequest(BaseModel):

@@ -78,6 +78,7 @@ export function ConfigProvider({ children }) {
       cashDiffTolerance: p.cash_diff_tolerance ?? 500,
       invoiceScanEnabled: p.invoice_scan === true,
       discount: p.discount || { active: false },
+      weightEntryMode: p.weight_entry_mode || 'kg',
       printing: p.printing,
       hasCapability,
       t,

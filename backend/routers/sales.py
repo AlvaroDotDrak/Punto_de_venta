@@ -9,7 +9,7 @@ from ..models import CashMovement, CashRegister, Sale, SaleItem, ShowcaseItem, P
 from ..auth import get_current_seller, require_admin, require_permission
 from ..audit import ACTIONS, log_action
 from ._common import parse_date_from, parse_date_to
-from .config import _build_discount
+from .config import _build_discount, _get_weight_mode
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
 from ..utils import calculate_recipe_fraction
 
@@ -21,19 +21,37 @@ def _round_half_up(x: float) -> int:
     return int(math.floor(x + 0.5))
 
 
-def _authoritative_unit_price(product: Product, item_in) -> float:
+def _authoritative_unit_price(product: Product, item_in, weight_mode: str = "kg") -> float:
     """Precio unitario recalculado desde el producto en la DB, replicando la
     lógica de precios de Ventas.jsx. Nunca se confía en el precio del cliente:
-    así una venta manipulada no puede fijar montos arbitrarios."""
+    así una venta manipulada no puede fijar montos arbitrarios.
+
+    Única excepción: venta por peso en modo 'amount'. Ahí la balanza del local ya
+    calculó el precio y la cajera tipea ese monto — el servidor no tiene con qué
+    recalcularlo porque no conoce los gramos. No agrega riesgo respecto del modo
+    'kg': tipear 0,5 kg en vez de 1,5 kg es exactamente el mismo fraude que
+    tipear $5.000 en vez de $15.000, y ambos quedan en el audit log."""
     if item_in.showcase_type == "trozado":
         if product.slice_price is not None:
             return product.slice_price
         return _round_half_up(product.price / (product.slices or 8))
     if item_in.showcase_type == "entero":
         return product.price
-    if product.sold_by == "weight" and item_in.weight is not None:
-        return _round_half_up((item_in.weight or 0) * product.price)
+    if product.sold_by == "weight":
+        if weight_mode == "amount" and item_in.amount is not None:
+            return _round_half_up(item_in.amount)
+        if item_in.weight is not None:
+            return _round_half_up((item_in.weight or 0) * product.price)
     return product.price
+
+
+def _kg_consumidos(product: Product, item_in, weight_mode: str) -> float:
+    """Kilos que salen del stock. En modo 'amount' se deducen del monto y del
+    precio por kilo: es aproximado, pero mantiene el inventario vivo en vez de
+    dejarlo congelado."""
+    if weight_mode == "amount" and item_in.amount is not None:
+        return (item_in.amount / product.price) if product.price else 0.0
+    return item_in.weight or 0.0
 
 
 def _handle_showcase_stock(db: Session, product_id: int, showcase_type: str, sale_id: int):
@@ -129,6 +147,7 @@ def create_sale(
         raise HTTPException(status_code=400, detail="La caja debe estar abierta para registrar ventas")
 
     has_receipt = True if payload.payment_method == "tarjeta" else bool(payload.has_receipt)
+    weight_mode = _get_weight_mode(db)
 
     sale = Sale(
         total=0,  # se fija con el total recalculado en el servidor tras el loop
@@ -152,7 +171,7 @@ def create_sale(
         # Precio/subtotal autoritativos desde la DB. Sin producto (ítem manual sin
         # product_id) se conserva lo enviado por el cliente: no hay de dónde recalcular.
         if product:
-            unit_price = _authoritative_unit_price(product, item_in)
+            unit_price = _authoritative_unit_price(product, item_in, weight_mode)
             subtotal = unit_price * item_in.quantity
         else:
             unit_price = item_in.price
@@ -181,7 +200,7 @@ def create_sale(
         if product and not item_in.showcase_type:
             if product.stock is not None:
                 if product.sold_by == "weight":
-                    consumed = (item_in.weight or 0) * item_in.quantity
+                    consumed = _kg_consumidos(product, item_in, weight_mode) * item_in.quantity
                     unit_label = "kg"
                 else:
                     consumed = item_in.quantity
