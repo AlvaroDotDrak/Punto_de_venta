@@ -775,6 +775,7 @@ class ConfigProfileOut(BaseModel):
     invoice_scan: bool = False
     discount: dict = {}
     weight_entry_mode: str = "kg"
+    report_stock_categories: list = []
 
 
 class DiscountUpdate(BaseModel):
@@ -793,6 +794,7 @@ class ConfigProfileUpdate(BaseModel):
     cash_diff_tolerance: Optional[float] = Field(default=None, ge=0)
     discount: Optional[DiscountUpdate] = None
     weight_entry_mode: Optional[str] = None
+    report_stock_categories: Optional[list] = None
 
 
 class SetupRequest(BaseModel):

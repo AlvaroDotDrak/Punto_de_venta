@@ -100,6 +100,10 @@ def build_profile(db: Session) -> dict:
     # 'kg' → la cajera tipea los kilos y el servidor multiplica por el precio/kg.
     # 'amount' → la balanza ya calculó el precio y la cajera tipea ese monto.
     weight_entry_mode = _get_weight_mode(db)
+    # Categorías cuyo remanente interesa en el cierre. Vacío = todas (compatible
+    # con lo que había). En una cevichería solo importa lo perecible: cuánto
+    # ceviche sobró decide cuánto preparar mañana; que queden 40 bebidas no.
+    report_stock_categories = _get_json(db, "report_stock_categories", [])
     setup_complete = _get(db, "setup_complete") == "true"
     printing = {
         "auto_print": _get(db, "auto_print") == "true",
@@ -122,6 +126,7 @@ def build_profile(db: Session) -> dict:
         "invoice_scan": invoice_scan,
         "discount": discount,
         "weight_entry_mode": weight_entry_mode,
+        "report_stock_categories": report_stock_categories,
     }
 
 
@@ -193,6 +198,8 @@ def update_profile(
         _set(db, "tax_rate", str(payload.tax_rate))
     if payload.cash_diff_tolerance is not None:
         _set(db, "cash_diff_tolerance", str(payload.cash_diff_tolerance))
+    if payload.report_stock_categories is not None:
+        _set(db, "report_stock_categories", json.dumps(payload.report_stock_categories))
     if payload.weight_entry_mode is not None and payload.weight_entry_mode in ("kg", "amount"):
         _set(db, "weight_entry_mode", payload.weight_entry_mode)
     if payload.discount is not None:

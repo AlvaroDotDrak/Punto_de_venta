@@ -98,6 +98,7 @@ export default function Configuracion() {
   const [mailPassSet, setMailPassSet] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
   const [weightMode, setWeightMode] = useState('kg');
+  const [reportCats, setReportCats] = useState([]);
   const [branding, setBranding] = useState(null);
   const [caps, setCaps] = useState(null);
   const [palette, setPalette] = useState(null);
@@ -124,6 +125,7 @@ export default function Configuracion() {
       }).catch(() => {});
       setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
       setWeightMode(profile?.weight_entry_mode || 'kg');
+      setReportCats(profile?.report_stock_categories || []);
       const d = profile?.discount || {};
       setDiscount({
         enabled: !!d.enabled,
@@ -280,6 +282,19 @@ export default function Configuracion() {
       toast.error('Error al guardar: ' + err.message);
     } finally {
       setSavingParam(false);
+    }
+  };
+
+  const handleToggleReportCat = async (valor) => {
+    const siguiente = reportCats.includes(valor)
+      ? reportCats.filter(v => v !== valor)
+      : [...reportCats, valor];
+    setReportCats(siguiente);
+    try {
+      await api.put('/config/profile', { report_stock_categories: siguiente });
+      await refresh();
+    } catch (err) {
+      toast.error('Error al guardar: ' + err.message);
     }
   };
 
@@ -760,6 +775,25 @@ export default function Configuracion() {
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   Tiempo antes de cumplirse el límite de frescura para alertar sobre el vencimiento en vitrina (por defecto 24 horas).
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  En el cierre, mostrar cuánto quedó de:
+                </label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {(profile?.product_categories || []).filter(c => c.stock).map(c => (
+                    <button key={c.value} type="button" onClick={() => handleToggleReportCat(c.value)}
+                      className={`btn btn-sm ${reportCats.includes(c.value) ? 'btn-primary' : 'btn-secondary'}`}>
+                      {c.emoji ? `${c.emoji} ` : ''}{c.label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Solo tiene sentido en lo perecible: cuánto ceviche sobró decide cuánto preparar mañana.
+                  De las demás categorías el comprobante muestra únicamente lo vendido.
+                  Sin ninguna seleccionada se muestran todas.
                 </p>
               </div>
 

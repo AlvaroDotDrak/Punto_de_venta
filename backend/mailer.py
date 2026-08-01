@@ -95,13 +95,25 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     except (ValueError, TypeError):
         etiquetas = {}
 
-    # Lo que queda para el día siguiente: en un rubro perecible es el dato que
-    # decide cuánto preparar mañana.
+    # El remanente solo se muestra en las categorías configuradas (lo perecible).
+    # En el resto se lista solo lo vendido: cuántas bebidas quedan es ruido.
+    try:
+        import json as _j
+        con_remanente = set(_j.loads(_get(db, "report_stock_categories") or "[]"))
+    except (ValueError, TypeError):
+        con_remanente = set()
+
     con_stock = (db.query(Product)
                  .filter(Product.active == True, Product.stock.isnot(None))  # noqa: E712
                  .order_by(Product.category, Product.name).all())
-    quedan = [(p, vendidos.get(p.id, 0)) for p in con_stock]
-    quedan = [(p, v) for p, v in quedan if v or (p.stock or 0) > 0]
+    quedan = []
+    for prod in con_stock:
+        v = vendidos.get(prod.id, 0)
+        muestra = not con_remanente or prod.category in con_remanente
+        if muestra and (v or (prod.stock or 0) > 0):
+            quedan.append((prod, v, True))
+        elif not muestra and v:
+            quedan.append((prod, v, False))
 
     negocio = _get(db, "branding")
     nombre = "Punto de Venta"
@@ -156,8 +168,10 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     filas_stock = "".join(
         f'<tr><td style="padding:4px 0;color:#555">{p.name}</td>'
         f'<td style="padding:4px 0;text-align:right">{v:g} vendidos</td>'
-        f'<td style="padding:4px 0;text-align:right;font-weight:700">{p.stock:g} quedan</td></tr>'
-        for p, v in quedan
+        + (f'<td style="padding:4px 0;text-align:right;font-weight:700">{p.stock:g} quedan</td>'
+           if muestra else '<td></td>')
+        + '</tr>'
+        for p, v, muestra in quedan
     )
     stock_html = (
         '<h3 style="font-size:15px;margin:0 0 6px">Vendido y lo que queda</h3>'

@@ -91,6 +91,16 @@ def _branding(db: Session) -> dict:
         return {}
 
 
+def _json_config(db: Session, key: str, default):
+    item = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    if not item:
+        return default
+    try:
+        return json.loads(item.value)
+    except (ValueError, TypeError):
+        return default
+
+
 def _categorias(db: Session) -> list[dict]:
     """Categorías del rubro, para imprimir la etiqueta legible en vez del slug."""
     item = db.query(SystemConfig).filter(SystemConfig.key == "product_categories").first()
@@ -357,20 +367,33 @@ def build_close_report(db: Session, register) -> bytes:
             buf += _txt(_row(etiquetas.get(cat, cat.capitalize())[:20], _money(monto))) + b"\n"
         buf += b"\n"
 
-    # Vendidos vs. lo que queda, solo de lo que lleva inventario
+    # El remanente solo interesa en lo perecible: cuánto ceviche sobró decide
+    # cuánto preparar mañana. Que queden 40 bebidas es ruido. En el resto de las
+    # categorías se lista únicamente lo que se vendió.
+    con_remanente = set(_json_config(db, "report_stock_categories", []))
     con_stock = (db.query(Product)
                  .filter(Product.active == True, Product.stock.isnot(None))  # noqa: E712
                  .order_by(Product.category, Product.name).all())
-    filas = [(p, vendidos.get(p.id, 0)) for p in con_stock]
-    filas = [(p, v) for p, v in filas if v or (p.stock or 0) > 0]
+    filas = []
+    for prod in con_stock:
+        vend = vendidos.get(prod.id, 0)
+        muestra_queda = not con_remanente or prod.category in con_remanente
+        # Sin remanente que mostrar, un producto que no se vendió no aporta nada.
+        if muestra_queda and (vend or (prod.stock or 0) > 0):
+            filas.append((prod, vend, True))
+        elif not muestra_queda and vend:
+            filas.append((prod, vend, False))
+
     if filas:
-        buf += _BOLD_ON + _txt("VENDIDO / QUEDA") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+        titulo = "VENDIDO / QUEDA" if any(m for _, _, m in filas) else "VENDIDO"
+        buf += _BOLD_ON + _txt(titulo) + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
         cat_actual = None
-        for p, vend in filas:
-            if p.category != cat_actual:
-                cat_actual = p.category
+        for prod, vend, muestra_queda in filas:
+            if prod.category != cat_actual:
+                cat_actual = prod.category
                 buf += _txt(etiquetas.get(cat_actual, cat_actual.capitalize())) + b"\n"
-            buf += _txt(_row(f"  {p.name[:24]}", f"{vend:g} / {p.stock:g}")) + b"\n"
+            derecha = f"{vend:g} / {prod.stock:g}" if muestra_queda else f"{vend:g}"
+            buf += _txt(_row(f"  {prod.name[:24]}", derecha)) + b"\n"
         buf += b"\n"
 
     gastos, retiros, ingresos = suma("expense"), suma("withdrawal"), suma("income")
