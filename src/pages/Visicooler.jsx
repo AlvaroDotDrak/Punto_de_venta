@@ -40,6 +40,7 @@ export default function Visicooler() {
   const [products, setProducts] = useState([]);
   const [search, setSearch]     = useState('');
   const [filter, setFilter]     = useState('all'); // 'all' | 'ok' | 'low' | 'empty'
+  const [catFilter, setCatFilter] = useState('todas');
 
   // Modal reposición
   const [restockTarget, setRestockTarget] = useState(null);
@@ -85,6 +86,7 @@ export default function Visicooler() {
   const filtered = useMemo(() => {
     let list = enriched;
     if (filter !== 'all') list = list.filter(p => p.status === filter);
+    if (catFilter !== 'todas') list = list.filter(p => p.category === catFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(p => p.name.toLowerCase().includes(q));
@@ -92,7 +94,34 @@ export default function Visicooler() {
     // Orden: sin stock → bajo → ok → sin tracking
     const ord = { empty: 0, low: 1, ok: 2, none: 3 };
     return [...list].sort((a, b) => (ord[a.status] ?? 3) - (ord[b.status] ?? 3));
-  }, [enriched, filter, search]);
+  }, [enriched, filter, catFilter, search]);
+
+  // Solo las categorías que realmente tienen productos, en el orden del rubro
+  const catTabs = useMemo(() => {
+    const presentes = new Map();
+    enriched.forEach(p => presentes.set(p.category, (presentes.get(p.category) || 0) + 1));
+    return categories
+      .filter(c => presentes.has(c.value))
+      .map(c => ({ value: c.value, label: c.label, emoji: c.emoji, count: presentes.get(c.value) }));
+  }, [enriched, categories]);
+
+  // Agrupado por categoría: con 100+ productos una lista plana es ilegible
+  const agrupado = useMemo(() => {
+    const grupos = new Map();
+    filtered.forEach(p => {
+      if (!grupos.has(p.category)) grupos.set(p.category, []);
+      grupos.get(p.category).push(p);
+    });
+    const orden = categories.map(c => c.value);
+    return [...grupos.entries()]
+      .sort((a, b) => orden.indexOf(a[0]) - orden.indexOf(b[0]))
+      .map(([value, items]) => ({
+        value,
+        label: categories.find(c => c.value === value)?.label || value,
+        emoji: categories.find(c => c.value === value)?.emoji,
+        items,
+      }));
+  }, [filtered, categories]);
 
   const counts = useMemo(() => ({
     total: enriched.length,
@@ -239,7 +268,7 @@ export default function Visicooler() {
           <Search className="search-icon" size={15} />
           <input
             type="text"
-            placeholder="Buscar bebida…"
+            placeholder="Buscar producto…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -254,6 +283,23 @@ export default function Visicooler() {
         </div>
       </div>
 
+      {/* Filtro por categoría */}
+      {catTabs.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
+          <button type="button" onClick={() => setCatFilter('todas')}
+            className={`btn btn-sm ${catFilter === 'todas' ? 'btn-primary' : 'btn-secondary'}`}>
+            Todas <span style={{ opacity: 0.7, marginLeft: 4 }}>{enriched.length}</span>
+          </button>
+          {catTabs.map(c => (
+            <button key={c.value} type="button" onClick={() => setCatFilter(c.value)}
+              className={`btn btn-sm ${catFilter === c.value ? 'btn-primary' : 'btn-secondary'}`}>
+              {c.emoji ? `${c.emoji} ` : ''}{c.label}
+              <span style={{ opacity: 0.7, marginLeft: 4 }}>{c.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Grid */}
       {filtered.length === 0 ? (
         <div className="empty-state">
@@ -261,17 +307,34 @@ export default function Visicooler() {
             <Thermometer size={28} style={{ color: 'var(--color-text-light)' }} />
           </div>
           <h3 style={{ fontFamily: 'var(--font-body)', fontWeight: 600 }}>
-            {search || filter !== 'all' ? 'Sin resultados' : 'No hay bebidas registradas'}
+            {search || filter !== 'all' || catFilter !== 'todas' ? 'Sin resultados' : 'No hay productos con inventario'}
           </h3>
           <p style={{ fontSize: '0.875rem' }}>
-            {search || filter !== 'all'
+            {search || filter !== 'all' || catFilter !== 'todas'
               ? 'Prueba con otro filtro o búsqueda.'
-              : 'Agrega productos de categoría "bebidas" en el módulo Productos.'}
+              : 'Los productos llevan inventario según su categoría. Revisa el módulo Productos.'}
           </p>
         </div>
       ) : (
+        agrupado.map(grupo => (
+        <div key={grupo.value} style={{ marginBottom: 'var(--space-lg)' }}>
+          {/* Encabezado de categoría: solo tiene sentido si hay más de una a la vista */}
+          {agrupado.length > 1 && (
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              margin: '0 0 var(--space-sm)', paddingBottom: 4,
+              borderBottom: '1px solid var(--color-border)',
+            }}>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>
+                {grupo.emoji ? `${grupo.emoji} ` : ''}{grupo.label}
+              </h3>
+              <span style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+                {grupo.items.length} producto{grupo.items.length === 1 ? '' : 's'}
+              </span>
+            </div>
+          )}
         <div className="vt-grid">
-          {filtered.map(product => {
+          {grupo.items.map(product => {
             const meta  = STATUS_META[product.status];
             const SIcon = meta.Icon;
             const min   = product.min_stock_cooler ?? DEFAULT_MIN;
@@ -379,6 +442,8 @@ export default function Visicooler() {
             );
           })}
         </div>
+        </div>
+        ))
       )}
 
       {/* ── MODAL: REPONER STOCK ──────────────────────── */}
