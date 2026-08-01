@@ -42,6 +42,16 @@ if [ ! -f "$TRABAJO/.env" ]; then
     exit 1
 fi
 
+# Si el puerto está tomado, uvicorn falla al bindear PERO el navegador sigue
+# hablando con el proceso viejo: los cambios "no aparecen" y no hay ningún error
+# visible. Mejor cortar acá con un mensaje claro.
+if (exec 3<>/dev/tcp/127.0.0.1/"$PUERTO") 2>/dev/null; then
+    exec 3<&- 2>/dev/null
+    echo "Error: el puerto $PUERTO ya está en uso — probablemente un servidor viejo."
+    echo "Detenelo con:  pkill -f \"port $PUERTO\"     (o usa otro puerto)"
+    exit 1
+fi
+
 [ -d .venv ] || { echo "Falta .venv. Corre inicio.sh primero."; exit 1; }
 source .venv/bin/activate
 
@@ -69,6 +79,10 @@ if [ "${3:-}" != "--sin-build" ]; then
     echo "Compilando frontend..."
     npm run build || { echo "Error: falló npm run build. Corre 'npm install'."; exit 1; }
 fi
+
+# Sin esto, load_dotenv() completaría desde el .env del proyecto y verías
+# funciones que el cliente no tiene contratadas (ej. el escaneo con IA).
+grep -q '^ZAI_API_KEY=.' "$TRABAJO/.env" 2>/dev/null || unset ZAI_API_KEY
 
 echo
 echo "Base:   $TRABAJO/pasteleria.db"
