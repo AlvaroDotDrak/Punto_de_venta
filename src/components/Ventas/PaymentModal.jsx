@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { X, Banknote, CreditCard, Smartphone, Check, Tag } from 'lucide-react';
+import { X, Banknote, CreditCard, Smartphone, Check, Tag, Gift } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
 const METHODS = [
   { id: 'efectivo',      label: 'Efectivo',      Icon: Banknote },
   { id: 'tarjeta',       label: 'Tarjeta',        Icon: CreditCard },
   { id: 'transferencia', label: 'Transferencia',  Icon: Smartphone },
+  { id: 'cortesia',      label: 'Cortesía',       Icon: Gift, permiso: 'courtesy' },
 ];
 
 const BILLS = [1000, 2000, 5000, 10000, 20000];
@@ -13,6 +14,9 @@ const BILLS = [1000, 2000, 5000, 10000, 20000];
 export default function PaymentModal({
   total,
   subtotal,
+  canGiveCourtesy,
+  courtesyNote,
+  onCourtesyNoteChange,
   discount,
   applyDiscount,
   canApplyDiscount,
@@ -32,6 +36,7 @@ export default function PaymentModal({
   const [feedbackKey, setFeedbackKey] = useState(0);
   const [feedbackAmount, setFeedbackAmount] = useState(null);
 
+  const esCortesia = paymentMethod === 'cortesia';
   const cashOk = paymentMethod !== 'efectivo' || !cashReceived || parseInt(cashReceived) >= total;
   const receiptForced = paymentMethod === 'tarjeta';
   const suggested = BILLS.find(b => b >= total) ?? BILLS[BILLS.length - 1];
@@ -93,8 +98,13 @@ export default function PaymentModal({
                   {formatCurrency(subtotal)}
                 </div>
               )}
+              {esCortesia && (
+                <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.55)', textDecoration: 'line-through' }}>
+                  {formatCurrency(subtotal)}
+                </div>
+              )}
               <span className="text-display" style={{ fontSize: '2rem', fontWeight: 900 }}>
-                {formatCurrency(total)}
+                {esCortesia ? 'CORTESÍA' : formatCurrency(total)}
               </span>
             </div>
           </div>
@@ -120,7 +130,7 @@ export default function PaymentModal({
 
           {/* Métodos de pago */}
           <div className="payment-methods" style={{ gap: 8, marginBottom: 'var(--space-md)' }}>
-            {METHODS.map(({ id, label, Icon }) => (
+            {METHODS.filter(m => m.permiso !== 'courtesy' || canGiveCourtesy).map(({ id, label, Icon }) => (
               <button
                 key={id}
                 className={`payment-method-btn ${paymentMethod === id ? 'selected' : ''}`}
@@ -253,7 +263,27 @@ export default function PaymentModal({
             </div>
           )}
 
-          {/* Boleta */}
+          {/* Cortesía: el motivo es lo que hace útil el reporte después */}
+          {esCortesia && (
+            <div className="form-group" style={{ marginTop: 'var(--space-sm)', marginBottom: 0 }}>
+              <label className="form-label">Motivo de la cortesía</label>
+              <input
+                className="form-input"
+                placeholder="Ej: consumo del personal, cliente frecuente, producto dañado"
+                value={courtesyNote}
+                onChange={e => onCourtesyNoteChange(e.target.value)}
+                maxLength={120}
+                autoFocus
+              />
+              <p style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                El producto sale del inventario y no se cobra. Queda registrado con tu nombre
+                y aparece en el cierre del turno.
+              </p>
+            </div>
+          )}
+
+          {/* Boleta: una cortesía no emite boleta */}
+          {!esCortesia && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10,
             marginTop: 'var(--space-sm)',
@@ -275,6 +305,7 @@ export default function PaymentModal({
               {receiptForced && <span style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontWeight: 500, marginLeft: 6 }}>Requerido — tarjeta</span>}
             </label>
           </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -285,10 +316,10 @@ export default function PaymentModal({
           <button
             className={`btn btn-primary ${processing ? 'btn-loading' : ''}`}
             onClick={onConfirm}
-            disabled={processing || !cashOk}
+            disabled={processing || !cashOk || (esCortesia && !courtesyNote.trim())}
             style={{ flex: 1, height: 44, fontSize: '1rem', boxShadow: 'var(--shadow-md)', textTransform: 'uppercase', letterSpacing: '0.5px' }}
           >
-            {processing ? 'Confirmando...' : 'Confirmar Pago'}
+            {processing ? 'Confirmando...' : esCortesia ? 'Registrar Cortesía' : 'Confirmar Pago'}
           </button>
         </div>
       </div>

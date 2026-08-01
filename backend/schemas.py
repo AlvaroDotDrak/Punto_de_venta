@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 # Vocabularios compartidos. Antes cada módulo tenía el suyo (Compras aceptaba
 # 'debito', Caja 'tarjeta') y nada validaba: un valor basura entraba como boleta y
 # se comía el crédito fiscal del IVA sin avisar.
-PaymentMethod = Literal["efectivo", "tarjeta", "debito", "transferencia"]
+PaymentMethod = Literal["efectivo", "tarjeta", "debito", "transferencia", "cortesia"]
 DocumentType = Literal["boleta", "factura"]
 
 
@@ -32,6 +32,7 @@ class SellerUpdate(BaseModel):
     can_view_totals: Optional[bool] = None
     can_withdraw_cash: Optional[bool] = None
     can_apply_discount: Optional[bool] = None
+    can_give_courtesy: Optional[bool] = None
     demote_dev: bool = False   # confirmación explícita para quitarle el rol dev
 
 class SellerOut(BaseModel):
@@ -49,6 +50,7 @@ class SellerOut(BaseModel):
     can_view_totals: bool
     can_withdraw_cash: bool
     can_apply_discount: bool
+    can_give_courtesy: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -184,6 +186,7 @@ class SaleCreate(BaseModel):
     # El cliente solo pide aplicar el descuento; el porcentaje lo pone el servidor
     # desde la configuración. Nunca se acepta un monto o un % del cliente.
     apply_discount: bool = False
+    notes: Optional[str] = None   # motivo; obligatorio si payment_method='cortesia'
     items: list[SaleItemIn]
 
 class SaleItemOut(BaseModel):
@@ -204,6 +207,7 @@ class SaleOut(BaseModel):
     subtotal: Optional[float] = None
     discount_percent: float = 0
     discount_amount: float = 0
+    notes: Optional[str] = None
     payment_method: str
     seller_id: int
     order_id: Optional[int]
@@ -689,6 +693,7 @@ class AccountingSummary(BaseModel):
     date_to: str
     total_income: float          # neto cobrado (ya con los descuentos aplicados)
     total_discounts: float = 0   # pesos regalados en promociones
+    total_courtesy: float = 0    # valor de lista de lo entregado como cortesía
     total_income_gross: float = 0  # lo que se habría cobrado sin descuentos
     total_income_cash: float
     total_income_card: float

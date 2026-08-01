@@ -183,6 +183,9 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN subtotal FLOAT")
         _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN discount_percent FLOAT DEFAULT 0")
         _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN discount_amount FLOAT DEFAULT 0")
+        # v2.28: cortesías (producto que sale sin cobrarse) con su motivo
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_give_courtesy BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN notes TEXT")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))

@@ -317,18 +317,25 @@ def build_close_report(db: Session, register) -> bytes:
         q = q.filter(Sale.created_at <= register.closed_at)
     ventas_turno = q.all()
     descuentos = sum(s.discount_amount or 0 for s in ventas_turno)
+    cortesias = [s for s in ventas_turno if s.payment_method == "cortesia"]
+    valor_cortesias = sum(s.subtotal or 0 for s in cortesias)
 
     # Desglose por categoría y unidades vendidas por producto
     por_categoria: dict[str, float] = {}
     vendidos: dict[int, float] = {}
     if ventas_turno:
         ids = [s.id for s in ventas_turno]
+        # Las cortesías no suman plata: incluirlas dejaría el desglose por
+        # categoría por encima del total de ventas. Las unidades sí se cuentan,
+        # porque salieron del stock igual.
+        cobradas = {s.id for s in ventas_turno if s.payment_method != "cortesia"}
         items = (db.query(SaleItem)
                  .filter(SaleItem.sale_id.in_(ids))
                  .options(joinedload(SaleItem.product)).all())
         for it in items:
             cat = it.product.category if it.product else "otros"
-            por_categoria[cat] = por_categoria.get(cat, 0) + it.subtotal
+            if it.sale_id in cobradas:
+                por_categoria[cat] = por_categoria.get(cat, 0) + it.subtotal
             if it.product_id:
                 vendidos[it.product_id] = vendidos.get(it.product_id, 0) + it.quantity
 
@@ -360,6 +367,14 @@ def build_close_report(db: Session, register) -> bytes:
     if descuentos:
         buf += _txt(_row("  Descuentos", "-" + _money(descuentos))) + b"\n"
     buf += _TALL_ON + _txt(_row("TOTAL", _money(ventas))) + b"\n" + _TALL_OFF + b"\n"
+
+    if cortesias:
+        buf += b"\n" + _BOLD_ON + _txt("CORTESIAS") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+        buf += _txt(_row(f"{len(cortesias)} entrega(s)", _money(valor_cortesias))) + b"\n"
+        for c in cortesias:
+            for linea in _wrap(f"  {c.created_at.strftime('%H:%M')} {_money(c.subtotal)} - {c.notes or 'sin motivo'}"):
+                buf += _txt(linea) + b"\n"
+        buf += b"\n"
 
     if por_categoria:
         buf += _BOLD_ON + _txt("POR CATEGORIA") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"

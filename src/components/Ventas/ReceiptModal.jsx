@@ -134,7 +134,17 @@ export default function ReceiptModal({ sale, onClose }) {
                 <Row left={`${sale.discountLabel || 'Descuento'} ${sale.discountPercent}%`} right={`- ${formatCurrency(sale.discountAmount)}`} />
               </>
             )}
-            <Row left="TOTAL" right={formatCurrency(sale.total)} bold big />
+            {sale.isCourtesy ? (
+              <>
+                <Row left="Valor" right={formatCurrency(sale.subtotal)} />
+                <Row left="TOTAL" right="CORTESÍA" bold big />
+                <div style={{ fontSize: '0.8rem', textAlign: 'center', marginTop: 6, opacity: 0.75 }}>
+                  {sale.courtesyNote}
+                </div>
+              </>
+            ) : (
+              <Row left="TOTAL" right={formatCurrency(sale.total)} bold big />
+            )}
             {isCash && sale.cashReceived > 0 && (
               <>
                 <Row left="Recibido" right={formatCurrency(sale.cashReceived)} />

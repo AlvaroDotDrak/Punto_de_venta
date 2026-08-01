@@ -54,6 +54,9 @@ def get_summary(
     # El descuento ya está restado de `total`. Se reporta aparte porque, si no, la
     # plata regalada en promociones desaparece: solo se vería que se vendió menos.
     total_discounts = sum(s.discount_amount or 0 for s in sales)
+    # Cortesías: total=0, así que no suman a los ingresos. Se reportan por su
+    # valor de lista para saber cuánto se regaló. El costo ya está en las compras.
+    total_courtesy = sum(s.subtotal or 0 for s in sales if s.payment_method == "cortesia")
     total_income_cash = sum(s.total for s in sales if s.payment_method == "efectivo")
     total_income_card = sum(s.total for s in sales if s.payment_method == "tarjeta")
     total_income_transfer = sum(s.total for s in sales if s.payment_method == "transferencia")
@@ -152,6 +155,7 @@ def get_summary(
         date_to=date_to,
         total_income=total_income,
         total_discounts=total_discounts,
+        total_courtesy=total_courtesy,
         total_income_gross=total_income + total_discounts,
         total_income_cash=total_income_cash,
         total_income_card=total_income_card,
@@ -202,6 +206,9 @@ def export_report(
     # El descuento ya está restado de `total`. Se reporta aparte porque, si no, la
     # plata regalada en promociones desaparece: solo se vería que se vendió menos.
     total_discounts = sum(s.discount_amount or 0 for s in sales)
+    # Cortesías: total=0, así que no suman a los ingresos. Se reportan por su
+    # valor de lista para saber cuánto se regaló. El costo ya está en las compras.
+    total_courtesy = sum(s.subtotal or 0 for s in sales if s.payment_method == "cortesia")
     total_expenses = sum(e.amount for e in expenses)
     period_label = f"{date_from} al {date_to}"
 

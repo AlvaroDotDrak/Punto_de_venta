@@ -27,6 +27,7 @@ class Seller(Base):
     can_view_totals = Column(Boolean, default=False)   # ver ventas totales/tarjeta/transferencia en Caja
     can_withdraw_cash = Column(Boolean, default=False)  # sacar efectivo del cajón (sangría)
     can_apply_discount = Column(Boolean, default=False)  # aplicar el descuento configurado a una venta
+    can_give_courtesy = Column(Boolean, default=False)   # entregar productos como cortesía (sin cobrar)
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
@@ -90,6 +91,7 @@ class Sale(Base):
     status = Column(String, default="completed")     # 'completed' | 'voided'
     voided_at = Column(DateTime, nullable=True)
     void_reason = Column(String, nullable=True)
+    notes = Column(String, nullable=True)             # motivo, obligatorio en cortesías
     has_receipt = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
 

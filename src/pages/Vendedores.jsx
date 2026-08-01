@@ -23,19 +23,20 @@ const emptyForm = {
   can_view_costs: false,
   can_view_totals: false,
   can_withdraw_cash: false,
-  can_apply_discount: false
+  can_apply_discount: false,
+  can_give_courtesy: false
 };
 
 const PERMISSION_PRESETS = {
   cajero: { products_access: 'none', can_access_insumos: false, can_access_historial: false,
     can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: false,
-    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: true },
+    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: true, can_give_courtesy: false },
   encargado: { products_access: 'view', can_access_insumos: false, can_access_historial: true,
     can_void_sales: true, can_close_cash: true, can_cash_movements: true, can_view_costs: false,
-    can_view_totals: true, can_withdraw_cash: true, can_apply_discount: true },
+    can_view_totals: true, can_withdraw_cash: true, can_apply_discount: true, can_give_courtesy: true },
   bodeguero: { products_access: 'full', can_access_insumos: true, can_access_historial: false,
     can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: true,
-    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: false },
+    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: false, can_give_courtesy: false },
 };
 
 export default function Vendedores() {
@@ -89,7 +90,8 @@ export default function Vendedores() {
           can_view_costs: form.can_view_costs,
           can_view_totals: form.can_view_totals,
           can_withdraw_cash: form.can_withdraw_cash,
-          can_apply_discount: form.can_apply_discount
+          can_apply_discount: form.can_apply_discount,
+          can_give_courtesy: form.can_give_courtesy
         };
         if (form.pin) patch.pin = form.pin;
         await api.patch(`/sellers/${editingId}`, patch);
@@ -121,7 +123,8 @@ export default function Vendedores() {
       can_view_costs: !!seller.can_view_costs,
       can_view_totals: !!seller.can_view_totals,
       can_withdraw_cash: !!seller.can_withdraw_cash,
-      can_apply_discount: !!seller.can_apply_discount
+      can_apply_discount: !!seller.can_apply_discount,
+      can_give_courtesy: !!seller.can_give_courtesy
     });
     setShowForm(true);
   };
@@ -299,6 +302,10 @@ export default function Vendedores() {
                   <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <input type="checkbox" id="can_apply_discount" checked={form.can_apply_discount} onChange={e => updateField('can_apply_discount', e.target.checked)} />
                     <label htmlFor="can_apply_discount" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Aplicar el descuento configurado</label>
+                  </div>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <input type="checkbox" id="can_give_courtesy" checked={form.can_give_courtesy} onChange={e => updateField('can_give_courtesy', e.target.checked)} />
+                    <label htmlFor="can_give_courtesy" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Entregar cortesías (producto sin cobrar)</label>
                   </div>
                   <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <input type="checkbox" id="can_access_historial" checked={form.can_access_historial} onChange={e => updateField('can_access_historial', e.target.checked)} />

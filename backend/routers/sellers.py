@@ -90,6 +90,8 @@ def update_seller(
         seller.can_withdraw_cash = payload.can_withdraw_cash
     if payload.can_apply_discount is not None:
         seller.can_apply_discount = payload.can_apply_discount
+    if payload.can_give_courtesy is not None:
+        seller.can_give_courtesy = payload.can_give_courtesy
 
     db.commit()
     db.refresh(seller)

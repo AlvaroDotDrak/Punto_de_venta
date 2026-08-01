@@ -146,7 +146,20 @@ def create_sale(
     if not register:
         raise HTTPException(status_code=400, detail="La caja debe estar abierta para registrar ventas")
 
-    has_receipt = True if payload.payment_method == "tarjeta" else bool(payload.has_receipt)
+    # Cortesía: el producto sale del stock pero no se cobra. No es venta (no debe
+    # inflar los ingresos) ni gasto (el costo ya se registró al comprarlo). Se
+    # guarda el valor de lo regalado en `subtotal` para poder reportarlo, con
+    # total=0 y sin boleta.
+    es_cortesia = payload.payment_method == "cortesia"
+    if es_cortesia:
+        if not (seller.role in ("admin", "dev") or seller.can_give_courtesy):
+            raise HTTPException(status_code=403, detail="Sin permisos para entregar cortesías")
+        if not (payload.notes or "").strip():
+            raise HTTPException(status_code=422, detail="La cortesía necesita un motivo")
+
+    has_receipt = False if es_cortesia else (
+        True if payload.payment_method == "tarjeta" else bool(payload.has_receipt)
+    )
     weight_mode = _get_weight_mode(db)
 
     sale = Sale(
@@ -156,6 +169,7 @@ def create_sale(
         order_id=payload.order_id,
         status="completed",
         has_receipt=has_receipt,
+        notes=(payload.notes or "").strip() or None,
     )
     db.add(sale)
     db.flush()  # obtener sale.id antes de commit
@@ -241,7 +255,7 @@ def create_sale(
     # consola abierta se haría un 90%.
     discount_percent = 0.0
     discount_amount = 0.0
-    if payload.apply_discount:
+    if payload.apply_discount and not es_cortesia:
         if not (seller.role in ("admin", "dev") or seller.can_apply_discount):
             raise HTTPException(status_code=403, detail="Sin permisos para aplicar descuentos")
         discount = _build_discount(db)
@@ -252,10 +266,10 @@ def create_sale(
         discount_percent = discount["percent"]
         discount_amount = _round_half_up(server_total * discount_percent / 100)
 
-    sale.subtotal = server_total
+    sale.subtotal = server_total          # valor de lista, incluso si es cortesía
     sale.discount_percent = discount_percent
     sale.discount_amount = discount_amount
-    server_total = server_total - discount_amount
+    server_total = 0.0 if es_cortesia else (server_total - discount_amount)
     sale.total = server_total
 
     # Toda venta deja movimiento de caja, sea cual sea el método: la caja es el
@@ -272,9 +286,13 @@ def create_sale(
 
     db.commit()
     db.refresh(sale)
-    detalle_desc = (f" · {discount_percent:g}% dcto (-${discount_amount:.0f})" if discount_amount else "")
-    log_action(db, ACTIONS.SALE, seller.id,
-               f"Venta ${server_total:.0f} - {payload.payment_method}{detalle_desc}")
+    if es_cortesia:
+        log_action(db, ACTIONS.SALE, seller.id,
+                   f"Cortesía por ${sale.subtotal:.0f} — {sale.notes}")
+    else:
+        detalle_desc = (f" · {discount_percent:g}% dcto (-${discount_amount:.0f})" if discount_amount else "")
+        log_action(db, ACTIONS.SALE, seller.id,
+                   f"Venta ${server_total:.0f} - {payload.payment_method}{detalle_desc}")
 
     return db.query(Sale).options(
         joinedload(Sale.items), joinedload(Sale.seller)

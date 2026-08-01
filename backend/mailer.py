@@ -72,18 +72,23 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
         q = q.filter(Sale.created_at <= register.closed_at)
     ventas_turno = q.all()
     descuentos = sum(s.discount_amount or 0 for s in ventas_turno)
+    cortesias = [s for s in ventas_turno if s.payment_method == "cortesia"]
+    valor_cortesias = sum(s.subtotal or 0 for s in cortesias)
 
     ranking = {}
     por_categoria: dict[str, float] = {}
     vendidos: dict[int, float] = {}
     if ventas_turno:
         ids = [s.id for s in ventas_turno]
+        # Las cortesías no suman plata (ver printing.py): se reportan aparte.
+        cobradas = {s.id for s in ventas_turno if s.payment_method != "cortesia"}
         for it in db.query(SaleItem).filter(SaleItem.sale_id.in_(ids)).all():
-            acc = ranking.setdefault(it.product_name, {"n": 0, "total": 0.0})
-            acc["n"] += it.quantity
-            acc["total"] += it.subtotal
-            cat = it.product.category if it.product else "otros"
-            por_categoria[cat] = por_categoria.get(cat, 0) + it.subtotal
+            if it.sale_id in cobradas:
+                acc = ranking.setdefault(it.product_name, {"n": 0, "total": 0.0})
+                acc["n"] += it.quantity
+                acc["total"] += it.subtotal
+                cat = it.product.category if it.product else "otros"
+                por_categoria[cat] = por_categoria.get(cat, 0) + it.subtotal
             if it.product_id:
                 vendidos[it.product_id] = vendidos.get(it.product_id, 0) + it.quantity
     top = sorted(ranking.items(), key=lambda kv: kv[1]["total"], reverse=True)[:5]
@@ -159,6 +164,18 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
         fila(etiquetas.get(c, c.capitalize()), _money(v))
         for c, v in sorted(por_categoria.items(), key=lambda kv: kv[1], reverse=True)
     )
+    filas_cort = "".join(
+        f'<tr><td style="padding:4px 0;color:#555">{c.created_at.strftime("%H:%M")} · {c.notes or "sin motivo"}</td>'
+        f'<td style="padding:4px 0;text-align:right">{_money(c.subtotal)}</td></tr>'
+        for c in cortesias
+    )
+    cortesias_html = (
+        '<h3 style="font-size:15px;margin:0 0 6px">Cortesías</h3>'
+        '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">'
+        f'{filas_cort}'
+        f'{fila("Total entregado", _money(valor_cortesias), negrita=True)}</table>'
+    ) if cortesias else ""
+
     categorias_html = (
         '<h3 style="font-size:15px;margin:0 0 6px">Ventas por categoría</h3>'
         '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">'
@@ -209,6 +226,8 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     {fila("Descuentos otorgados", "− " + _money(descuentos), color="#B45309") if descuentos else ""}
     {fila("Anulaciones", _money(abs(anulaciones)), color="#C0392B") if anulaciones else ""}
   </table>
+
+  {cortesias_html}
 
   {categorias_html}
 
