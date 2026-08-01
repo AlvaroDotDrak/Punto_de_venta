@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()  # Cargar .env antes de importar cualquier módulo del backend
 
+import json
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -110,6 +111,40 @@ def _backfill_noncash_movements(conn) -> None:
     conn.commit()
 
 
+def _migrar_descuento_unico(conn) -> None:
+    """v2.29: el descuento pasó de ser uno solo (claves sueltas en system_config)
+    a una lista. Convierte la configuración vieja en la primera entrada de la
+    lista para no perder la promoción que el negocio tuviera activa."""
+    ya = conn.execute(text("SELECT 1 FROM system_config WHERE key='discounts'")).fetchone()
+    if ya:
+        return
+    fila = conn.execute(text("SELECT value FROM system_config WHERE key='discount_percent'")).fetchone()
+    if not fila:
+        return
+    try:
+        percent = float(fila[0] or 0)
+    except (TypeError, ValueError):
+        percent = 0.0
+    if percent <= 0:
+        return
+
+    def _val(clave):
+        r = conn.execute(text("SELECT value FROM system_config WHERE key=:k"), {"k": clave}).fetchone()
+        return r[0] if r else None
+
+    entrada = [{
+        "id": "1",
+        "label": _val("discount_label") or "Descuento",
+        "type": "percent",
+        "value": percent,
+        "enabled": _val("discount_enabled") == "true",
+        "valid_until": _val("discount_valid_until") or None,
+    }]
+    conn.execute(text("INSERT INTO system_config (key, value) VALUES ('discounts', :v)"),
+                 {"v": json.dumps(entrada)})
+    conn.commit()
+
+
 def _run_migrations():
     """Migraciones manuales para columnas nuevas en tablas existentes."""
     with engine.connect() as conn:
@@ -186,6 +221,8 @@ def _run_migrations():
         # v2.28: cortesías (producto que sale sin cobrarse) con su motivo
         _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_give_courtesy BOOLEAN DEFAULT 0")
         _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN notes TEXT")
+        # v2.29: varios descuentos configurables (10/15/20%, gift cards)
+        _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN discount_label TEXT")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
@@ -212,6 +249,7 @@ def _run_migrations():
         conn.commit()
 
         _backfill_item_aliases(conn)
+        _migrar_descuento_unico(conn)
         _backfill_noncash_movements(conn)
 
         # v2.13: marca de rubro (multi-vertical). Una instalación legacy ya poblada

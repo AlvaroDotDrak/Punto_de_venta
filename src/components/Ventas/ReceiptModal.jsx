@@ -131,7 +131,10 @@ export default function ReceiptModal({ sale, onClose }) {
             {sale.discountAmount > 0 && (
               <>
                 <Row left="Subtotal" right={formatCurrency(sale.subtotal)} />
-                <Row left={`${sale.discountLabel || 'Descuento'} ${sale.discountPercent}%`} right={`- ${formatCurrency(sale.discountAmount)}`} />
+                <Row
+                  left={`${sale.discountLabel || 'Descuento'}${sale.discountPercent ? ` ${sale.discountPercent}%` : ''}`}
+                  right={`- ${formatCurrency(sale.discountAmount)}`}
+                />
               </>
             )}
             {sale.isCourtesy ? (

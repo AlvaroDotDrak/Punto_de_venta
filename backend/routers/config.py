@@ -47,35 +47,43 @@ def _get_weight_mode(db: Session) -> str:
     return modo if modo in ("kg", "amount") else "kg"
 
 
-def _build_discount(db: Session) -> dict:
-    """Descuento configurado por el admin para aplicar al total de una venta.
+def _build_discounts(db: Session) -> list[dict]:
+    """Descuentos configurados por el admin, cada uno con su estado resuelto.
 
-    `active` lo resuelve el servidor (no el frontend) porque también es la
-    condición que valida sales.py al cobrar: una sola fuente de verdad.
-    El vencimiento evita el olvido caro — una promo de un día que queda prendida
-    sigue regalando plata sin que nadie lo note."""
-    enabled = _get(db, "discount_enabled") == "true"
-    try:
-        percent = float(_get(db, "discount_percent") or 0)
-    except ValueError:
-        percent = 0.0
-    valid_until = _get(db, "discount_valid_until") or None
+    `active` lo calcula el servidor (no el frontend) porque es la MISMA condición
+    que valida sales.py al cobrar: una sola fuente de verdad.
 
-    vencido = False
-    if valid_until:
+    Dos tipos: 'percent' (promociones tipo 10/15/20%) y 'amount' (gift cards, un
+    monto fijo). El vencimiento evita el olvido caro — una promo de un día que
+    queda prendida sigue regalando plata sin que nadie lo note.
+    """
+    hoy = date.today()
+    salida = []
+    for d in _get_json(db, "discounts", []):
         try:
-            vencido = date.fromisoformat(valid_until) < date.today()
-        except ValueError:
-            valid_until = None
-
-    return {
-        "enabled": enabled,
-        "percent": percent,
-        "label": _get(db, "discount_label") or "Descuento",
-        "valid_until": valid_until,
-        "expired": vencido,
-        "active": enabled and percent > 0 and not vencido,
-    }
+            valor = float(d.get("value") or 0)
+        except (TypeError, ValueError):
+            valor = 0.0
+        tipo = d.get("type") if d.get("type") in ("percent", "amount") else "percent"
+        valid_until = d.get("valid_until") or None
+        vencido = False
+        if valid_until:
+            try:
+                vencido = date.fromisoformat(valid_until) < hoy
+            except ValueError:
+                valid_until = None
+        habilitado = d.get("enabled", True) is not False
+        salida.append({
+            "id": str(d.get("id") or d.get("label") or len(salida)),
+            "label": (d.get("label") or "Descuento").strip() or "Descuento",
+            "type": tipo,
+            "value": valor,
+            "enabled": habilitado,
+            "valid_until": valid_until,
+            "expired": vencido,
+            "active": habilitado and valor > 0 and not vencido,
+        })
+    return salida
 
 
 def build_profile(db: Session) -> dict:
@@ -96,7 +104,7 @@ def build_profile(db: Session) -> dict:
     # Depende del entorno (ZAI_API_KEY), no de la config guardada: sin key el
     # endpoint responde 503, así que el botón no debe siquiera aparecer.
     invoice_scan = invoice_ai.is_available()
-    discount = _build_discount(db)
+    discounts = _build_discounts(db)
     # 'kg' → la cajera tipea los kilos y el servidor multiplica por el precio/kg.
     # 'amount' → la balanza ya calculó el precio y la cajera tipea ese monto.
     weight_entry_mode = _get_weight_mode(db)
@@ -124,7 +132,7 @@ def build_profile(db: Session) -> dict:
         "printing": printing,
         "cash_diff_tolerance": cash_diff_tolerance,
         "invoice_scan": invoice_scan,
-        "discount": discount,
+        "discounts": discounts,
         "weight_entry_mode": weight_entry_mode,
         "report_stock_categories": report_stock_categories,
     }
@@ -202,16 +210,8 @@ def update_profile(
         _set(db, "report_stock_categories", json.dumps(payload.report_stock_categories))
     if payload.weight_entry_mode is not None and payload.weight_entry_mode in ("kg", "amount"):
         _set(db, "weight_entry_mode", payload.weight_entry_mode)
-    if payload.discount is not None:
-        d = payload.discount
-        if d.enabled is not None:
-            _set(db, "discount_enabled", "true" if d.enabled else "false")
-        if d.percent is not None:
-            _set(db, "discount_percent", str(d.percent))
-        if d.label is not None:
-            _set(db, "discount_label", d.label.strip() or "Descuento")
-        if d.valid_until is not None:
-            _set(db, "discount_valid_until", d.valid_until or "")
+    if payload.discounts is not None:
+        _set(db, "discounts", json.dumps(payload.discounts))
     db.commit()
     return build_profile(db)
 

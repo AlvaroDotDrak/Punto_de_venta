@@ -77,7 +77,7 @@ export function ConfigProvider({ children }) {
       taxRate: p.tax_rate,
       cashDiffTolerance: p.cash_diff_tolerance ?? 500,
       invoiceScanEnabled: p.invoice_scan === true,
-      discount: p.discount || { active: false },
+      discounts: p.discounts || [],
       weightEntryMode: p.weight_entry_mode || 'kg',
       printing: p.printing,
       hasCapability,

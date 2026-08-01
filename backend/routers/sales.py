@@ -9,7 +9,7 @@ from ..models import CashMovement, CashRegister, Sale, SaleItem, ShowcaseItem, P
 from ..auth import get_current_seller, require_admin, require_permission
 from ..audit import ACTIONS, log_action
 from ._common import parse_date_from, parse_date_to
-from .config import _build_discount, _get_weight_mode
+from .config import _build_discounts, _get_weight_mode
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest
 from ..utils import calculate_recipe_fraction
 
@@ -255,20 +255,31 @@ def create_sale(
     # consola abierta se haría un 90%.
     discount_percent = 0.0
     discount_amount = 0.0
-    if payload.apply_discount and not es_cortesia:
+    discount_label = None
+    if payload.discount_id and not es_cortesia:
         if not (seller.role in ("admin", "dev") or seller.can_apply_discount):
             raise HTTPException(status_code=403, detail="Sin permisos para aplicar descuentos")
-        discount = _build_discount(db)
-        if not discount["active"]:
-            detalle = ("El descuento venció el " + discount["valid_until"]
-                       if discount["expired"] else "No hay un descuento activo")
+        elegido = next((d for d in _build_discounts(db) if d["id"] == payload.discount_id), None)
+        if elegido is None:
+            raise HTTPException(status_code=404, detail="Ese descuento no existe")
+        if not elegido["active"]:
+            detalle = (f"'{elegido['label']}' venció el {elegido['valid_until']}"
+                       if elegido["expired"] else f"'{elegido['label']}' no está activo")
             raise HTTPException(status_code=400, detail=detalle)
-        discount_percent = discount["percent"]
-        discount_amount = _round_half_up(server_total * discount_percent / 100)
+
+        discount_label = elegido["label"]
+        if elegido["type"] == "amount":
+            # Gift card: monto fijo, topado al total. Si la card vale más que la
+            # compra, la venta queda en $0 — no se devuelve vuelto ni queda saldo.
+            discount_amount = min(_round_half_up(elegido["value"]), _round_half_up(server_total))
+        else:
+            discount_percent = elegido["value"]
+            discount_amount = _round_half_up(server_total * discount_percent / 100)
 
     sale.subtotal = server_total          # valor de lista, incluso si es cortesía
     sale.discount_percent = discount_percent
     sale.discount_amount = discount_amount
+    sale.discount_label = discount_label
     server_total = 0.0 if es_cortesia else (server_total - discount_amount)
     sale.total = server_total
 
@@ -294,7 +305,7 @@ def create_sale(
         log_action(db, ACTIONS.SALE, seller.id,
                    f"Cortesía por ${sale.subtotal:.0f} — {sale.notes}")
     else:
-        detalle_desc = (f" · {discount_percent:g}% dcto (-${discount_amount:.0f})" if discount_amount else "")
+        detalle_desc = (f" · {discount_label} (-${discount_amount:.0f})" if discount_amount else "")
         log_action(db, ACTIONS.SALE, seller.id,
                    f"Venta ${server_total:.0f} - {payload.payment_method}{detalle_desc}")
 

@@ -17,10 +17,10 @@ export default function PaymentModal({
   canGiveCourtesy,
   courtesyNote,
   onCourtesyNoteChange,
-  discount,
-  applyDiscount,
+  discounts,
+  selectedDiscount,
   canApplyDiscount,
-  onToggleDiscount,
+  onSelectDiscount,
   paymentMethod,
   cashReceived,
   change,
@@ -93,7 +93,7 @@ export default function PaymentModal({
               Total
             </span>
             <div style={{ textAlign: 'right' }}>
-              {applyDiscount && (
+              {(selectedDiscount || esCortesia) && subtotal !== total && (
                 <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.55)', textDecoration: 'line-through' }}>
                   {formatCurrency(subtotal)}
                 </div>
@@ -109,23 +109,29 @@ export default function PaymentModal({
             </div>
           </div>
 
-          {/* Descuento configurado por el admin. La cajera decide si aplicarlo;
-              el porcentaje no se puede tocar acá — lo fija y valida el servidor. */}
-          {discount?.active && canApplyDiscount && (
-            <button
-              type="button"
-              onClick={onToggleDiscount}
-              className={`btn ${applyDiscount ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ width: '100%', marginBottom: 'var(--space-md)', justifyContent: 'space-between', height: 48 }}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Tag size={16} />
-                {discount.label} −{discount.percent}%
-              </span>
-              <span style={{ fontWeight: 800 }}>
-                {applyDiscount ? `− ${formatCurrency(subtotal - total)}` : 'Aplicar'}
-              </span>
-            </button>
+          {/* Descuentos configurados por el admin. La cajera elige cuál aplicar;
+              los valores no se pueden tocar acá — los fija y valida el servidor. */}
+          {canApplyDiscount && !esCortesia && (discounts || []).filter(d => d.active).length > 0 && (
+            <div style={{ marginBottom: 'var(--space-md)' }}>
+              <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', marginBottom: 6, fontWeight: 600 }}>
+                Descuento
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(discounts || []).filter(d => d.active).map(d => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => onSelectDiscount(selectedDiscount === d.id ? null : d.id)}
+                    className={`btn btn-sm ${selectedDiscount === d.id ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ gap: 6 }}
+                  >
+                    <Tag size={13} />
+                    {d.label}
+                    <strong>{d.type === 'amount' ? formatCurrency(d.value) : `−${d.value}%`}</strong>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Métodos de pago */}

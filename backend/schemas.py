@@ -185,7 +185,7 @@ class SaleCreate(BaseModel):
     has_receipt: Optional[bool] = False
     # El cliente solo pide aplicar el descuento; el porcentaje lo pone el servidor
     # desde la configuración. Nunca se acepta un monto o un % del cliente.
-    apply_discount: bool = False
+    discount_id: Optional[str] = None   # cuál de los descuentos configurados aplicar
     notes: Optional[str] = None   # motivo; obligatorio si payment_method='cortesia'
     items: list[SaleItemIn]
 
@@ -207,6 +207,7 @@ class SaleOut(BaseModel):
     subtotal: Optional[float] = None
     discount_percent: float = 0
     discount_amount: float = 0
+    discount_label: Optional[str] = None
     notes: Optional[str] = None
     payment_method: str
     seller_id: int
@@ -778,16 +779,9 @@ class ConfigProfileOut(BaseModel):
     printing: dict
     cash_diff_tolerance: float
     invoice_scan: bool = False
-    discount: dict = {}
+    discounts: list = []
     weight_entry_mode: str = "kg"
     report_stock_categories: list = []
-
-
-class DiscountUpdate(BaseModel):
-    enabled: Optional[bool] = None
-    percent: Optional[float] = Field(default=None, ge=0, le=100)
-    label: Optional[str] = None
-    valid_until: Optional[str] = None   # 'YYYY-MM-DD' o '' para quitar el vencimiento
 
 
 class ConfigProfileUpdate(BaseModel):
@@ -797,7 +791,7 @@ class ConfigProfileUpdate(BaseModel):
     product_categories: Optional[list] = None
     tax_rate: Optional[float] = None
     cash_diff_tolerance: Optional[float] = Field(default=None, ge=0)
-    discount: Optional[DiscountUpdate] = None
+    discounts: Optional[list] = None
     weight_entry_mode: Optional[str] = None
     report_stock_categories: Optional[list] = None
 

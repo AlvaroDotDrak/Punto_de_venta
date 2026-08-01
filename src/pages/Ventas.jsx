@@ -41,7 +41,7 @@ const loadCarts = () => {
 
 export default function Ventas() {
   const { currentSeller } = useSeller();
-  const { categories, t, hasCapability, branding, printing, discount, weightEntryMode } = useConfig();
+  const { categories, t, hasCapability, branding, printing, discounts, weightEntryMode } = useConfig();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -86,7 +86,7 @@ export default function Ventas() {
   const [weightProduct, setWeightProduct] = useState(null);
   const [ageConfirmProduct, setAgeConfirmProduct] = useState(null);
   const [sortOrder, setSortOrder] = useState('alpha'); // 'alpha' | 'price' | 'popular'
-  const [applyDiscount, setApplyDiscount] = useState(false);
+  const [selectedDiscount, setSelectedDiscount] = useState(null);
   const [courtesyNote, setCourtesyNote] = useState('');
 
   const canApplyDiscount = ['admin', 'dev'].includes(currentSeller?.role) || currentSeller?.can_apply_discount;
@@ -287,8 +287,14 @@ export default function Ventas() {
     setCart(prev => prev.filter(i => !(i.product_id === product_id && i.product_name === product_name)));
 
   const cartSubtotal = cart.reduce((s, i) => s + i.subtotal, 0);
-  const discountActive = discount?.active && canApplyDiscount && applyDiscount;
-  const discountAmount = discountActive ? Math.round(cartSubtotal * discount.percent / 100) : 0;
+  // Espejo del cálculo del servidor, solo para mostrar: sales.py lo recalcula.
+  const chosenDiscount = canApplyDiscount
+    ? (discounts || []).find(d => d.id === selectedDiscount && d.active)
+    : null;
+  const discountAmount = !chosenDiscount ? 0
+    : chosenDiscount.type === 'amount'
+      ? Math.min(Math.round(chosenDiscount.value), Math.round(cartSubtotal))
+      : Math.round(cartSubtotal * chosenDiscount.value / 100);
   const esCortesia = paymentMethod === 'cortesia';
   const cartTotal = esCortesia ? 0 : cartSubtotal - discountAmount;
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
@@ -302,7 +308,7 @@ export default function Ventas() {
         total: cartTotal,
         payment_method: paymentMethod,
         has_receipt: paymentMethod === 'tarjeta' ? true : hasReceipt,
-        apply_discount: discountActive && !esCortesia,
+        discount_id: (chosenDiscount && !esCortesia) ? chosenDiscount.id : null,
         notes: esCortesia ? courtesyNote.trim() : null,
         items: cart.map(i => ({
           product_id: i.product_id,
@@ -323,7 +329,7 @@ export default function Ventas() {
         subtotal: sale.subtotal,
         discountPercent: sale.discount_percent,
         discountAmount: sale.discount_amount,
-        discountLabel: discount?.label,
+        discountLabel: sale.discount_label,
         isCourtesy: esCortesia,
         courtesyNote: esCortesia ? courtesyNote.trim() : null,
         paymentMethod,
@@ -336,7 +342,7 @@ export default function Ventas() {
 
       setCart([]);
       setShowPayment(false);
-      setApplyDiscount(false);
+      setSelectedDiscount(null);
       setCourtesyNote('');
       setCashReceived('');
       setPaymentMethod('efectivo');
@@ -764,10 +770,10 @@ export default function Ventas() {
         <PaymentModal
           total={cartTotal}
         subtotal={cartSubtotal}
-        discount={discount}
-        applyDiscount={discountActive}
+        discounts={discounts}
+        selectedDiscount={selectedDiscount}
         canApplyDiscount={canApplyDiscount}
-        onToggleDiscount={() => setApplyDiscount(v => !v)}
+        onSelectDiscount={setSelectedDiscount}
         canGiveCourtesy={canGiveCourtesy}
         courtesyNote={courtesyNote}
         onCourtesyNoteChange={setCourtesyNote}

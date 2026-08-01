@@ -90,7 +90,7 @@ export default function Configuracion() {
   const [configParams, setConfigParams] = useState({});
   const [savingParam, setSavingParam] = useState(false);
   const [cashTolerance, setCashTolerance] = useState('');
-  const [discount, setDiscount] = useState({ enabled: false, percent: '', label: '', valid_until: '' });
+  const [discounts, setDiscounts] = useState([]);
   const [mail, setMail] = useState({
     smtp_enabled: false, smtp_host: 'smtp.gmail.com', smtp_port: '587',
     smtp_user: '', smtp_password: '', report_recipients: '',
@@ -126,13 +126,7 @@ export default function Configuracion() {
       setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
       setWeightMode(profile?.weight_entry_mode || 'kg');
       setReportCats(profile?.report_stock_categories || []);
-      const d = profile?.discount || {};
-      setDiscount({
-        enabled: !!d.enabled,
-        percent: d.percent ? String(d.percent) : '',
-        label: d.label && d.label !== 'Descuento' ? d.label : '',
-        valid_until: d.valid_until || '',
-      });
+      setDiscounts(profile?.discounts || []);
     } else if (activeTab === 'negocio' && profile) {
       setBranding({ ...profile.branding });
       setCaps({ ...profile.capabilities });
@@ -309,28 +303,46 @@ export default function Configuracion() {
     }
   };
 
-  const handleSaveDiscount = async () => {
-    const percent = parseFloat(discount.percent);
-    if (discount.enabled && !(percent > 0 && percent <= 100)) {
-      toast.error('El porcentaje debe estar entre 0 y 100'); return;
-    }
+  const guardarDescuentos = async (lista) => {
+    setDiscounts(lista);
     setSavingParam(true);
     try {
-      await api.put('/config/profile', {
-        discount: {
-          enabled: discount.enabled,
-          percent: Number.isFinite(percent) ? percent : 0,
-          label: discount.label.trim() || 'Descuento',
-          valid_until: discount.valid_until || '',
-        },
-      });
+      await api.put('/config/profile', { discounts: lista });
       await refresh();
-      toast.success('Descuento guardado');
     } catch (err) {
       toast.error('Error al guardar: ' + err.message);
     } finally {
       setSavingParam(false);
     }
+  };
+
+  const agregarDescuento = () => setDiscounts(prev => ([
+    ...prev,
+    { id: String(Date.now()), label: '', type: 'percent', value: '', enabled: true, valid_until: '' },
+  ]));
+
+  const cambiarDescuento = (id, campo, valor) =>
+    setDiscounts(prev => prev.map(d => (d.id === id ? { ...d, [campo]: valor } : d)));
+
+  const quitarDescuento = (id) => {
+    const d = discounts.find(x => x.id === id);
+    if (d?.label && !window.confirm(`¿Eliminar "${d.label}"?`)) return;
+    guardarDescuentos(discounts.filter(x => x.id !== id));
+  };
+
+  const guardarTodos = () => {
+    const limpios = discounts
+      .filter(d => (d.label || '').trim())
+      .map(d => ({
+        ...d,
+        label: d.label.trim(),
+        value: parseFloat(d.value) || 0,
+      }));
+    const malo = limpios.find(d => d.type === 'percent' && (d.value <= 0 || d.value > 100));
+    if (malo) { toast.error(`"${malo.label}": el porcentaje debe estar entre 1 y 100`); return; }
+    const malo2 = limpios.find(d => d.type === 'amount' && d.value <= 0);
+    if (malo2) { toast.error(`"${malo2.label}": el monto debe ser mayor a cero`); return; }
+    guardarDescuentos(limpios).then(() => toast.success('Descuentos guardados'));
   };
 
   const handleSaveMail = async () => {
@@ -863,28 +875,54 @@ export default function Configuracion() {
 
               <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
                 <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
-                  Descuento en ventas
+                  Descuentos y gift cards
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 'var(--space-sm)', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={discount.enabled}
-                    onChange={e => setDiscount(d => ({ ...d, enabled: e.target.checked }))} />
-                  <span>Activar descuento</span>
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 150px', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
-                  <input type="number" min="0" max="100" step="0.5" className="form-input" placeholder="%"
-                    value={discount.percent} onChange={e => setDiscount(d => ({ ...d, percent: e.target.value }))} />
-                  <input type="text" className="form-input" maxLength={40} placeholder="Nombre (ej: Promo martes)"
-                    value={discount.label} onChange={e => setDiscount(d => ({ ...d, label: e.target.value }))} />
-                  <input type="date" className="form-input" title="Último día en que se puede aplicar"
-                    value={discount.valid_until} onChange={e => setDiscount(d => ({ ...d, valid_until: e.target.value }))} />
+                {discounts.length === 0 && (
+                  <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: '0 0 var(--space-sm)' }}>
+                    Sin descuentos configurados. Las cajeras no verán ninguna opción al cobrar.
+                  </p>
+                )}
+                {discounts.map(d => (
+                  <div key={d.id} style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 110px 100px 150px auto auto',
+                    gap: 'var(--space-sm)', alignItems: 'center', marginBottom: 'var(--space-sm)',
+                  }}>
+                    <input className="form-input" placeholder="Nombre (ej: Promo 10%)" maxLength={40}
+                      value={d.label} onChange={e => cambiarDescuento(d.id, 'label', e.target.value)} />
+                    <select className="form-select" value={d.type}
+                      onChange={e => cambiarDescuento(d.id, 'type', e.target.value)}>
+                      <option value="percent">Porcentaje</option>
+                      <option value="amount">Monto fijo</option>
+                    </select>
+                    <input type="number" min="0" step={d.type === 'amount' ? '100' : '1'} className="form-input"
+                      placeholder={d.type === 'amount' ? '$' : '%'}
+                      value={d.value} onChange={e => cambiarDescuento(d.id, 'value', e.target.value)} />
+                    <input type="date" className="form-input" title="Último día en que se puede aplicar"
+                      value={d.valid_until || ''} onChange={e => cambiarDescuento(d.id, 'valid_until', e.target.value)} />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.8rem', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={d.enabled !== false}
+                        onChange={e => cambiarDescuento(d.id, 'enabled', e.target.checked)} />
+                      Activo
+                    </label>
+                    <button className="btn btn-ghost btn-sm" onClick={() => quitarDescuento(d.id)}
+                      style={{ color: 'var(--color-danger)' }} title="Eliminar">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  <button className="btn btn-secondary" onClick={agregarDescuento}>
+                    <Plus size={15} /> Agregar
+                  </button>
+                  <button className="btn btn-primary" onClick={guardarTodos} disabled={savingParam}>
+                    Guardar descuentos
+                  </button>
                 </div>
-                <button className="btn btn-primary" onClick={handleSaveDiscount} disabled={savingParam}>
-                  Guardar descuento
-                </button>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-                  Las vendedoras con el permiso "Aplicar el descuento configurado" podrán aplicarlo o no en cada venta,
-                  pero no pueden cambiar el porcentaje. Si pones una fecha, el descuento se apaga solo ese día a medianoche
-                  — sin fecha queda activo hasta que lo desactives a mano.
+                  Las vendedoras con el permiso "Aplicar el descuento configurado" eligen cuál usar en cada venta,
+                  pero no pueden cambiar los valores. Una gift card es un <strong>monto fijo</strong>: si vale más
+                  que la compra, la venta queda en $0 y no queda saldo a favor. Con fecha, el descuento se apaga solo.
                 </p>
               </div>
 

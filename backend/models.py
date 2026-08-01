@@ -85,6 +85,7 @@ class Sale(Base):
     subtotal = Column(Float, nullable=True)           # bruto antes del descuento
     discount_percent = Column(Float, default=0)       # snapshot del % aplicado
     discount_amount = Column(Float, default=0)        # pesos descontados
+    discount_label = Column(String, nullable=True)    # cuál promoción se aplicó (snapshot)
     payment_method = Column(String, nullable=False)  # 'efectivo' | 'tarjeta' | 'transferencia'
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
