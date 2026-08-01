@@ -5,11 +5,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '../context/ToastContext';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
 import {
   Thermometer, Plus, Minus, AlertTriangle, CheckCircle2,
-  XCircle, Search, X, Settings, Package,
+  XCircle, Search, X, Settings, Package, PackagePlus,
 } from 'lucide-react';
 
 // Thresholds: si min_stock_cooler no está definido, usar 3 como fallback
