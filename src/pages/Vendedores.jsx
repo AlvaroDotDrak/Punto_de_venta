@@ -156,8 +156,8 @@ export default function Vendedores() {
               <tr key={s.id}>
                 <td style={{ fontWeight: 600 }}>{s.name}</td>
                 <td>
-                  <span className={`badge ${s.role === 'admin' ? 'badge-warning' : 'badge-info'}`}>
-                    <Shield size={12} /> {s.role === 'admin' ? 'Admin' : 'Vendedor'}
+                  <span className={`badge ${s.role === 'dev' ? 'badge-danger' : s.role === 'admin' ? 'badge-warning' : 'badge-info'}`}>
+                    <Shield size={12} /> {s.role === 'dev' ? 'Soporte' : s.role === 'admin' ? 'Admin' : 'Vendedor'}
                   </span>
                 </td>
                 <td>
@@ -233,10 +233,10 @@ export default function Vendedores() {
               <div className="form-group">
                 <label className="form-label">Rol</label>
                 <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                  {['seller', 'admin'].map(r => (
+                  {(form.role === 'dev' ? ['dev'] : ['seller', 'admin']).map(r => (
                     <button key={r} className={`btn ${form.role === r ? 'btn-primary' : 'btn-secondary'}`}
                       onClick={() => updateField('role', r)}>
-                      <Shield size={14} /> {r === 'admin' ? 'Admin' : 'Vendedor'}
+                      <Shield size={14} /> {r === 'dev' ? 'Soporte' : r === 'admin' ? 'Admin' : 'Vendedor'}
                     </button>
                   ))}
                 </div>

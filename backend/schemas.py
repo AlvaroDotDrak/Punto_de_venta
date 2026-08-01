@@ -32,6 +32,7 @@ class SellerUpdate(BaseModel):
     can_view_totals: Optional[bool] = None
     can_withdraw_cash: Optional[bool] = None
     can_apply_discount: Optional[bool] = None
+    demote_dev: bool = False   # confirmación explícita para quitarle el rol dev
 
 class SellerOut(BaseModel):
     id: int

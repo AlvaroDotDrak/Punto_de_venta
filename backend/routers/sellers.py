@@ -57,7 +57,16 @@ def update_seller(
         seller.name = payload.name
     if payload.pin is not None:
         seller.pin = hash_pin(payload.pin)
-    if payload.role is not None:
+    if payload.role is not None and payload.role != seller.role:
+        # La UI solo ofrece seller/admin, así que editar una cuenta dev para
+        # cambiarle otra cosa mandaba role='admin' y la degradaba en silencio:
+        # se perdía el login oculto y la cuenta quedaba visible en la pantalla
+        # de login del cliente. Degradar un dev tiene que ser explícito.
+        if seller.role == "dev" and payload.role != "dev" and not payload.demote_dev:
+            raise HTTPException(
+                status_code=400,
+                detail="Para quitarle el rol de soporte a esta cuenta hay que confirmarlo explícitamente",
+            )
         seller.role = payload.role
     if payload.active is not None:
         seller.active = payload.active
