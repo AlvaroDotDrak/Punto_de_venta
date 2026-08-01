@@ -309,7 +309,10 @@ def build_close_report(db: Session, register) -> bytes:
                    if m.type == tipo and (metodo is None or m.payment_method == metodo))
 
     ventas = suma("sale") + suma("void")
-    n_ventas = len([m for m in movs if m.type == "sale"]) - len([m for m in movs if m.type == "void"])
+    # Defensivo: las cortesías ya no generan movimiento, pero una instalación que
+    # venía de antes puede tener alguno de $0 y no debe contar como transacción.
+    n_ventas = (len([m for m in movs if m.type == "sale" and m.payment_method != "cortesia"])
+                - len([m for m in movs if m.type == "void" and m.payment_method != "cortesia"]))
     diferencia = (register.closing_amount or 0) - (register.expected_amount or 0)
 
     q = db.query(Sale).filter(Sale.created_at >= register.opened_at, Sale.status == "completed")

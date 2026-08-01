@@ -275,14 +275,18 @@ def create_sale(
     # Toda venta deja movimiento de caja, sea cual sea el método: la caja es el
     # registro completo del turno. Solo el efectivo afecta el cajón físico, y de
     # eso ya se encarga _expected_cash filtrando por payment_method.
-    db.add(CashMovement(
-        register_id=register.id,
-        type="sale",
-        amount=server_total,
-        payment_method=payload.payment_method,
-        sale_id=sale.id,
-        seller_id=seller.id,
-    ))
+    # Excepción: una cortesía no mueve plata. Un movimiento de $0 solo ensucia la
+    # lista y hace que cuente como transacción en el cierre. La entrega queda
+    # registrada en la venta, que es de donde el comprobante saca las cortesías.
+    if not es_cortesia:
+        db.add(CashMovement(
+            register_id=register.id,
+            type="sale",
+            amount=server_total,
+            payment_method=payload.payment_method,
+            sale_id=sale.id,
+            seller_id=seller.id,
+        ))
 
     db.commit()
     db.refresh(sale)
@@ -370,7 +374,7 @@ def void_sale(
     # efectivo descuenta del cajón; el resto es para que el resumen del turno
     # descuente la venta anulada de su método).
     register = db.query(CashRegister).filter(CashRegister.status == "open").first()
-    if register:
+    if register and sale.payment_method != "cortesia":
         db.add(CashMovement(
             register_id=register.id,
             type="void",

@@ -54,7 +54,10 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     ventas_brutas = suma("sale")
     anulaciones = suma("void")            # ya vienen en negativo
     ventas = ventas_brutas + anulaciones
-    n_ventas = len([m for m in movs if m.type == "sale"]) - len([m for m in movs if m.type == "void"])
+    # Defensivo: las cortesías ya no generan movimiento, pero una instalación que
+    # venía de antes puede tener alguno de $0 y no debe contar como transacción.
+    n_ventas = (len([m for m in movs if m.type == "sale" and m.payment_method != "cortesia"])
+                - len([m for m in movs if m.type == "void" and m.payment_method != "cortesia"]))
 
     efectivo = suma("sale", "efectivo") + suma("void", "efectivo")
     tarjeta = suma("sale", "tarjeta") + suma("void", "tarjeta")

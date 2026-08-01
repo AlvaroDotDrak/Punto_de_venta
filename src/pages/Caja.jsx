@@ -64,7 +64,9 @@ function calcSummary(register) {
   return {
     totalSales, totalExpenses, totalIncomes, totalWithdrawals,
     salesCash, salesCard, salesTransfer,
-    count: sales.length - voids.length,
+    // Las cortesías no son transacciones cobradas (y ya no generan movimiento).
+    count: sales.filter(m => m.payment_method !== 'cortesia').length
+         - voids.filter(m => m.payment_method !== 'cortesia').length,
     voidCount: voids.length,
   };
 }
