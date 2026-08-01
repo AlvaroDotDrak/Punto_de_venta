@@ -14,7 +14,7 @@ from email.message import EmailMessage
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
-from .models import CashMovement, CashRegister, Sale, SaleItem, SystemConfig
+from .models import CashMovement, CashRegister, Product, Sale, SaleItem, SystemConfig
 
 
 def _get(db: Session, key: str, default: str = "") -> str:
@@ -74,13 +74,34 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     descuentos = sum(s.discount_amount or 0 for s in ventas_turno)
 
     ranking = {}
+    por_categoria: dict[str, float] = {}
+    vendidos: dict[int, float] = {}
     if ventas_turno:
         ids = [s.id for s in ventas_turno]
         for it in db.query(SaleItem).filter(SaleItem.sale_id.in_(ids)).all():
             acc = ranking.setdefault(it.product_name, {"n": 0, "total": 0.0})
             acc["n"] += it.quantity
             acc["total"] += it.subtotal
+            cat = it.product.category if it.product else "otros"
+            por_categoria[cat] = por_categoria.get(cat, 0) + it.subtotal
+            if it.product_id:
+                vendidos[it.product_id] = vendidos.get(it.product_id, 0) + it.quantity
     top = sorted(ranking.items(), key=lambda kv: kv[1]["total"], reverse=True)[:5]
+
+    # Etiquetas legibles de las categorías del rubro
+    try:
+        import json as _json
+        etiquetas = {c["value"]: c["label"] for c in _json.loads(_get(db, "product_categories") or "[]")}
+    except (ValueError, TypeError):
+        etiquetas = {}
+
+    # Lo que queda para el día siguiente: en un rubro perecible es el dato que
+    # decide cuánto preparar mañana.
+    con_stock = (db.query(Product)
+                 .filter(Product.active == True, Product.stock.isnot(None))  # noqa: E712
+                 .order_by(Product.category, Product.name).all())
+    quedan = [(p, vendidos.get(p.id, 0)) for p in con_stock]
+    quedan = [(p, v) for p, v in quedan if v or (p.stock or 0) > 0]
 
     negocio = _get(db, "branding")
     nombre = "Punto de Venta"
@@ -122,6 +143,28 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
         f'{filas_mov}</table>'
     ) if filas_mov else ""
 
+    filas_cat = "".join(
+        fila(etiquetas.get(c, c.capitalize()), _money(v))
+        for c, v in sorted(por_categoria.items(), key=lambda kv: kv[1], reverse=True)
+    )
+    categorias_html = (
+        '<h3 style="font-size:15px;margin:0 0 6px">Ventas por categoría</h3>'
+        '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">'
+        f'{filas_cat}</table>'
+    ) if filas_cat else ""
+
+    filas_stock = "".join(
+        f'<tr><td style="padding:4px 0;color:#555">{p.name}</td>'
+        f'<td style="padding:4px 0;text-align:right">{v:g} vendidos</td>'
+        f'<td style="padding:4px 0;text-align:right;font-weight:700">{p.stock:g} quedan</td></tr>'
+        for p, v in quedan
+    )
+    stock_html = (
+        '<h3 style="font-size:15px;margin:0 0 6px">Vendido y lo que queda</h3>'
+        '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">'
+        f'{filas_stock}</table>'
+    ) if filas_stock else ""
+
     html = f"""<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#222">
   <h2 style="margin:0 0 4px">{nombre}</h2>
   <p style="margin:0 0 16px;color:#777;font-size:14px">Cierre de caja · {fecha}</p>
@@ -152,6 +195,10 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     {fila("Descuentos otorgados", "− " + _money(descuentos), color="#B45309") if descuentos else ""}
     {fila("Anulaciones", _money(abs(anulaciones)), color="#C0392B") if anulaciones else ""}
   </table>
+
+  {categorias_html}
+
+  {stock_html}
 
   {movimientos_html}
 

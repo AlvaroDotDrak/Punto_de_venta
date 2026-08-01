@@ -126,6 +126,20 @@ class RestockRequest(BaseModel):
     quantity: float   # unidades o kg a agregar al stock
 
 
+class RestockBulkLine(BaseModel):
+    product_id: int
+    quantity: float = Field(gt=0)
+
+
+class RestockBulkRequest(BaseModel):
+    items: list[RestockBulkLine]
+
+
+class RestockBulkResult(BaseModel):
+    actualizados: int
+    avisos: list[str] = []
+
+
 # ── Showcase ──────────────────────────────────────────────────────────────────
 
 class ShowcaseItemCreate(BaseModel):

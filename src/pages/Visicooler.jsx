@@ -33,6 +33,8 @@ const STATUS_META = {
 export default function Visicooler() {
   const toast = useToast();
   const { currentSeller, isAdmin } = useSeller();
+  const { categories, t } = useConfig();
+  const canEdit = isAdmin || currentSeller?.products_access === 'full';
 
   const [products, setProducts] = useState([]);
   const [search, setSearch]     = useState('');
@@ -43,17 +45,32 @@ export default function Visicooler() {
   const [restockQty, setRestockQty]       = useState(1);
   const [restockLoading, setRestockLoading] = useState(false);
 
+  // Carga del día: reponer varios productos de una vez (el lote de la mañana)
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkQty, setBulkQty] = useState({});
+  const [bulkCat, setBulkCat] = useState('todas');
+  const [bulkLoading, setBulkLoading] = useState(false);
+
   // Modal configurar alerta
   const [alertTarget, setAlertTarget]   = useState(null);
   const [alertMin, setAlertMin]         = useState(DEFAULT_MIN);
   const [alertLoading, setAlertLoading] = useState(false);
 
+  // Las categorías con inventario las define el rubro (flag `stock`). Antes esto
+  // era `category === 'bebidas'` hardcodeado, así que en cualquier rubro que no
+  // fuera pastelería la página quedaba casi vacía: en la cevichería los ceviches
+  // llevan stock y no se veían.
+  const stockCats = useMemo(
+    () => new Set(categories.filter(c => c.stock).map(c => c.value)),
+    [categories]
+  );
+
   const loadProducts = async () => {
     const all = await api.get('/products?active_only=true');
-    setProducts(all.filter(p => p.category === 'bebidas'));
+    setProducts(all.filter(p => stockCats.size === 0 || stockCats.has(p.category)));
   };
 
-  useEffect(() => { loadProducts(); }, []);
+  useEffect(() => { loadProducts(); }, [stockCats]);
 
   const enriched = useMemo(() =>
     products.map(p => ({
@@ -104,6 +121,31 @@ export default function Visicooler() {
     }
   };
 
+  const openBulk = () => {
+    setBulkQty({});
+    setBulkCat('todas');
+    setBulkOpen(true);
+  };
+
+  const handleBulk = async () => {
+    const items = Object.entries(bulkQty)
+      .map(([id, q]) => ({ product_id: parseInt(id), quantity: parseFloat(q) }))
+      .filter(it => Number.isFinite(it.quantity) && it.quantity > 0);
+    if (items.length === 0) { toast.error('Ingresa al menos una cantidad'); return; }
+    setBulkLoading(true);
+    try {
+      const r = await api.post('/products/restock-bulk', { items });
+      toast.success(`${r.actualizados} producto(s) repuestos`);
+      r.avisos?.forEach(a => toast.error(a));
+      setBulkOpen(false);
+      loadProducts();
+    } catch (err) {
+      toast.error('Error al reponer: ' + err.message);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   // ── CONFIGURAR ALERTA ─────────────────────────────────
   const openAlert = (product) => {
     setAlertTarget(product);
@@ -132,8 +174,13 @@ export default function Visicooler() {
       <div className="page-header">
         <h1 className="page-title">
           <Thermometer size={26} style={{ verticalAlign: 'middle', marginRight: 10 }} />
-          Visicooler
+          {t('cooler', 'Visicooler')}
         </h1>
+        {canEdit && (
+          <button className="btn btn-primary" onClick={openBulk}>
+            <PackagePlus size={16} /> Carga del día
+          </button>
+        )}
       </div>
 
       {/* Stats */}
@@ -398,6 +445,63 @@ export default function Visicooler() {
                 disabled={restockLoading}
               >
                 {restockLoading ? 'Guardando…' : `Agregar ${restockQty} unidad${restockQty > 1 ? 'es' : ''}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: CARGA DEL DÍA (reposición por lote) ── */}
+      {bulkOpen && (
+        <div className="modal-overlay" onClick={() => setBulkOpen(false)}>
+          <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 style={{ fontSize: '1.05rem' }}>Carga del día</h2>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                  Lo que ingreses se <strong>suma</strong> al stock actual
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setBulkOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
+                {['todas', ...new Set(products.map(p => p.category))].map(c => (
+                  <button key={c} type="button" onClick={() => setBulkCat(c)}
+                    className={`btn btn-sm ${bulkCat === c ? 'btn-primary' : 'btn-secondary'}`}>
+                    {c === 'todas' ? 'Todas' : (categories.find(x => x.value === c)?.label || c)}
+                  </button>
+                ))}
+              </div>
+              {products
+                .filter(p => bulkCat === 'todas' || p.category === bulkCat)
+                .map(p => (
+                  <div key={p.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+                    padding: '6px 0', borderBottom: '1px solid var(--color-border)',
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+                        quedan {p.stock ?? '—'}
+                      </div>
+                    </div>
+                    <input type="number" min="0" step="any" className="form-input form-input-sm"
+                      style={{ width: 90, textAlign: 'center' }} placeholder="0"
+                      value={bulkQty[p.id] ?? ''}
+                      onChange={e => setBulkQty(q => ({ ...q, [p.id]: e.target.value }))} />
+                    {parseFloat(bulkQty[p.id]) > 0 && (
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-success)', minWidth: 54, textAlign: 'right' }}>
+                        → {(p.stock ?? 0) + parseFloat(bulkQty[p.id])}
+                      </span>
+                    )}
+                  </div>
+                ))}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setBulkOpen(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleBulk} disabled={bulkLoading} style={{ flex: 1 }}>
+                {bulkLoading ? 'Guardando…' : 'Cargar al inventario'}
               </button>
             </div>
           </div>

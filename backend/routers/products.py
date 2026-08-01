@@ -15,7 +15,7 @@ from ..database import get_db
 from ..models import Product, Sale, SaleItem, ProductRecipe, Ingredient
 from ..auth import get_current_seller, require_admin, require_product_access
 from ..audit import ACTIONS, log_action
-from ..schemas import ProductCreate, ProductOut, ProductUpdate, RestockRequest
+from ..schemas import RestockBulkRequest, RestockBulkResult, ProductCreate, ProductOut, ProductUpdate, RestockRequest
 from ..utils import calculate_recipe_fraction, compute_cost_per_unit
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -110,6 +110,43 @@ def restock_product(
     db.refresh(product)
     log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, f"Restock {product.name}: +{payload.quantity} (total: {product.stock})")
     return product
+
+
+@router.post("/restock-bulk", response_model=RestockBulkResult)
+def restock_bulk(
+    payload: RestockBulkRequest,
+    db: Session = Depends(get_db),
+    seller=Depends(require_product_access(write=True)),
+):
+    """Repone varios productos de una sola vez (el lote de la mañana).
+
+    Producto por producto eran N requests y N confirmaciones para algo que se
+    hace todos los días. Se aplica todo o nada: si una línea es inválida, no se
+    guarda ninguna, para no dejar el inventario a medio cargar."""
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="No hay líneas para reponer")
+
+    ids = [it.product_id for it in payload.items]
+    productos = {p.id: p for p in db.query(Product).filter(Product.id.in_(ids)).all()}
+
+    avisos = []
+    for it in payload.items:
+        producto = productos.get(it.product_id)
+        if producto is None:
+            raise HTTPException(status_code=404, detail=f"Producto {it.product_id} no encontrado")
+        if producto.stock is None:
+            # Igual que en compras: stock=None significa "no lleva inventario" y
+            # asignarle un número lo volvería bloqueable en el POS al llegar a 0.
+            avisos.append(f"{producto.name}: no lleva inventario, se omitió")
+            continue
+        producto.stock += it.quantity
+
+    aplicados = [it for it in payload.items if productos[it.product_id].stock is not None]
+    db.commit()
+
+    detalle = ", ".join(f"{productos[it.product_id].name} +{it.quantity:g}" for it in aplicados)
+    log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, f"Reposición por lote: {detalle}"[:500])
+    return RestockBulkResult(actualizados=len(aplicados), avisos=avisos)
 
 
 # Open Food Facts: base abierta de productos empaquetados. Sin API key; solo

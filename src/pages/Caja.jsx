@@ -11,7 +11,7 @@ import { formatCurrency, formatDate } from '../utils/formatters';
 import {
   DollarSign, Lock, Unlock, Plus, ArrowDown, ArrowUp,
   Clock, X, History, ChevronRight, ChevronLeft, FileText,
-  TrendingUp, TrendingDown, AlertCircle, Trash2,
+  TrendingUp, TrendingDown, AlertCircle, Trash2, Printer,
 } from 'lucide-react';
 
 // Denominaciones CLP
@@ -249,6 +249,15 @@ export default function Caja() {
     } catch (err) { toast.error('Error al eliminar: ' + err.message); }
   };
 
+  const handleReprint = async (registerId) => {
+    try {
+      await api.post(`/print/cash-close?register_id=${registerId}`);
+      toast.success('Comprobante enviado a la impresora');
+    } catch (err) {
+      toast.error('No se pudo imprimir: ' + err.message);
+    }
+  };
+
   const handleHistDetail = async (reg) => {
     try {
       const data = await api.get(`/cash/history/${reg.id}`);
@@ -294,6 +303,7 @@ export default function Caja() {
             reg={histDetail}
             canViewTotals={canViewTotals}
             tolerance={tolerance}
+            onPrint={handleReprint}
             onBack={() => setHistDetail(null)}
           />
         ) : (
@@ -719,7 +729,7 @@ function HistoryList({ history, onSelect, tolerance, hasMore, onLoadMore }) {
   );
 }
 
-function HistoryDetail({ reg, canViewTotals, tolerance, onBack }) {
+function HistoryDetail({ reg, canViewTotals, tolerance, onBack, onPrint }) {
   const summary = useMemo(() => calcSummary(reg), [reg]);
   const movements = [...(reg.movements || [])].reverse();
   const diff = reg.closing_amount != null && reg.expected_amount != null
@@ -727,9 +737,14 @@ function HistoryDetail({ reg, canViewTotals, tolerance, onBack }) {
 
   return (
     <div>
-      <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: 'var(--space-md)' }}>
-        <ChevronLeft size={16} /> Volver al historial
-      </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
+        <button className="btn btn-ghost btn-sm" onClick={onBack}>
+          <ChevronLeft size={16} /> Volver al historial
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => onPrint(reg.id)}>
+          <Printer size={15} /> Reimprimir comprobante
+        </button>
+      </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', marginBottom: 'var(--space-md)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
         <span><Clock size={13} style={{ verticalAlign: 'middle' }} /> Apertura: {formatDate(reg.opened_at)}{reg.opened_by ? ` · ${reg.opened_by}` : ''}</span>

@@ -14,6 +14,12 @@ from ..schemas import (
 
 router = APIRouter(prefix="/cash", tags=["cash"])
 
+def _get_flag(db: Session, key: str) -> bool:
+    from ..models import SystemConfig
+    item = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    return bool(item and item.value == "true")
+
+
 def _can_view_totals(seller) -> bool:
     return seller.role in ("admin", "dev") or bool(getattr(seller, "can_view_totals", False))
 
@@ -162,6 +168,15 @@ def close_register(
     # En segundo plano: si el correo falla (sin internet, credenciales malas), el
     # cierre ya quedó guardado igual.
     send_close_summary_async(register.id)
+
+    # Mismo criterio con la impresora: si no hay papel, está apagada o el equipo
+    # no es Windows, el turno ya cerró. Se puede reimprimir desde Caja.
+    if _get_flag(db, "auto_print"):
+        try:
+            from .printing import build_close_report, _print_raw, _printer_name
+            _print_raw(_printer_name(db), build_close_report(db, register))
+        except Exception as e:  # noqa: BLE001
+            print(f"[printing] No se pudo imprimir el cierre de la caja {register.id}: {e}")
 
     return _visible(db.query(CashRegister).options(
         joinedload(CashRegister.movements)

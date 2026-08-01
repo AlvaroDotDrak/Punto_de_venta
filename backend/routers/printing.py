@@ -11,11 +11,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..models import Sale, SystemConfig
-from ..auth import get_current_seller, require_admin
+from ..auth import get_current_seller, require_admin, require_permission
 
 try:
     import win32print
@@ -89,6 +89,32 @@ def _branding(db: Session) -> dict:
         return json.loads(item.value)
     except (ValueError, TypeError):
         return {}
+
+
+def _categorias(db: Session) -> list[dict]:
+    """Categorías del rubro, para imprimir la etiqueta legible en vez del slug."""
+    item = db.query(SystemConfig).filter(SystemConfig.key == "product_categories").first()
+    if not item:
+        return []
+    try:
+        return json.loads(item.value)
+    except (ValueError, TypeError):
+        return []
+
+
+def _wrap(texto: str, ancho: int = LINE_WIDTH) -> list[str]:
+    """Corta un texto en líneas del ancho del papel, sin partir palabras."""
+    lineas, actual = [], ""
+    for palabra in (texto or "").split():
+        if len(actual) + len(palabra) + (1 if actual else 0) <= ancho:
+            actual = f"{actual} {palabra}".strip()
+        else:
+            if actual:
+                lineas.append(actual)
+            actual = palabra[:ancho]
+    if actual:
+        lineas.append(actual)
+    return lineas
 
 
 def _flag(db: Session, key: str) -> bool:
@@ -252,6 +278,148 @@ def _build_test(db: Session) -> bytes:
     buf += _txt("imprime correctamente!") + b"\n"
     buf += _FEED_CUT
     return bytes(buf)
+
+
+def build_close_report(db: Session, register) -> bytes:
+    """Comprobante de cierre de turno para la térmica.
+
+    Es el papel que las cajeras firman y archivan, y el mismo contenido que le
+    llega por correo a la dueña. Además del cuadre, lleva el desglose por
+    categoría y el stock que queda: en una cevichería lo que sobró del día es
+    justamente lo que hay que saber antes de preparar el lote de mañana.
+    """
+    from ..models import CashMovement, Product, Sale, SaleItem
+
+    branding = _branding(db)
+    name = branding.get("name") or "Punto de Venta"
+    movs = db.query(CashMovement).filter(CashMovement.register_id == register.id).all()
+
+    def suma(tipo, metodo=None):
+        return sum(m.amount for m in movs
+                   if m.type == tipo and (metodo is None or m.payment_method == metodo))
+
+    ventas = suma("sale") + suma("void")
+    n_ventas = len([m for m in movs if m.type == "sale"]) - len([m for m in movs if m.type == "void"])
+    diferencia = (register.closing_amount or 0) - (register.expected_amount or 0)
+
+    q = db.query(Sale).filter(Sale.created_at >= register.opened_at, Sale.status == "completed")
+    if register.closed_at:
+        q = q.filter(Sale.created_at <= register.closed_at)
+    ventas_turno = q.all()
+    descuentos = sum(s.discount_amount or 0 for s in ventas_turno)
+
+    # Desglose por categoría y unidades vendidas por producto
+    por_categoria: dict[str, float] = {}
+    vendidos: dict[int, float] = {}
+    if ventas_turno:
+        ids = [s.id for s in ventas_turno]
+        items = (db.query(SaleItem)
+                 .filter(SaleItem.sale_id.in_(ids))
+                 .options(joinedload(SaleItem.product)).all())
+        for it in items:
+            cat = it.product.category if it.product else "otros"
+            por_categoria[cat] = por_categoria.get(cat, 0) + it.subtotal
+            if it.product_id:
+                vendidos[it.product_id] = vendidos.get(it.product_id, 0) + it.quantity
+
+    etiquetas = {c["value"]: c["label"] for c in _categorias(db)}
+
+    buf = bytearray()
+    buf += _INIT + _CANCEL_KANJI + _CHARSET + _LINESPACING
+    buf += _CENTER
+    buf += _BIG_ON + _BOLD_ON + _txt(name) + b"\n" + _BIG_OFF + _BOLD_OFF
+    buf += _BOLD_ON + _txt("CIERRE DE TURNO") + b"\n" + _BOLD_OFF
+    fecha = (register.closed_at or datetime.now()).strftime("%d/%m/%Y %H:%M")
+    buf += _txt(fecha) + b"\n\n"
+
+    buf += _LEFT + _txt(_SEP) + b"\n"
+    buf += _txt(_row("Apertura", register.opened_at.strftime("%d/%m %H:%M"))) + b"\n"
+    if register.opened_by:
+        buf += _txt(f"  por {register.opened_by}") + b"\n"
+    if register.closed_by:
+        buf += _txt(f"Cierre por {register.closed_by}") + b"\n"
+    buf += b"\n"
+
+    buf += _BOLD_ON + _txt("VENTAS") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+    buf += _txt(_row("Transacciones", str(n_ventas))) + b"\n"
+    for etiqueta, metodo in (("Efectivo", "efectivo"), ("Tarjeta", "tarjeta"),
+                             ("Debito", "debito"), ("Transferencia", "transferencia")):
+        monto = suma("sale", metodo) + suma("void", metodo)
+        if monto:
+            buf += _txt(_row(f"  {etiqueta}", _money(monto))) + b"\n"
+    if descuentos:
+        buf += _txt(_row("  Descuentos", "-" + _money(descuentos))) + b"\n"
+    buf += _TALL_ON + _txt(_row("TOTAL", _money(ventas))) + b"\n" + _TALL_OFF + b"\n"
+
+    if por_categoria:
+        buf += _BOLD_ON + _txt("POR CATEGORIA") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+        for cat, monto in sorted(por_categoria.items(), key=lambda kv: kv[1], reverse=True):
+            buf += _txt(_row(etiquetas.get(cat, cat.capitalize())[:20], _money(monto))) + b"\n"
+        buf += b"\n"
+
+    # Vendidos vs. lo que queda, solo de lo que lleva inventario
+    con_stock = (db.query(Product)
+                 .filter(Product.active == True, Product.stock.isnot(None))  # noqa: E712
+                 .order_by(Product.category, Product.name).all())
+    filas = [(p, vendidos.get(p.id, 0)) for p in con_stock]
+    filas = [(p, v) for p, v in filas if v or (p.stock or 0) > 0]
+    if filas:
+        buf += _BOLD_ON + _txt("VENDIDO / QUEDA") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+        cat_actual = None
+        for p, vend in filas:
+            if p.category != cat_actual:
+                cat_actual = p.category
+                buf += _txt(etiquetas.get(cat_actual, cat_actual.capitalize())) + b"\n"
+            buf += _txt(_row(f"  {p.name[:24]}", f"{vend:g} / {p.stock:g}")) + b"\n"
+        buf += b"\n"
+
+    gastos, retiros, ingresos = suma("expense"), suma("withdrawal"), suma("income")
+    if gastos or retiros or ingresos:
+        buf += _BOLD_ON + _txt("MOVIMIENTOS DE CAJA") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+        if gastos:
+            buf += _txt(_row("Gastos", "-" + _money(gastos))) + b"\n"
+        if retiros:
+            buf += _txt(_row("Retiros", "-" + _money(retiros))) + b"\n"
+        if ingresos:
+            buf += _txt(_row("Ingresos", "+" + _money(ingresos))) + b"\n"
+        buf += b"\n"
+
+    buf += _BOLD_ON + _txt("CUADRE DE EFECTIVO") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
+    buf += _txt(_row("Monto inicial", _money(register.opening_amount))) + b"\n"
+    buf += _txt(_row("Esperado", _money(register.expected_amount))) + b"\n"
+    buf += _txt(_row("Contado", _money(register.closing_amount))) + b"\n"
+    signo = "+" if diferencia >= 0 else "-"
+    buf += _TALL_ON + _txt(_row("DIFERENCIA", f"{signo}{_money(abs(diferencia))}")) + b"\n" + _TALL_OFF
+
+    if register.notes:
+        buf += b"\n" + _txt(_SUB) + b"\n" + _txt("Observaciones:") + b"\n"
+        for linea in _wrap(register.notes):
+            buf += _txt(linea) + b"\n"
+
+    buf += b"\n" + _txt(_SEP) + b"\n"
+    buf += _CENTER + _txt("Firma: ______________________") + b"\n"
+    buf += _FEED_CUT
+    return bytes(buf)
+
+
+@router.post("/cash-close")
+def print_cash_close(
+    register_id: int | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("can_close_cash")),
+):
+    """Imprime (o reimprime) el comprobante de cierre. Sin register_id usa el
+    último turno cerrado."""
+    from ..models import CashRegister
+    if register_id:
+        register = db.query(CashRegister).filter(CashRegister.id == register_id).first()
+    else:
+        register = (db.query(CashRegister).filter(CashRegister.status == "closed")
+                    .order_by(CashRegister.closed_at.desc()).first())
+    if not register:
+        raise HTTPException(404, "No hay ninguna caja cerrada para imprimir")
+    _print_raw(_printer_name(db), build_close_report(db, register))
+    return {"ok": True}
 
 
 @router.post("/receipt")
