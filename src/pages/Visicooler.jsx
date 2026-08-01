@@ -414,8 +414,11 @@ export default function Visicooler() {
                     </div>
                   )}
 
-                  {/* Acciones */}
-                  {isAdmin && (
+                  {/* Acciones: el backend las autoriza con products_access=full
+                      (require_product_access(write=True)), no con el rol. Antes acá
+                      pedía isAdmin y las vendedoras no veían los botones aunque la
+                      API se los permitiera. */}
+                  {canEdit && (
                     <div className="vt-card-actions">
                       <button
                         className="btn btn-ghost btn-sm"
