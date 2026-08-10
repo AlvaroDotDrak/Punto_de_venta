@@ -39,6 +39,16 @@ async function request(method, path, body = undefined) {
 
   const data = await res.json().catch(() => ({}));
 
+  // Sesión vencida. Sin esto el token muerto se quedaba en sessionStorage, la
+  // pantalla seguía mostrando a la cajera con su nombre arriba y TODO fallaba con
+  // un "Token inválido" que no significa nada: parecía que la app se había caído.
+  // El único arreglo desde el mesón era cerrar sesión y volver a entrar.
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    setToken(null);
+    window.dispatchEvent(new CustomEvent('session-expired'));
+    throw new Error('Tu sesión expiró. Ingresá tu PIN para continuar.');
+  }
+
   if (!res.ok) {
     const detail = data?.detail;
     let message;

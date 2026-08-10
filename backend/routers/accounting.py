@@ -33,6 +33,62 @@ _CAT_LABELS = {
 }
 
 
+def _invoiced_sale_ids(db: Session) -> set:
+    """Ventas cuyo IVA ya se declara vía factura emitida.
+
+    Una venta con tarjeta fuerza has_receipt; si además se le emitió factura,
+    su IVA entraría dos veces al débito fiscal: una por la extracción 19/119 de
+    la boleta y otra por el tax_amount de la factura. Se consulta sin filtro de
+    fechas a propósito: la factura puede emitirse en otro período que la venta."""
+    return {sid for (sid,) in db.query(Invoice.sale_id).filter(Invoice.sale_id.isnot(None)).all()}
+
+
+def _boleta_base(s: Sale, invoiced: set = frozenset()) -> float:
+    """Monto de una venta cubierto por boleta (base del IVA débito).
+
+    Con boleta explícita entra el total. En un pago mixto sin boleta por el
+    total, entra SOLO la parte pagada con tarjeta: Mercado Pago emite boleta por
+    ese monto sí o sí, pero el efectivo no deja rastro obligatorio y declararlo
+    completo pagaría IVA de más."""
+    if s.id in invoiced:
+        return 0.0
+    if s.payment_method == "cortesia":
+        return 0.0
+    if s.has_receipt:
+        return s.total
+    if s.payment_method == "mixto":
+        return sum(p.amount for p in s.payments if p.method == "tarjeta")
+    return 0.0
+
+
+def _income_by_method(sales) -> tuple[float, float, float]:
+    """Reparte los ingresos por método leyendo el desglose de pagos de cada venta.
+    Una venta mixta reparte su total; las previas al pago mixto no tienen desglose,
+    así que se atribuyen enteras por su payment_method único."""
+    cash = card = transfer = 0.0
+    for s in sales:
+        if s.payment_method == "cortesia":
+            continue
+        # 'debito' cuenta como tarjeta: llega desde Pedidos y desde la corrección
+        # de método de pago. Sin esta rama, esa plata sumaba al total pero
+        # desaparecía del desglose por método.
+        if s.payments:
+            for p in s.payments:
+                if p.method == "efectivo":
+                    cash += p.amount
+                elif p.method in ("tarjeta", "debito"):
+                    card += p.amount
+                elif p.method == "transferencia":
+                    transfer += p.amount
+        elif s.payment_method == "efectivo":
+            cash += s.total
+        elif s.payment_method in ("tarjeta", "debito"):
+            card += s.total
+        elif s.payment_method == "transferencia":
+            transfer += s.total
+    return cash, card, transfer
+
+
 @router.get("/summary", response_model=AccountingSummary)
 def get_summary(
     date_from: str = Query(...),
@@ -44,7 +100,7 @@ def get_summary(
     dt_to = parse_date_to(date_to)
 
     # ── Ventas ───────────────────────────────────────────────────────────────
-    sales = db.query(Sale).filter(
+    sales = db.query(Sale).options(joinedload(Sale.payments)).filter(
         Sale.status == "completed",
         Sale.created_at >= dt_from,
         Sale.created_at <= dt_to,
@@ -57,11 +113,14 @@ def get_summary(
     # Cortesías: total=0, así que no suman a los ingresos. Se reportan por su
     # valor de lista para saber cuánto se regaló. El costo ya está en las compras.
     total_courtesy = sum(s.subtotal or 0 for s in sales if s.payment_method == "cortesia")
-    total_income_cash = sum(s.total for s in sales if s.payment_method == "efectivo")
-    total_income_card = sum(s.total for s in sales if s.payment_method == "tarjeta")
-    total_income_transfer = sum(s.total for s in sales if s.payment_method == "transferencia")
+    # Ingresos por método: se leen del desglose de pagos (una venta mixta reparte su
+    # total entre métodos). Las ventas previas al pago mixto no tienen desglose, así
+    # que se atribuyen por su payment_method único.
+    total_income_cash, total_income_card, total_income_transfer = _income_by_method(sales)
     sales_count = len(sales)
-    sales_with_receipt = sum(1 for s in sales if s.has_receipt)
+    invoiced = _invoiced_sale_ids(db)
+    # Cuenta también las mixtas con parte débito: tienen boleta (parcial) de Mercado Pago.
+    sales_with_receipt = sum(1 for s in sales if _boleta_base(s, invoiced) > 0)
 
     # ── Gastos ───────────────────────────────────────────────────────────────
     expenses = db.query(Expense).options(
@@ -113,8 +172,10 @@ def get_summary(
     invoices_tax_total = sum(i.tax_amount for i in invoices)
 
     # ── IVA estimado (extracción 19/119 — precios incluyen IVA) ──────────────
-    # Débito Fiscal: IVA cobrado en ventas con boleta + IVA de facturas emitidas
-    sales_with_receipt_total = sum(s.total for s in sales if s.has_receipt)
+    # Débito Fiscal: IVA cobrado en ventas con boleta + IVA de facturas emitidas.
+    # En pagos mixtos solo la parte débito entra a la base (ver _boleta_base).
+    # Las ventas facturadas quedan fuera de la base: su IVA ya viene en la factura.
+    sales_with_receipt_total = sum(_boleta_base(s, invoiced) for s in sales)
     vat_debit = calculate_vat(sales_with_receipt_total) + invoices_tax_total
 
     # Crédito Fiscal: IVA en compras donde el proveedor emitió factura
@@ -188,7 +249,7 @@ def export_report(
     dt_from = parse_date_from(date_from)
     dt_to = parse_date_to(date_to)
 
-    sales = db.query(Sale).filter(
+    sales = db.query(Sale).options(joinedload(Sale.payments)).filter(
         Sale.status == "completed",
         Sale.created_at >= dt_from,
         Sale.created_at <= dt_to,
@@ -212,7 +273,9 @@ def export_report(
     total_expenses = sum(e.amount for e in expenses)
     period_label = f"{date_from} al {date_to}"
 
-    sales_with_receipt_total = sum(s.total for s in sales if s.has_receipt)
+    # En pagos mixtos solo la parte débito entra a la base del IVA (_boleta_base).
+    invoiced = _invoiced_sale_ids(db)
+    sales_with_receipt_total = sum(_boleta_base(s, invoiced) for s in sales)
     invoices_tax_total = sum(i.tax_amount for i in invoices)
     vat_debit = calculate_vat(sales_with_receipt_total) + invoices_tax_total
     vat_credit = calculate_vat(sum(e.amount for e in expenses if (e.document_type or 'boleta') == 'factura'))
@@ -242,8 +305,8 @@ def export_report(
         total_discounts,
         total_expenses,
         total_income - total_expenses,
-        sum(1 for s in sales if s.has_receipt),
-        sum(1 for s in sales if not s.has_receipt),
+        sum(1 for s in sales if _boleta_base(s, invoiced) > 0),
+        sum(1 for s in sales if _boleta_base(s, invoiced) <= 0),
         round(vat_debit),
         round(vat_credit),
         round(vat_balance),
@@ -262,13 +325,15 @@ def export_report(
         if s.seller_id not in seller_cache:
             sel = db.query(Seller).filter(Seller.id == s.seller_id).first()
             seller_cache[s.seller_id] = sel.name if sel else "Desconocido"
+        base = _boleta_base(s, invoiced)
         ws2.append([
             s.created_at.strftime("%d/%m/%Y %H:%M"),
             s.subtotal if s.subtotal is not None else s.total,
             s.discount_amount or 0,
             s.total,
             s.payment_method,
-            "Sí" if s.has_receipt else "No",
+            # "Parcial": mixto sin boleta por el total — solo la parte débito declara
+            "Sí" if s.has_receipt else (f"Parcial ({base:.0f})" if base > 0 else "No"),
             seller_cache[s.seller_id],
             s.status,
         ])

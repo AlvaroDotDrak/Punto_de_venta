@@ -3,11 +3,13 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Supplier
-from ..auth import get_current_seller, require_admin
+from ..auth import get_current_seller, require_permission
 from ..audit import ACTIONS, log_action
 from ..schemas import SupplierCreate, SupplierOut, SupplierUpdate
 
 router = APIRouter(tags=["suppliers"])
+
+require_manage = require_permission("can_manage_expenses")
 
 
 @router.get("/suppliers", response_model=list[SupplierOut])
@@ -26,13 +28,13 @@ def list_suppliers(
 def create_supplier(
     payload: SupplierCreate,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    seller=Depends(require_manage),
 ):
     supplier = Supplier(**payload.model_dump())
     db.add(supplier)
     db.commit()
     db.refresh(supplier)
-    log_action(db, ACTIONS.SUPPLIER_CREATED, admin.id, f"Proveedor creado: {supplier.name}")
+    log_action(db, ACTIONS.SUPPLIER_CREATED, seller.id, f"Proveedor creado: {supplier.name}")
     return supplier
 
 
@@ -41,7 +43,7 @@ def update_supplier(
     supplier_id: int,
     payload: SupplierUpdate,
     db: Session = Depends(get_db),
-    admin=Depends(require_admin),
+    seller=Depends(require_manage),
 ):
     supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
     if not supplier:
@@ -50,5 +52,5 @@ def update_supplier(
         setattr(supplier, field, value)
     db.commit()
     db.refresh(supplier)
-    log_action(db, ACTIONS.SUPPLIER_UPDATED, admin.id, f"Proveedor actualizado: {supplier.name}")
+    log_action(db, ACTIONS.SUPPLIER_UPDATED, seller.id, f"Proveedor actualizado: {supplier.name}")
     return supplier

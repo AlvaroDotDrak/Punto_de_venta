@@ -1,12 +1,19 @@
 import { useState } from 'react';
-import { X, Banknote, CreditCard, Smartphone, Check, Tag, Gift } from 'lucide-react';
+import { X, Banknote, CreditCard, Smartphone, Check, Tag, Gift, Layers } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
 const METHODS = [
   { id: 'efectivo',      label: 'Efectivo',      Icon: Banknote },
   { id: 'tarjeta',       label: 'Tarjeta',        Icon: CreditCard },
   { id: 'transferencia', label: 'Transferencia',  Icon: Smartphone },
+  { id: 'mixto',         label: 'Mixto',          Icon: Layers },
   { id: 'cortesia',      label: 'Cortesía',       Icon: Gift, permiso: 'courtesy' },
+];
+
+const MIXTO_METHODS = [
+  { id: 'efectivo',      label: 'Efectivo',      Icon: Banknote },
+  { id: 'tarjeta',       label: 'Tarjeta',        Icon: CreditCard },
+  { id: 'transferencia', label: 'Transferencia',  Icon: Smartphone },
 ];
 
 const BILLS = [1000, 2000, 5000, 10000, 20000];
@@ -24,6 +31,8 @@ export default function PaymentModal({
   paymentMethod,
   cashReceived,
   change,
+  mixedPayments,
+  onMixedChange,
   hasReceipt,
   processing,
   onMethodChange,
@@ -37,8 +46,17 @@ export default function PaymentModal({
   const [feedbackAmount, setFeedbackAmount] = useState(null);
 
   const esCortesia = paymentMethod === 'cortesia';
+  const isMixto = paymentMethod === 'mixto';
+  const mixedSum = isMixto
+    ? MIXTO_METHODS.reduce((s, m) => s + (parseInt(mixedPayments?.[m.id]) || 0), 0)
+    : 0;
+  const mixedRemaining = total - mixedSum;
+  const mixedOk = isMixto && mixedSum === total && mixedSum > 0;
   const cashOk = paymentMethod !== 'efectivo' || !cashReceived || parseInt(cashReceived) >= total;
+  // En mixto NO se fuerza la boleta: la parte débito emite la suya sola por su
+  // monto (y Contabilidad declara solo eso). Marcarla = boleta manual por el total.
   const receiptForced = paymentMethod === 'tarjeta';
+  const mixtoConTarjeta = isMixto && (parseInt(mixedPayments?.tarjeta) || 0) > 0;
   const suggested = BILLS.find(b => b >= total) ?? BILLS[BILLS.length - 1];
 
   const handleBillPress = (bill) => {
@@ -269,6 +287,54 @@ export default function PaymentModal({
             </div>
           )}
 
+          {/* Pago mixto: la cajera reparte el total entre métodos. Los montos deben
+              sumar exactamente el total — sin vuelto. El servidor lo valida igual. */}
+          {isMixto && (
+            <div className="animate-slide-up" style={{ marginBottom: 'var(--space-md)' }}>
+              {MIXTO_METHODS.map(({ id, label, Icon }) => (
+                <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: 128, color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.85rem' }}>
+                    <Icon size={16} /> {label}
+                  </div>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontWeight: 800, opacity: 0.4 }}>$</span>
+                    <input
+                      type="number"
+                      className="form-input"
+                      placeholder="0"
+                      value={mixedPayments?.[id] ?? ''}
+                      onChange={e => onMixedChange(id, e.target.value)}
+                      style={{ paddingLeft: 22, height: 40, fontWeight: 700 }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => onMixedChange(id, String((parseInt(mixedPayments?.[id]) || 0) + mixedRemaining))}
+                    disabled={mixedRemaining <= 0}
+                    title="Asignar el resto a este método"
+                    style={{ height: 40 }}
+                  >
+                    Resto
+                  </button>
+                </div>
+              ))}
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '8px 12px', borderRadius: 'var(--radius-md)', marginTop: 4,
+                background: mixedOk ? 'var(--color-success-bg)' : 'var(--color-bg)',
+                border: `1px solid ${mixedOk ? 'rgba(46,139,87,0.25)' : 'var(--color-border)'}`,
+              }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                  Asignado {formatCurrency(mixedSum)} de {formatCurrency(total)}
+                </span>
+                <span style={{ fontWeight: 800, fontSize: '0.9rem', color: mixedOk ? 'var(--color-success)' : (mixedRemaining < 0 ? 'var(--color-danger)' : 'var(--color-text)') }}>
+                  {mixedOk ? 'Listo' : mixedRemaining >= 0 ? `Faltan ${formatCurrency(mixedRemaining)}` : `Sobran ${formatCurrency(-mixedRemaining)}`}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Cortesía: el motivo es lo que hace útil el reporte después */}
           {esCortesia && (
             <div className="form-group" style={{ marginTop: 'var(--space-sm)', marginBottom: 0 }}>
@@ -307,8 +373,13 @@ export default function PaymentModal({
               style={{ width: 20, height: 20, cursor: receiptForced ? 'default' : 'pointer', accentColor: 'var(--color-primary)', flexShrink: 0 }}
             />
             <label htmlFor="has-receipt" style={{ fontSize: '0.875rem', cursor: receiptForced ? 'default' : 'pointer', userSelect: 'none', fontWeight: 600 }}>
-              Emitir boleta
+              {mixtoConTarjeta ? 'Boleta por el total' : 'Emitir boleta'}
               {receiptForced && <span style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontWeight: 500, marginLeft: 6 }}>Requerido — tarjeta</span>}
+              {mixtoConTarjeta && (
+                <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>
+                  La parte con tarjeta emite su boleta sola; marca solo si además emites boleta por el resto
+                </span>
+              )}
             </label>
           </div>
           )}
@@ -322,7 +393,7 @@ export default function PaymentModal({
           <button
             className={`btn btn-primary ${processing ? 'btn-loading' : ''}`}
             onClick={onConfirm}
-            disabled={processing || !cashOk || (esCortesia && !courtesyNote.trim())}
+            disabled={processing || !cashOk || (isMixto && !mixedOk) || (esCortesia && !courtesyNote.trim())}
             style={{ flex: 1, height: 44, fontSize: '1rem', boxShadow: 'var(--shadow-md)', textTransform: 'uppercase', letterSpacing: '0.5px' }}
           >
             {processing ? 'Confirmando...' : esCortesia ? 'Registrar Cortesía' : 'Confirmar Pago'}

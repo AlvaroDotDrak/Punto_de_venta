@@ -1,6 +1,6 @@
 import hashlib
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -78,7 +78,13 @@ def verify_pin(pin: str, hashed: str) -> bool:
 
 
 def create_token(seller_id: int) -> str:
-    expire = datetime.now() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    """El `exp` va en UTC — única excepción a la regla de usar hora local.
+
+    python-jose valida `exp` contra UTC. Con un `datetime.now()` naive (hora de
+    Chile, UTC-4) el token moría 4 horas antes: 12 configuradas, 8 reales. La
+    cajera perdía la sesión a media tarde sin que nada se lo dijera.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_HOURS)
     return jwt.encode({"sub": str(seller_id), "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
 

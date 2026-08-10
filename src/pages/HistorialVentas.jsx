@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useSeller } from '../context/SellerContext';
+import { useConfig } from '../context/ConfigContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
@@ -11,9 +12,9 @@ import DateInput from '../components/DateInput';
 import DateRangePresets from '../components/DateRangePresets';
 import {
   History, Search, ChevronDown, ChevronUp, X,
-  DollarSign, ShoppingCart, XCircle, Ban, AlertTriangle,
+  DollarSign, ShoppingCart, XCircle, Ban, AlertTriangle, Wallet,
   CreditCard, Banknote, ArrowLeftRight, Landmark, Receipt,
-  User, Calendar, Filter, Package
+  User, Calendar, Filter, Package, Layers
 } from 'lucide-react';
 
 const PAGE_SIZE = 25;
@@ -22,6 +23,7 @@ const PAYMENT_META = {
   efectivo:      { label: 'Efectivo',       icon: Banknote,       color: '#2E8B57', bg: 'rgba(46,139,87,0.1)' },
   tarjeta:       { label: 'Tarjeta',         icon: CreditCard,     color: '#2E7BBF', bg: 'rgba(46,123,191,0.1)' },
   transferencia: { label: 'Transferencia',   icon: Landmark,       color: '#C8820A', bg: 'rgba(200,130,10,0.1)' },
+  mixto:         { label: 'Mixto',           icon: Layers,         color: '#7A5CBF', bg: 'rgba(122,92,191,0.1)' },
 };
 
 function PaymentChip({ method }) {
@@ -57,14 +59,24 @@ function SellerBadge({ name }) {
 
 export default function HistorialVentas() {
   const { currentSeller, isAdmin } = useSeller();
+  const { voidWindowMinutes, historyDaysLimit } = useConfig();
   const toast = useToast();
   const canVoid = isAdmin || currentSeller?.can_void_sales;
-  const minDate = (() => { const d = new Date(); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0]; })();
+  const canViewTotals = isAdmin || currentSeller?.can_view_totals;
+  // El backend aplica el mismo tope en /sales; esto solo evita pedir lo que va a recortar.
+  const limitado = !isAdmin && historyDaysLimit > 0;
+  const minDate = limitado
+    ? (() => { const d = new Date(); d.setDate(d.getDate() - (historyDaysLimit - 1)); return d.toISOString().split('T')[0]; })()
+    : undefined;
 
   const [sales, setSales] = useState([]);
   const [sellers, setSellers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - (isAdmin ? 30 : 2)); return d.toISOString().split('T')[0]; });
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - (isAdmin || historyDaysLimit === 0 ? 30 : historyDaysLimit - 1));
+    return d.toISOString().split('T')[0];
+  });
   const [dateTo, setDateTo]     = useState(() => new Date().toISOString().split('T')[0]);
   const [filterSeller, setFilterSeller]   = useState('');
   const [filterPayment, setFilterPayment] = useState('');
@@ -75,6 +87,25 @@ export default function HistorialVentas() {
   const [showVoidModal, setShowVoidModal] = useState(null);
   const [voidReason, setVoidReason] = useState('');
   const [voidConfirm, setVoidConfirm] = useState(false);
+  const [showFixModal, setShowFixModal] = useState(null);
+  const [fixMethod, setFixMethod] = useState('efectivo');
+  const [fixReason, setFixReason] = useState('');
+  // Reloj propio: con la ventana de anulación activa el botón tiene que apagarse
+  // solo al vencer el plazo, sin que nadie recargue la página.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!voidWindowMinutes || isAdmin) return;
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, [voidWindowMinutes, isAdmin]);
+
+  // El backend valida lo mismo: esto solo evita que la cajera apriete un botón
+  // que va a fallar.
+  const dentroDeVentana = (sale) => {
+    if (isAdmin || !voidWindowMinutes) return true;
+    return (now - new Date(sale.created_at).getTime()) / 60000 <= voidWindowMinutes;
+  };
 
   useEffect(() => { setPage(1); }, [dateFrom, dateTo, filterSeller, filterPayment, filterStatus, searchText]);
 
@@ -98,7 +129,11 @@ export default function HistorialVentas() {
     if (dateFrom)      list = list.filter(s => s.created_at >= dateFrom);
     if (dateTo)        list = list.filter(s => s.created_at <= dateTo + 'T23:59:59');
     if (filterSeller)  list = list.filter(s => s.seller_id === parseInt(filterSeller));
-    if (filterPayment) list = list.filter(s => s.payment_method === filterPayment);
+    // Una venta mixta también aparece al filtrar por cualquiera de sus métodos.
+    if (filterPayment) list = list.filter(s =>
+      s.payment_method === filterPayment ||
+      (s.payment_method === 'mixto' && s.payments?.some(p => p.method === filterPayment))
+    );
     if (filterStatus)  list = list.filter(s => s.status === filterStatus);
     if (searchText) {
       const t = searchText.toLowerCase();
@@ -137,6 +172,18 @@ export default function HistorialVentas() {
     } catch (err) { toast.error('Error: ' + err.message); }
   };
 
+  const handleFixMethod = async () => {
+    try {
+      await api.post(`/sales/${showFixModal.id}/payment-method`, {
+        payment_method: fixMethod,
+        reason: fixReason.trim() || null,
+      });
+      toast.success(`Venta #${showFixModal.id}: método corregido`);
+      setShowFixModal(null); setFixReason('');
+      loadData();
+    } catch (err) { toast.error('Error: ' + err.message); }
+  };
+
   return (
     <div>
       {/* Header */}
@@ -150,15 +197,18 @@ export default function HistorialVentas() {
         </div>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs — los de plata dependen de can_view_totals, igual que en Caja: ver el
+          detalle de cada venta es parte del trabajo, saber cuánto vendió el local no. */}
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', marginBottom: 'var(--space-lg)' }}>
-        <div className="kpi-card">
-          <div className="kpi-icon primary"><DollarSign size={20} /></div>
-          <div className="kpi-content">
-            <div className="kpi-value">{formatCurrency(kpis.total)}</div>
-            <div className="kpi-label">Ingresos período</div>
+        {canViewTotals && (
+          <div className="kpi-card">
+            <div className="kpi-icon primary"><DollarSign size={20} /></div>
+            <div className="kpi-content">
+              <div className="kpi-value">{formatCurrency(kpis.total)}</div>
+              <div className="kpi-label">Ingresos período</div>
+            </div>
           </div>
-        </div>
+        )}
         <div className="kpi-card">
           <div className="kpi-icon success"><ShoppingCart size={20} /></div>
           <div className="kpi-content">
@@ -166,13 +216,15 @@ export default function HistorialVentas() {
             <div className="kpi-label">Ventas completadas</div>
           </div>
         </div>
-        <div className="kpi-card">
-          <div className="kpi-icon info"><Receipt size={20} /></div>
-          <div className="kpi-content">
-            <div className="kpi-value">{formatCurrency(kpis.avg)}</div>
-            <div className="kpi-label">Ticket promedio</div>
+        {canViewTotals && (
+          <div className="kpi-card">
+            <div className="kpi-icon info"><Receipt size={20} /></div>
+            <div className="kpi-content">
+              <div className="kpi-value">{formatCurrency(kpis.avg)}</div>
+              <div className="kpi-label">Ticket promedio</div>
+            </div>
           </div>
-        </div>
+        )}
         <div className="kpi-card">
           <div className="kpi-icon danger"><XCircle size={20} /></div>
           <div className="kpi-content">
@@ -206,7 +258,7 @@ export default function HistorialVentas() {
         <DateRangePresets
           from={dateFrom}
           to={dateTo}
-          minDate={!isAdmin ? minDate : undefined}
+          minDate={minDate}
           onSelect={(f, t) => { setDateFrom(f); setDateTo(t); }}
           style={{ marginBottom: 'var(--space-sm)' }}
         />
@@ -215,8 +267,8 @@ export default function HistorialVentas() {
           {/* Fecha desde */}
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Desde</label>
-            <DateInput className="form-input" value={dateFrom} min={!isAdmin ? minDate : undefined}
-              onChange={e => { if (!isAdmin && e.target.value < minDate) return; setDateFrom(e.target.value); }} />
+            <DateInput className="form-input" value={dateFrom} min={minDate}
+              onChange={e => { if (minDate && e.target.value < minDate) return; setDateFrom(e.target.value); }} />
           </div>
 
           {/* Fecha hasta */}
@@ -357,11 +409,27 @@ export default function HistorialVentas() {
                           >
                             {expandedId === sale.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                           </button>
+                          {sale.status === 'completed' && canVoid && sale.payment_method !== 'cortesia' && (
+                            <button
+                              className="btn btn-ghost btn-sm btn-icon"
+                              title="Corregir el método de pago"
+                              onClick={() => {
+                                setShowFixModal(sale);
+                                setFixMethod(sale.payment_method === 'efectivo' ? 'tarjeta' : 'efectivo');
+                                setFixReason('');
+                              }}
+                            >
+                              <Wallet size={14} />
+                            </button>
+                          )}
                           {sale.status === 'completed' && canVoid && (
                             <button
                               className="btn btn-ghost btn-sm btn-icon"
-                              title="Anular venta"
+                              title={dentroDeVentana(sale)
+                                ? 'Anular venta'
+                                : `Pasaron más de ${voidWindowMinutes} minutos: solo un administrador puede anularla`}
                               style={{ color: 'var(--color-danger)' }}
+                              disabled={!dentroDeVentana(sale)}
                               onClick={() => { setShowVoidModal(sale); setVoidReason(''); setVoidConfirm(false); }}
                             >
                               <Ban size={14} />
@@ -441,6 +509,22 @@ export default function HistorialVentas() {
                                 {formatCurrency(sale.total)}
                               </div>
                             </div>
+
+                            {/* Desglose del pago mixto */}
+                            {sale.payment_method === 'mixto' && sale.payments?.length > 0 && (
+                              <div style={{
+                                padding: '8px var(--space-md)',
+                                borderTop: '1px solid var(--color-border)',
+                                display: 'flex', flexWrap: 'wrap', gap: 8,
+                                fontSize: '0.8rem', color: 'var(--color-text-secondary)',
+                              }}>
+                                {sale.payments.map((p, i) => (
+                                  <span key={i}>
+                                    {(PAYMENT_META[p.method]?.label || p.method)}: <strong>{formatCurrency(p.amount)}</strong>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
 
                             {/* Razón de anulación */}
                             {sale.status === 'voided' && (
@@ -541,6 +625,66 @@ export default function HistorialVentas() {
               <button className="btn btn-secondary" onClick={() => { setShowVoidModal(null); setVoidConfirm(false); }}>Cancelar</button>
               <button className="btn btn-danger" onClick={handleVoid} disabled={voidReason.length < 10}>
                 {voidConfirm ? '¡Confirmar anulación!' : 'Anular venta'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFixModal && (
+        <div className="modal-overlay" onClick={() => setShowFixModal(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 'var(--radius-md)',
+                  background: 'var(--color-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Wallet size={18} style={{ color: 'var(--color-primary)' }} />
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '1rem', marginBottom: 1 }}>Corregir pago · Venta #{showFixModal.id}</h2>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                    {formatCurrency(showFixModal.total)} · registrada como {showFixModal.payment_method}
+                  </div>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setShowFixModal(null)}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)' }}>
+                El total de la venta no cambia: solo se corrige con qué se pagó, para que el
+                arqueo del cajón cuadre. Solo funciona si el turno sigue abierto.
+              </p>
+              <div className="form-group">
+                <label className="form-label">En realidad se pagó con</label>
+                <select className="form-select" value={fixMethod} onChange={e => setFixMethod(e.target.value)}>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="tarjeta">Tarjeta</option>
+                  <option value="debito">Débito</option>
+                  <option value="transferencia">Transferencia</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Motivo <span style={{ color: 'var(--color-text-light)', fontWeight: 400 }}>(opcional)</span></label>
+                <input
+                  className="form-input"
+                  value={fixReason}
+                  onChange={e => setFixReason(e.target.value)}
+                  placeholder="Ej: se marcó tarjeta pero pagó en efectivo"
+                />
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setShowFixModal(null)}>Cancelar</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleFixMethod}
+                disabled={fixMethod === showFixModal.payment_method}
+              >
+                Corregir método
               </button>
             </div>
           </div>

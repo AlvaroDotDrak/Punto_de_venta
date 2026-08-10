@@ -28,6 +28,8 @@ class Seller(Base):
     can_withdraw_cash = Column(Boolean, default=False)  # sacar efectivo del cajón (sangría)
     can_apply_discount = Column(Boolean, default=False)  # aplicar el descuento configurado a una venta
     can_give_courtesy = Column(Boolean, default=False)   # entregar productos como cortesía (sin cobrar)
+    can_manage_expenses = Column(Boolean, default=False)  # editar/borrar gastos, categorías y proveedores
+    can_view_expense_history = Column(Boolean, default=False)  # ver gastos de días anteriores (solo lectura)
     created_at = Column(DateTime, default=datetime.now)
 
     sales = relationship("Sale", back_populates="seller")
@@ -98,6 +100,7 @@ class Sale(Base):
 
     seller = relationship("Seller", back_populates="sales")
     items = relationship("SaleItem", back_populates="sale")
+    payments = relationship("SalePayment", back_populates="sale", cascade="all, delete-orphan")
     cash_movements = relationship("CashMovement", back_populates="sale")
     order = relationship("Order", back_populates="sales")
 
@@ -117,6 +120,22 @@ class SaleItem(Base):
 
     sale = relationship("Sale", back_populates="items")
     product = relationship("Product", back_populates="sale_items")
+
+
+class SalePayment(Base):
+    """Desglose de cómo se pagó una venta: una fila por método usado. En una venta
+    simple hay una sola fila; en pago mixto, varias que suman el total. Es la fuente
+    de verdad del reparto por método — la caja crea un CashMovement por cada fila,
+    así el cuadre por método sigue calzando sin lógica especial."""
+    __tablename__ = "sale_payments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False)
+    method = Column(String, nullable=False)   # 'efectivo' | 'tarjeta' | 'transferencia'
+    amount = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    sale = relationship("Sale", back_populates="payments")
 
 
 class Order(Base):
@@ -286,6 +305,10 @@ class Expense(Base):
     document_type = Column(String, default='boleta') # 'boleta' | 'factura'
     invoice_number = Column(String, nullable=True)   # folio del documento del proveedor (compras)
     payment_method = Column(String, nullable=True)   # 'efectivo' | 'transferencia' | 'debito' (compras)
+    # Un gasto en efectivo no siempre sale del cajón del local: un sueldo o la feria
+    # se pagan en billetes traídos del banco. Si se descuentan del cajón, el arqueo
+    # queda en negativo y el cierre deja de significar nada.
+    affects_cash = Column(Boolean, default=True)
     seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)

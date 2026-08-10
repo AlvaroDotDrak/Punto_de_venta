@@ -12,7 +12,7 @@ import { hexToRgba } from '../utils/verticals';
 import {
   Settings, Download, Clock, Shield, Sliders, Store, Upload, Trash2, Check,
   CakeSlice, ClipboardList, Refrigerator, ChefHat, Utensils, Scale, Barcode, Wine, Printer,
-  Tag, Plus,
+  Tag, Plus, Inbox,
 } from 'lucide-react';
 
 // Arquetipos de categoría: traducen los flags técnicos (showcase/sliceable/stock)
@@ -78,6 +78,7 @@ export default function Configuracion() {
   const isAdmin = ['admin', 'dev'].includes(currentSeller?.role);
   const { profile, refresh } = useConfig();
   const [testingPrint, setTestingPrint] = useState(false);
+  const [testingDrawer, setTestingDrawer] = useState(false);
   const [activeTab, setActiveTab] = useState('backup');
   const [auditLogs, setAuditLogs] = useState([]);
   const [backupPath, setBackupPath] = useState('');
@@ -92,10 +93,15 @@ export default function Configuracion() {
   const [cashTolerance, setCashTolerance] = useState('');
   const [discounts, setDiscounts] = useState([]);
   const [mail, setMail] = useState({
-    smtp_enabled: false, smtp_host: 'smtp.gmail.com', smtp_port: '587',
-    smtp_user: '', smtp_password: '', report_recipients: '',
+    smtp_enabled: false, smtp_host: '', smtp_port: '',
+    smtp_user: '', smtp_password: '', report_recipients: '', backup_attach: true,
   });
   const [mailPassSet, setMailPassSet] = useState(false);
+  const [mailSender, setMailSender] = useState('');
+  // Lo que hay guardado en el servidor: la prueba se manda contra eso, no contra
+  // lo que está tipeado sin guardar.
+  const [savedRecipients, setSavedRecipients] = useState('');
+  const [mailAdvanced, setMailAdvanced] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
   const [weightMode, setWeightMode] = useState('kg');
   const [reportCats, setReportCats] = useState([]);
@@ -115,13 +121,17 @@ export default function Configuracion() {
         setConfigParams(c);
         setMail({
           smtp_enabled: c.smtp_enabled === 'true',
-          smtp_host: c.smtp_host || 'smtp.gmail.com',
-          smtp_port: c.smtp_port || '587',
+          // Vacío = usar la casilla de fábrica; solo se llena para enviar desde otra cuenta.
+          smtp_host: c.smtp_host || '',
+          smtp_port: c.smtp_port || '',
           smtp_user: c.smtp_user || '',
           smtp_password: '',            // nunca vuelve del servidor
           report_recipients: c.report_recipients || '',
+          backup_attach: c.backup_attach !== 'false',
         });
         setMailPassSet(c.smtp_password_set === 'true');
+        setMailSender(c.smtp_sender_default || '');
+        setSavedRecipients(c.report_recipients || '');
       }).catch(() => {});
       setCashTolerance(String(profile?.cash_diff_tolerance ?? 500));
       setWeightMode(profile?.weight_entry_mode || 'kg');
@@ -352,16 +362,19 @@ export default function Configuracion() {
     setSavingParam(true);
     try {
       await api.put('/config/smtp_enabled', { value: mail.smtp_enabled ? 'true' : 'false' });
+      // Se guardan vacíos a propósito: el backend cae a la casilla de fábrica.
       await api.put('/config/smtp_host', { value: mail.smtp_host.trim() });
-      await api.put('/config/smtp_port', { value: String(parseInt(mail.smtp_port) || 587) });
+      await api.put('/config/smtp_port', { value: mail.smtp_port.trim() });
       await api.put('/config/smtp_user', { value: mail.smtp_user.trim() });
       await api.put('/config/report_recipients', { value: mail.report_recipients.trim() });
+      await api.put('/config/backup_attach', { value: mail.backup_attach ? 'true' : 'false' });
       // Solo se escribe si el admin tipeó una nueva: vacío = dejar la que había.
       if (mail.smtp_password) {
         await api.put('/config/smtp_password', { value: mail.smtp_password });
         setMailPassSet(true);
         setMail(m => ({ ...m, smtp_password: '' }));
       }
+      setSavedRecipients(mail.report_recipients.trim());
       toast.success('Configuración de correo guardada');
     } catch (err) {
       toast.error('Error al guardar: ' + err.message);
@@ -388,6 +401,7 @@ export default function Configuracion() {
       await api.put(`/config/${key}`, {
         value: String(configParams[key] ?? ''),
       });
+      await refresh();   // el perfil lo consumen las páginas (ej. la ventana de anulación)
       toast.success('Configuración guardada correctamente');
     } catch (err) {
       toast.error('Error al guardar configuración: ' + err.message);
@@ -400,8 +414,11 @@ export default function Configuracion() {
     setSavingParam(true);
     try {
       await api.put('/config/auto_print', { value: configParams.auto_print === 'true' ? 'true' : 'false' });
+      await api.put('/config/auto_print_close', { value: configParams.auto_print_close === 'false' ? 'false' : 'true' });
       await api.put('/config/printer_name', { value: configParams.printer_name || 'POS-80' });
+      await api.put('/config/report_show_expenses', { value: configParams.report_show_expenses === 'false' ? 'false' : 'true' });
       await api.put('/config/print_logo', { value: configParams.print_logo === 'true' ? 'true' : 'false' });
+      await api.put('/config/open_drawer', { value: configParams.open_drawer === 'true' ? 'true' : 'false' });
       await refresh();
       toast.success('Configuración de impresión guardada');
     } catch (err) {
@@ -420,6 +437,18 @@ export default function Configuracion() {
       toast.error('No se pudo imprimir: ' + err.message);
     } finally {
       setTestingPrint(false);
+    }
+  };
+
+  const handleTestDrawer = async () => {
+    setTestingDrawer(true);
+    try {
+      await api.post('/print/open-drawer', {});
+      toast.success('Pulso enviado: el cajón debería abrirse');
+    } catch (err) {
+      toast.error('No se pudo abrir el cajón: ' + err.message);
+    } finally {
+      setTestingDrawer(false);
     }
   };
 
@@ -792,6 +821,52 @@ export default function Configuracion() {
 
               <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
                 <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  Días de historial que ve un vendedor
+                </label>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    className="form-input"
+                    placeholder="3"
+                    value={configParams.history_days_limit ?? ''}
+                    onChange={(e) => setConfigParams({ ...configParams, history_days_limit: e.target.value })}
+                  />
+                  <button className="btn btn-primary" onClick={() => handleSaveParam('history_days_limit')} disabled={savingParam}>
+                    Guardar
+                  </button>
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Cuántos días puede consultar en el Historial de Ventas un vendedor, <strong>contando hoy</strong>:
+                  1 = solo hoy, 2 = hoy y ayer. <strong>0 = sin límite.</strong> Los administradores ven todo siempre.
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
+                  Plazo para que un vendedor anule una venta (minutos)
+                </label>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    className="form-input"
+                    placeholder="0"
+                    value={configParams.void_window_minutes ?? ''}
+                    onChange={(e) => setConfigParams({ ...configParams, void_window_minutes: e.target.value })}
+                  />
+                  <button className="btn btn-primary" onClick={() => handleSaveParam('void_window_minutes')} disabled={savingParam}>
+                    Guardar
+                  </button>
+                </div>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Pasado ese plazo, la venta solo la puede anular un administrador. <strong>0 = sin límite.</strong>{' '}
+                  Aplica únicamente a vendedores con permiso de anular.
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
+                <label className="form-label" style={{ fontWeight: '600', marginBottom: 'var(--space-xs)', display: 'block' }}>
                   En el cierre, mostrar cuánto quedó de:
                 </label>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -841,36 +916,69 @@ export default function Configuracion() {
                     onChange={e => setMail(m => ({ ...m, smtp_enabled: e.target.checked }))} />
                   <span>Enviar el resumen al cerrar la caja</span>
                 </label>
-                <div style={{ display: 'grid', gap: 'var(--space-sm)' }}>
-                  <input type="text" className="form-input" placeholder="Correos que reciben (separados por coma)"
-                    value={mail.report_recipients}
-                    onChange={e => setMail(m => ({ ...m, report_recipients: e.target.value }))} />
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 'var(--space-sm)' }}>
-                    <input type="text" className="form-input" placeholder="Servidor SMTP"
-                      value={mail.smtp_host} onChange={e => setMail(m => ({ ...m, smtp_host: e.target.value }))} />
-                    <input type="number" className="form-input" placeholder="Puerto"
-                      value={mail.smtp_port} onChange={e => setMail(m => ({ ...m, smtp_port: e.target.value }))} />
-                  </div>
-                  <input type="email" className="form-input" placeholder="Cuenta que envía (ej: pos.negocio@gmail.com)"
-                    value={mail.smtp_user} onChange={e => setMail(m => ({ ...m, smtp_user: e.target.value }))} />
-                  <input type="password" className="form-input" autoComplete="new-password"
-                    placeholder={mailPassSet ? 'Contraseña guardada — escribe una nueva para cambiarla' : 'Contraseña de aplicación de Gmail'}
-                    value={mail.smtp_password} onChange={e => setMail(m => ({ ...m, smtp_password: e.target.value }))} />
-                </div>
+                <input type="text" className="form-input" placeholder="Correos que reciben (separados por coma)"
+                  value={mail.report_recipients}
+                  onChange={e => setMail(m => ({ ...m, report_recipients: e.target.value }))} />
+                {mailSender && (
+                  <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                    El resumen sale desde <strong>{mailSender}</strong>, la casilla del sistema. No hay nada más que configurar.
+                  </p>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'var(--space-sm)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={mail.backup_attach}
+                    onChange={e => setMail(m => ({ ...m, backup_attach: e.target.checked }))} />
+                  <span>Adjuntar el respaldo de la base de datos</span>
+                </label>
+                <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  El respaldo automático se guarda en este mismo computador, así que no sirve si el equipo se
+                  pierde o se le rompe el disco. Mandándolo pegado al correo queda una copia afuera todos los
+                  días, y ese archivo se carga tal cual en "Restaurar backup". <strong>Ojo:</strong> el respaldo
+                  lleva TODO el negocio (ventas, costos, proveedores) y llega a todos los correos de arriba —
+                  con esto activado, esa lista es solo para los dueños.
+                </p>
                 <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
                   <button className="btn btn-primary" onClick={handleSaveMail} disabled={savingParam}>
                     Guardar correo
                   </button>
-                  <button className="btn btn-secondary" onClick={handleTestMail} disabled={sendingTest || !mailPassSet}>
+                  <button className="btn btn-secondary" onClick={handleTestMail}
+                    disabled={sendingTest || !savedRecipients
+                      || mail.report_recipients.trim() !== savedRecipients}>
                     {sendingTest ? 'Enviando…' : 'Enviar prueba ahora'}
                   </button>
                 </div>
+                {mail.report_recipients.trim() !== savedRecipients && (
+                  <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-warning, #B45309)' }}>
+                    Guardá los cambios para poder mandar la prueba.
+                  </p>
+                )}
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-                  Con Gmail hay que usar una <strong>contraseña de aplicación</strong> (Cuenta de Google → Seguridad →
-                  Verificación en 2 pasos → Contraseñas de aplicaciones), no la contraseña normal. Conviene una cuenta
-                  dedicada para enviar, no la personal: la contraseña queda guardada en la base de datos del local.
                   Si al cerrar la caja no hay internet, el cierre se guarda igual y solo se pierde ese correo.
                 </p>
+                <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 'var(--space-xs)' }}
+                  onClick={() => setMailAdvanced(v => !v)}>
+                  {mailAdvanced ? 'Ocultar casilla propia' : 'Enviar desde otra casilla'}
+                </button>
+                {mailAdvanced && (
+                  <div style={{ display: 'grid', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 'var(--space-sm)' }}>
+                      <input type="text" className="form-input" placeholder="Servidor SMTP"
+                        value={mail.smtp_host} onChange={e => setMail(m => ({ ...m, smtp_host: e.target.value }))} />
+                      <input type="number" className="form-input" placeholder="Puerto"
+                        value={mail.smtp_port} onChange={e => setMail(m => ({ ...m, smtp_port: e.target.value }))} />
+                    </div>
+                    <input type="email" className="form-input" placeholder="Cuenta que envía (ej: pos.negocio@gmail.com)"
+                      value={mail.smtp_user} onChange={e => setMail(m => ({ ...m, smtp_user: e.target.value }))} />
+                    <input type="password" className="form-input" autoComplete="new-password"
+                      placeholder={mailPassSet ? 'Contraseña guardada — escribe una nueva para cambiarla' : 'Contraseña de aplicación de Gmail'}
+                      value={mail.smtp_password} onChange={e => setMail(m => ({ ...m, smtp_password: e.target.value }))} />
+                    <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                      Solo si el negocio quiere mandar desde su propia casilla. Con Gmail se necesita una{' '}
+                      <strong>contraseña de aplicación</strong> (Cuenta de Google → Seguridad → Verificación en 2 pasos),
+                      no la contraseña normal, y queda guardada en la base de datos del local. Dejando estos campos
+                      vacíos se usa la casilla del sistema.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-md)' }}>
@@ -957,7 +1065,31 @@ export default function Configuracion() {
                     onChange={(e) => setConfigParams({ ...configParams, auto_print: e.target.checked ? 'true' : 'false' })}
                     style={{ width: 18, height: 18, cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.9rem' }}>Imprimir la boleta automáticamente al completar una venta</span>
+                  <span style={{ fontSize: '0.9rem' }}>Imprimir el comprobante automáticamente al completar una venta</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', margin: 'var(--space-sm) 0' }}>
+                  <input
+                    type="checkbox"
+                    checked={configParams.auto_print_close !== 'false'}
+                    onChange={(e) => setConfigParams({ ...configParams, auto_print_close: e.target.checked ? 'true' : 'false' })}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.9rem' }}>Imprimir el resumen del turno al cerrar la caja</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-sm)', cursor: 'pointer', margin: 'var(--space-sm) 0' }}>
+                  <input
+                    type="checkbox"
+                    checked={configParams.report_show_expenses !== 'false'}
+                    onChange={(e) => setConfigParams({ ...configParams, report_show_expenses: e.target.checked ? 'true' : 'false' })}
+                    style={{ width: 18, height: 18, cursor: 'pointer', marginTop: 2 }}
+                  />
+                  <span style={{ fontSize: '0.9rem' }}>
+                    Mostrar los gastos en el resumen del turno impreso
+                    <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                      Apagalo si no querés que los sueldos y costos aparezcan en el papel que
+                      maneja quien atiende. El resumen que llega por correo no cambia.
+                    </span>
+                  </span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', margin: 'var(--space-sm) 0' }}>
                   <input
@@ -970,6 +1102,18 @@ export default function Configuracion() {
                 </label>
                 <p style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', margin: '0 0 var(--space-sm) 26px' }}>
                   Usa el logo cargado en la pestaña <strong>Negocio</strong>. Funciona mejor con logos simples en blanco y negro.
+                </p>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', margin: 'var(--space-sm) 0' }}>
+                  <input
+                    type="checkbox"
+                    checked={configParams.open_drawer === 'true'}
+                    onChange={(e) => setConfigParams({ ...configParams, open_drawer: e.target.checked ? 'true' : 'false' })}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.9rem' }}>Abrir el cajón de dinero al cobrar en efectivo</span>
+                </label>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', margin: '0 0 var(--space-sm) 26px' }}>
+                  El cajón debe estar conectado a la impresora térmica por su cable (RJ11/RJ12). Se abre en ventas con efectivo, incluidas las de pago mixto.
                 </p>
                 <label className="form-label" style={{ fontSize: '0.85rem', display: 'block', marginTop: 'var(--space-sm)' }}>
                   Nombre de la impresora (en Windows)
@@ -988,6 +1132,11 @@ export default function Configuracion() {
                   <button className="btn btn-secondary" onClick={handleTestPrint} disabled={testingPrint}>
                     {testingPrint ? <><span className="spinner spinner-sm" /> Imprimiendo...</> : <><Printer size={16} /> Probar impresora</>}
                   </button>
+                  {configParams.open_drawer === 'true' && (
+                    <button className="btn btn-secondary" onClick={handleTestDrawer} disabled={testingDrawer}>
+                      {testingDrawer ? <><span className="spinner spinner-sm" /> Abriendo...</> : <><Inbox size={16} /> Probar cajón</>}
+                    </button>
+                  )}
                 </div>
                 <p style={{ marginTop: 'var(--space-xs)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                   El botón "Imprimir Ticket" de cada venta sigue disponible para reimprimir manualmente.

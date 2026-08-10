@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSeller } from '../context/SellerContext';
 import { useConfig } from '../context/ConfigContext';
 import api from '../utils/api';
-import { Lock, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { Lock, AlertTriangle, ArrowLeft, Power } from 'lucide-react';
 
 const MAX_ATTEMPTS = 3;
 const LOCKOUT_KEY = 'pdv_lockouts'; // { sellerId: lockedUntilTimestamp }
@@ -34,8 +34,9 @@ export default function SellerSelect() {
   const [attempts, setAttempts] = useState({});
   const [lockouts, setLockouts] = useState(loadStoredLockouts);
   const [verifying, setVerifying] = useState(false);
+  const [exitHint, setExitHint] = useState(false);
   const [, setTick] = useState(0);
-  const { selectSeller } = useSeller();
+  const { selectSeller, sessionExpired } = useSeller();
   const { branding } = useConfig();
 
   // Acceso dev oculto: 5 toques en el logo dentro de 2s revelan el login técnico
@@ -121,6 +122,15 @@ export default function SellerSelect() {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleExit = () => {
+    if (!window.confirm('¿Cerrar la aplicación?')) return;
+    // El navegador en modo kiosko se lanza como proceso aparte, no por
+    // window.open(): algunos navegadores ignoran window.close() en ese caso.
+    // Si tras el intento la ventana sigue viva, se muestra la salida manual.
+    window.close();
+    setTimeout(() => setExitHint(true), 400);
   };
 
   const handleLogoTap = () => {
@@ -274,6 +284,15 @@ export default function SellerSelect() {
         </p>
       </div>
 
+      {sessionExpired && (
+        <div className="card" style={{ maxWidth: 520, margin: '0 auto var(--space-lg)', textAlign: 'center', padding: 'var(--space-md)', borderLeft: '4px solid var(--color-primary)' }}>
+          <strong style={{ display: 'block', marginBottom: 4 }}>Tu sesión se cerró por seguridad</strong>
+          <span style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
+            No se perdió ninguna venta. Ingresá tu PIN y seguí trabajando.
+          </span>
+        </div>
+      )}
+
       {loadError && (
         <div style={{ textAlign: 'center', color: 'var(--color-danger)', marginBottom: 'var(--space-lg)' }}>
           <AlertTriangle size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} />
@@ -316,6 +335,18 @@ export default function SellerSelect() {
             </button>
           );
         })}
+      </div>
+
+      <div style={{ textAlign: 'center', marginTop: 'var(--space-xl)' }}>
+        <button className="btn btn-ghost btn-sm" onClick={handleExit}
+          style={{ color: 'var(--color-text-light)' }}>
+          <Power size={16} /> Salir de la aplicación
+        </button>
+        {exitHint && (
+          <p style={{ marginTop: 'var(--space-sm)', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+            Si la ventana no se cerró, presiona <strong>Alt + F4</strong> para salir.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -33,6 +33,15 @@ const PAYMENT_LABELS = {
   transferencia: '🏦 Transferencia',
 };
 
+// Motivos típicos de retiro. Están acá para que el caso del repartidor se
+// reconozca de una: es plata que sale del cajón pero no es gasto del negocio,
+// y sin un ejemplo a la vista se termina anotando como gasto.
+const WITHDRAWAL_REASONS = [
+  'Pago a delivery',
+  'A caja fuerte',
+  'Depósito al banco',
+];
+
 function calcSummary(register) {
   if (!register) return null;
   const movs = register.movements || [];
@@ -55,19 +64,28 @@ function calcSummary(register) {
   const totalExpenses  = expenses.reduce((s, m) => s + m.amount, 0);
   const totalIncomes   = incomes.reduce((s, m) => s + m.amount, 0);
   const totalWithdrawals = withdrawals.reduce((s, m) => s + m.amount, 0);
-  const salesCard      = sales.filter(m => m.payment_method === 'tarjeta').reduce((s, m) => s + m.amount, 0);
-  const salesTransfer  = sales.filter(m => m.payment_method === 'transferencia').reduce((s, m) => s + m.amount, 0);
+  const salesCardGross = sales.filter(m => m.payment_method === 'tarjeta' || m.payment_method === 'debito').reduce((s, m) => s + m.amount, 0);
+  const voidsCard      = voids.filter(m => m.payment_method === 'tarjeta' || m.payment_method === 'debito').reduce((s, m) => s + m.amount, 0);
+  const salesCard      = salesCardGross + voidsCard;
+
+  const salesTransferGross = sales.filter(m => m.payment_method === 'transferencia').reduce((s, m) => s + m.amount, 0);
+  const voidsTransfer      = voids.filter(m => m.payment_method === 'transferencia').reduce((s, m) => s + m.amount, 0);
+  const salesTransfer      = salesTransferGross + voidsTransfer;
 
   // El efectivo esperado NO se calcula acá: lo manda el servidor en
   // expected_amount (_expected_cash). Tenerlo en los dos lados garantizaba que
   // tarde o temprano la pantalla mostrara un número y la DB guardara otro.
+  // Ventas distintas por sale_id: un pago mixto deja un movimiento por método
+  // y no debe contarse como varias transacciones.
+  const saleIds = new Set(sales.filter(m => m.payment_method !== 'cortesia' && m.sale_id).map(m => m.sale_id));
+  const voidIds = new Set(voids.filter(m => m.payment_method !== 'cortesia' && m.sale_id).map(m => m.sale_id));
+
   return {
     totalSales, totalExpenses, totalIncomes, totalWithdrawals,
     salesCash, salesCard, salesTransfer,
     // Las cortesías no son transacciones cobradas (y ya no generan movimiento).
-    count: sales.filter(m => m.payment_method !== 'cortesia').length
-         - voids.filter(m => m.payment_method !== 'cortesia').length,
-    voidCount: voids.length,
+    count: saleIds.size - voidIds.size,
+    voidCount: voidIds.size,
   };
 }
 
@@ -189,11 +207,15 @@ export default function Caja() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await api.post('/cash/close', {
+      const cerrada = await api.post('/cash/close', {
         closing_amount: denomTotal,
         notes: closeNotes.trim() || null,
       });
-      toast.success('Caja cerrada exitosamente');
+      if (cerrada?.print_error) {
+        toast.error(`Caja cerrada, pero no salió el comprobante: ${cerrada.print_error}. Imprimilo con el botón "Imprimir resumen".`);
+      } else {
+        toast.success('Caja cerrada exitosamente');
+      }
       setShowCloseModal(false);
       setCloseNotes('');
       setDenomCounts(Object.fromEntries(DENOMINATIONS.map(d => [d.value, ''])));
@@ -242,7 +264,7 @@ export default function Caja() {
   };
 
   const handleDeleteMovement = async (mov) => {
-    const etiqueta = mov.type === 'expense' ? 'gasto' : 'ingreso';
+    const etiqueta = { expense: 'gasto', withdrawal: 'retiro', income: 'ingreso' }[mov.type] || 'movimiento';
     if (!window.confirm(`¿Eliminar el ${etiqueta} de ${formatCurrency(mov.amount)}?\n\n${mov.description || 'Sin descripción'}`)) return;
     try {
       await api.delete(`/cash/movements/${mov.id}`);
@@ -251,10 +273,11 @@ export default function Caja() {
     } catch (err) { toast.error('Error al eliminar: ' + err.message); }
   };
 
+  // Sin registerId el backend usa la caja abierta y, si no hay, el último cierre.
   const handleReprint = async (registerId) => {
     try {
-      await api.post(`/print/cash-close?register_id=${registerId}`);
-      toast.success('Comprobante enviado a la impresora');
+      await api.post(`/print/cash-close${registerId ? `?register_id=${registerId}` : ''}`);
+      toast.success('Resumen enviado a la impresora');
     } catch (err) {
       toast.error('No se pudo imprimir: ' + err.message);
     }
@@ -280,9 +303,16 @@ export default function Caja() {
           <Lock size={48} />
           <h3>Caja cerrada</h3>
           <p>Abre la caja para comenzar a registrar movimientos del día</p>
-          <button className="btn btn-primary btn-lg" onClick={() => setShowOpenModal(true)} style={{ marginTop: 'var(--space-md)' }}>
-            <Unlock size={20} /> Abrir Caja
-          </button>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', justifyContent: 'center', marginTop: 'var(--space-md)' }}>
+            <button className="btn btn-primary btn-lg" onClick={() => setShowOpenModal(true)}>
+              <Unlock size={20} /> Abrir Caja
+            </button>
+            {canCloseCash && (
+              <button className="btn btn-secondary btn-lg" onClick={() => handleReprint()}>
+                <Printer size={20} /> Imprimir último cierre
+              </button>
+            )}
+          </div>
         </div>
 
         <OpenModal
@@ -329,6 +359,7 @@ export default function Caja() {
       <PageHeader view={view} setView={setView} register={register} canCloseCash={canCloseCash}
         onMovement={canCashMovements ? () => setShowMovementModal(true) : null}
         onClose={canCloseCash ? () => { setShowCloseModal(true); } : null}
+        onPrint={canCloseCash ? () => handleReprint(register.id) : null}
       />
 
       <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
@@ -409,7 +440,7 @@ export default function Caja() {
                 </div>
                 <p style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
                   {movForm.type === 'expense' && 'Plata que sale y es gasto del negocio (proveedor, insumos). Se registra en Gastos y descuenta del cajón.'}
-                  {movForm.type === 'withdrawal' && 'Efectivo que sacás del cajón para guardarlo. NO es un gasto: la plata sigue siendo del negocio, por eso no entra a Contabilidad.'}
+                  {movForm.type === 'withdrawal' && 'Efectivo que sale del cajón sin ser gasto del negocio: guardarlo, depositarlo, o pagarle al repartidor un delivery que el cliente ya pagó en su transferencia. Descuenta del cajón pero no entra a Contabilidad.'}
                   {movForm.type === 'income' && 'Efectivo que entra al cajón sin ser una venta (aporte de sencillo, devolución).'}
                 </p>
               </div>
@@ -443,8 +474,19 @@ export default function Caja() {
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Descripción</label>
+                {movForm.type === 'withdrawal' && (
+                  <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap', marginBottom: 'var(--space-xs)' }}>
+                    {WITHDRAWAL_REASONS.map(motivo => (
+                      <button key={motivo} type="button"
+                        className={`btn btn-sm ${movForm.description === motivo ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => setMovForm(f => ({ ...f, description: motivo }))}>
+                        {motivo}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <input type="text" className="form-input"
-                  placeholder={movForm.type === 'withdrawal' ? 'Ej: Retiro a caja fuerte' : 'Ej: Compra de azúcar'}
+                  placeholder={movForm.type === 'withdrawal' ? 'Ej: Pago a delivery — pedido #120' : 'Ej: Compra de azúcar'}
                   value={movForm.description} onChange={e => setMovForm(f => ({ ...f, description: e.target.value }))} />
               </div>
             </div>
@@ -582,7 +624,7 @@ export default function Caja() {
 
 // ── SUB-COMPONENTES ────────────────────────────────────────────────────────
 
-function PageHeader({ view, setView, register, canCloseCash, onMovement, onClose }) {
+function PageHeader({ view, setView, register, canCloseCash, onMovement, onClose, onPrint }) {
   return (
     <div className="page-header">
       <h1 className="page-title">
@@ -603,6 +645,11 @@ function PageHeader({ view, setView, register, canCloseCash, onMovement, onClose
         {/* Acciones caja abierta */}
         {register && view === 'current' && (
           <>
+            {onPrint && (
+              <button className="btn btn-secondary" onClick={onPrint}>
+                <Printer size={16} /> Imprimir resumen
+              </button>
+            )}
             {onMovement && (
               <button className="btn btn-secondary" onClick={onMovement}>
                 <Plus size={16} /> Movimiento

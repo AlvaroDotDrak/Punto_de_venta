@@ -92,6 +92,10 @@ def update_seller(
         seller.can_apply_discount = payload.can_apply_discount
     if payload.can_give_courtesy is not None:
         seller.can_give_courtesy = payload.can_give_courtesy
+    if payload.can_manage_expenses is not None:
+        seller.can_manage_expenses = payload.can_manage_expenses
+    if payload.can_view_expense_history is not None:
+        seller.can_view_expense_history = payload.can_view_expense_history
 
     db.commit()
     db.refresh(seller)

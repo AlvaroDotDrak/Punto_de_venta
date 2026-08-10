@@ -134,18 +134,22 @@ def complete_order(
             subtotal=item.subtotal,
         ))
 
-    # Movimiento de caja si hay caja abierta, con el método real de pago.
-    # expected_amount no se toca acá: se recalcula entero al cerrar la caja.
+    # Con caja abierta la entrega deja su movimiento, igual que toda venta.
+    # Sin caja abierta antes se creaba la venta sin movimiento: entraba a
+    # Contabilidad pero no al resumen del turno (que suma movimientos), y esa
+    # plata quedaba invisible en todos los cierres. Mejor bloquear, que es la
+    # misma regla del POS.
     register = db.query(CashRegister).filter(CashRegister.status == "open").first()
-    if register:
-        db.add(CashMovement(
-            register_id=register.id,
-            type="sale",
-            amount=total,
-            description=f"Pedido #{order.id} — {order.customer_name}",
-            payment_method=payload.payment_method,
-            sale_id=sale.id,
-        ))
+    if not register:
+        raise HTTPException(status_code=400, detail="La caja debe estar abierta para entregar y cobrar un pedido")
+    db.add(CashMovement(
+        register_id=register.id,
+        type="sale",
+        amount=total,
+        description=f"Pedido #{order.id} — {order.customer_name}",
+        payment_method=payload.payment_method,
+        sale_id=sale.id,
+    ))
 
     # Marcar pedido como entregado
     order.status = "entregado"

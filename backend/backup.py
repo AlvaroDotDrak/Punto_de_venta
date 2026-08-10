@@ -11,8 +11,8 @@ from .database import engine, SessionLocal
 from .models import (
     AuditLog, CashMovement, CashRegister, Expense, ExpenseCategory,
     Ingredient, IngredientMovement, Invoice, Order, OrderItem, Product,
-    ProductRecipe, Sale, SaleItem, Seller, ShowcaseItem, Supplier,
-    PurchaseItem, SystemConfig
+    ProductRecipe, Sale, SaleItem, SalePayment, Seller, ShowcaseItem, Supplier,
+    PurchaseItem, SupplierItemAlias, SystemConfig
 )
 from .audit import ACTIONS, log_action
 
@@ -25,6 +25,12 @@ _EXCLUDE_FIELDS = {
     "products": {"photo"},
     "sellers": {"photo"},
 }
+
+# Claves de system_config que no salen en el backup. El archivo se manda por
+# correo, y un secreto en texto plano ahí queda guardado en una casilla para
+# siempre. Restaurar obliga a volver a escribirlo: sale mucho más barato que
+# repartir la contraseña todos los días.
+_EXCLUDE_CONFIG_KEYS = {"smtp_password"}
 
 # Mapeo clave del JSON -> modelo. Define también el orden de inserción al
 # restaurar: los foreign_keys quedan desactivados durante la restauración, así
@@ -42,12 +48,14 @@ _MODELS_BY_KEY = {
     "sales": Sale,
     "showcase_items": ShowcaseItem,
     "sale_items": SaleItem,
+    "sale_payments": SalePayment,
     "order_items": OrderItem,
     "cash_movements": CashMovement,
     "ingredient_movements": IngredientMovement,
     "product_recipes": ProductRecipe,
     "expenses": Expense,
     "purchase_items": PurchaseItem,
+    "supplier_item_aliases": SupplierItemAlias,
     "invoices": Invoice,
     "audit_log": AuditLog,
 }
@@ -94,14 +102,35 @@ def check_and_run_backup(db: Session) -> bool:
     return True
 
 
+def _export_data(db: Session) -> dict:
+    """El contenido del backup, sin escribirlo a ningún lado."""
+    data = {"exported_at": datetime.now().isoformat()}
+    for key, model in _MODELS_BY_KEY.items():
+        data[key] = _table_to_list(db, model, _EXCLUDE_FIELDS.get(key))
+    data["system_config"] = [row for row in data["system_config"]
+                             if row.get("key") not in _EXCLUDE_CONFIG_KEYS]
+    return data
+
+
+def build_mail_attachment(db: Session) -> tuple[str, bytes]:
+    """Backup completo en memoria, para viajar pegado al correo del cierre.
+
+    Va sin comprimir a propósito: pesa unos cientos de KB contra los 25 MB que
+    admite un correo, y así el adjunto se carga directo en la pantalla de
+    restauración, que espera un .json. Un .gz habría que descomprimirlo a mano
+    justo el día que algo se rompió.
+    """
+    crudo = json.dumps(_export_data(db), ensure_ascii=False, default=_serialize)
+    nombre = f"backup_{datetime.now().strftime('%Y-%m-%d')}.json"
+    return nombre, crudo.encode("utf-8")
+
+
 def _run_backup(db: Session) -> Path:
     """Exporta todas las tablas a un JSON con timestamp."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = BACKUP_DIR / f"backup_{timestamp}.json"
 
-    data = {"exported_at": datetime.now().isoformat()}
-    for key, model in _MODELS_BY_KEY.items():
-        data[key] = _table_to_list(db, model, _EXCLUDE_FIELDS.get(key))
+    data = _export_data(db)
 
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, default=_serialize)

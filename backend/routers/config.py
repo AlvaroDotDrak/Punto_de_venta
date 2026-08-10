@@ -11,7 +11,7 @@ from ..backup import run_manual_backup, restore_from_backup
 from ..seed import seed_vertical
 from ..verticals import VERTICALS, DEFAULT_VERTICAL, get_vertical, resolve_capabilities, PALETTES, get_palette, list_palettes
 from ..audit import ACTIONS, log_action
-from .. import invoice_ai
+from .. import invoice_ai, mail_defaults
 from ..schemas import SystemConfigUpdate, ConfigProfileOut, ConfigProfileUpdate, SetupRequest
 
 router = APIRouter(prefix="", tags=["config"])
@@ -45,6 +45,37 @@ def _get_json(db: Session, key: str, default):
 def _get_weight_mode(db: Session) -> str:
     modo = _get(db, "weight_entry_mode") or "kg"
     return modo if modo in ("kg", "amount") else "kg"
+
+
+def _void_window_minutes(db: Session) -> int:
+    """Minutos en que un vendedor puede anular una venta. 0 = sin límite.
+
+    Por defecto 0 para no cambiarle el comportamiento a las instalaciones que ya
+    están andando: el límite lo prende el admin cuando lo quiere.
+    """
+    try:
+        return max(0, int(_get(db, "void_window_minutes") or 0))
+    except ValueError:
+        return 0
+
+
+def _history_days_limit(db: Session) -> int:
+    """Días de historial de ventas que puede ver un vendedor. 0 = sin límite.
+
+    Cuenta días de calendario **incluyendo hoy**: 1 = solo hoy, 2 = hoy y ayer.
+    Es lo que dice la etiqueta en Configuración; con la otra convención ("días
+    hacia atrás"), poner 1 mostraba dos días y parecía un error.
+
+    3 por defecto, que es exactamente lo que mostraba el tope fijo que había en el
+    frontend (hoy + 2 días atrás): actualizar no le cambia el comportamiento a nadie.
+    """
+    valor = _get(db, "history_days_limit")
+    if valor is None:
+        return 3
+    try:
+        return max(0, int(valor))
+    except ValueError:
+        return 3
 
 
 def _build_discounts(db: Session) -> list[dict]:
@@ -117,6 +148,7 @@ def build_profile(db: Session) -> dict:
         "auto_print": _get(db, "auto_print") == "true",
         "printer_name": _get(db, "printer_name") or "POS-80",
         "print_logo": _get(db, "print_logo") == "true",
+        "open_drawer": _get(db, "open_drawer") == "true",
     }
     return {
         "business_type": business_type,
@@ -135,6 +167,8 @@ def build_profile(db: Session) -> dict:
         "discounts": discounts,
         "weight_entry_mode": weight_entry_mode,
         "report_stock_categories": report_stock_categories,
+        "void_window_minutes": _void_window_minutes(db),
+        "history_days_limit": _history_days_limit(db),
     }
 
 
@@ -277,6 +311,9 @@ def get_config(db: Session = Depends(get_db), _=Depends(require_admin)):
     for key in SENSITIVE_KEYS:
         actual = next((c.value for c in configs if c.key == key), None)
         out[f"{key}_set"] = "true" if actual else "false"
+    # La casilla emisora de fábrica: la pantalla la muestra para que el admin sepa
+    # desde dónde sale el correo sin poder tocar sus credenciales.
+    out["smtp_sender_default"] = mail_defaults.sender()["user"]
     return out
 
 

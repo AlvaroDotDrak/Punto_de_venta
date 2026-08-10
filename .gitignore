@@ -40,6 +40,10 @@ crear_cuenta_soporte.bat
 .env.local
 .env.*.local
 
+# Credenciales reales de la casilla de correo de fábrica (repo público).
+# Solo el .example va al repo.
+backend/mail_secrets.py
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -78,6 +78,7 @@ export default function Ventas() {
   const [showPayment, setShowPayment] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
   const [cashReceived, setCashReceived] = useState('');
+  const [mixedPayments, setMixedPayments] = useState({ efectivo: '', tarjeta: '', transferencia: '' });
   const [hasReceipt, setHasReceipt] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
@@ -302,11 +303,26 @@ export default function Ventas() {
 
   const completeSale = async () => {
     if (cart.length === 0 || processingPayment) return;
+
+    const isMixto = paymentMethod === 'mixto';
+    let mixedList = null;
+    if (isMixto) {
+      mixedList = ['efectivo', 'tarjeta', 'transferencia']
+        .map(m => ({ method: m, amount: parseInt(mixedPayments[m]) || 0 }))
+        .filter(p => p.amount > 0);
+      const suma = mixedList.reduce((s, p) => s + p.amount, 0);
+      if (mixedList.length === 0 || suma !== Math.round(cartTotal)) {
+        toast.error('Los montos del pago mixto deben sumar el total');
+        return;
+      }
+    }
     setProcessingPayment(true);
     try {
       const sale = await api.post('/sales', {
         total: cartTotal,
         payment_method: paymentMethod,
+        payments: isMixto ? mixedList : null,
+        // En mixto no se fuerza: la parte débito declara sola su boleta (backend).
         has_receipt: paymentMethod === 'tarjeta' ? true : hasReceipt,
         discount_id: (chosenDiscount && !esCortesia) ? chosenDiscount.id : null,
         notes: esCortesia ? courtesyNote.trim() : null,
@@ -332,12 +348,13 @@ export default function Ventas() {
         discountLabel: sale.discount_label,
         isCourtesy: esCortesia,
         courtesyNote: esCortesia ? courtesyNote.trim() : null,
-        paymentMethod,
+        paymentMethod: sale.payment_method,
+        payments: sale.payments || [],
         cashReceived: paymentMethod === 'efectivo' ? parseInt(cashReceived) || 0 : 0,
         change,
         seller: currentSeller?.name,
         date: sale.created_at,
-        hasReceipt: paymentMethod === 'tarjeta' ? true : hasReceipt,
+        hasReceipt: sale.has_receipt,
       });
 
       setCart([]);
@@ -345,6 +362,7 @@ export default function Ventas() {
       setSelectedDiscount(null);
       setCourtesyNote('');
       setCashReceived('');
+      setMixedPayments({ efectivo: '', tarjeta: '', transferencia: '' });
       setPaymentMethod('efectivo');
       setHasReceipt(false);
       setShowReceipt(true);
@@ -356,6 +374,14 @@ export default function Ventas() {
           sale_id: sale.id,
           cash_received: paymentMethod === 'efectivo' ? (parseInt(cashReceived) || 0) : null,
         }).catch(err => toast.error('No se pudo imprimir la boleta: ' + err.message));
+      }
+
+      // Abrir el cajón de dinero si hubo efectivo (venta en efectivo o mixta con
+      // parte efectivo). Silencioso: sin impresora/cajón la venta ya se guardó.
+      const huboEfectivo = paymentMethod === 'efectivo'
+        || (isMixto && mixedList.some(p => p.method === 'efectivo'));
+      if (printing?.open_drawer && huboEfectivo) {
+        api.post('/print/open-drawer', {}).catch(() => {});
       }
 
       loadData(); // refrescar stock
@@ -780,6 +806,8 @@ export default function Ventas() {
           paymentMethod={paymentMethod}
           cashReceived={cashReceived}
           change={change}
+          mixedPayments={mixedPayments}
+          onMixedChange={(method, value) => setMixedPayments(prev => ({ ...prev, [method]: value }))}
           hasReceipt={hasReceipt}
           processing={processingPayment}
           onMethodChange={setPaymentMethod}

@@ -3,7 +3,7 @@ import { useSeller } from '../context/SellerContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatCurrency, formatDate } from '../utils/formatters';
-import { PlusCircle, Trash2, Image, X, FileText, Receipt, Tags, Truck } from 'lucide-react';
+import { PlusCircle, Trash2, Image, X, FileText, Receipt, Tags, Truck, Pencil } from 'lucide-react';
 import CategoryManagerModal from '../components/Gastos/CategoryManagerModal';
 import SupplierManagerModal from '../components/Gastos/SupplierManagerModal';
 import DateInput from '../components/DateInput';
@@ -16,8 +16,18 @@ const DOC_TYPES = [
   { value: 'factura', label: 'Factura', icon: FileText, hint: 'Genera crédito fiscal IVA' },
 ];
 
+const PAYMENT_METHODS = [
+  { value: 'efectivo', label: '💵 Efectivo' },
+  { value: 'tarjeta', label: '💳 Tarjeta' },
+  { value: 'debito', label: '💳 Débito' },
+  { value: 'transferencia', label: '🏦 Transferencia' },
+];
+
 export default function Gastos() {
   const { currentSeller, isAdmin } = useSeller();
+  const canManage = isAdmin || !!currentSeller?.can_manage_expenses;
+  // Quien gestiona necesita ver lo que edita, así que el historial va incluido.
+  const canViewHistory = canManage || !!currentSeller?.can_view_expense_history;
   const toast = useToast();
   const fileInputRef = useRef(null);
 
@@ -27,7 +37,7 @@ export default function Gastos() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  // Filtros (solo admin)
+  // Filtros (requieren permiso de historial)
   const [filterFrom, setFilterFrom] = useState(today());
   const [filterTo, setFilterTo] = useState(today());
   const [filterCategory, setFilterCategory] = useState('');
@@ -41,6 +51,9 @@ export default function Gastos() {
   const [receiptPhoto, setReceiptPhoto] = useState(null);
   const [documentType, setDocumentType] = useState('boleta');
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
+  // Solo aplica al efectivo: un sueldo o la feria se pagan en billetes que no
+  // salieron del cajón del local, y descontarlos deja el arqueo en negativo.
+  const [affectsCash, setAffectsCash] = useState(true);
 
   // Solo para avisar: un gasto en efectivo con la caja cerrada no descuenta del cajón
   const [cashOpen, setCashOpen] = useState(true);
@@ -51,7 +64,12 @@ export default function Gastos() {
   // Confirmar eliminación
   const [deletingId, setDeletingId] = useState(null);
 
-  // Gestores (admin)
+  // Edición de un gasto ya registrado
+  const [editing, setEditing] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Gestores (requieren permiso de gestión)
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showSupplierManager, setShowSupplierManager] = useState(false);
 
@@ -76,7 +94,7 @@ export default function Gastos() {
 
   const loadExpenses = async () => {
     const params = new URLSearchParams();
-    if (isAdmin) {
+    if (canViewHistory) {
       if (filterFrom) params.set('date_from', filterFrom);
       if (filterTo) params.set('date_to', filterTo);
       if (filterCategory) params.set('category_id', filterCategory);
@@ -120,21 +138,24 @@ export default function Gastos() {
     }
     setSubmitting(true);
     try {
-      await api.post('/expenses', {
+      const creado = await api.post('/expenses', {
         category_id: parseInt(categoryId),
         amount: parseFloat(amount),
         description: description.trim() || null,
         receipt_photo: receiptPhoto || null,
         document_type: documentType,
         payment_method: paymentMethod,
+        affects_cash: paymentMethod === 'efectivo' ? affectsCash : true,
         supplier_id: supplierId ? parseInt(supplierId) : null,
       });
       toast.success('Gasto registrado');
+      if (creado?.cash_warning) toast.error(creado.cash_warning);
       setAmount('');
       setDescription('');
       setReceiptPhoto(null);
       setDocumentType('boleta');
       setPaymentMethod('efectivo');
+      setAffectsCash(true);
       setSupplierId('');
       if (fileInputRef.current) fileInputRef.current.value = '';
       await loadExpenses();
@@ -142,6 +163,47 @@ export default function Gastos() {
       toast.error('Error: ' + err.message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const startEdit = (expense) => {
+    setDeletingId(null);
+    setEditing(expense);
+    setEditForm({
+      category_id: String(expense.category_id),
+      supplier_id: expense.supplier_id ? String(expense.supplier_id) : '',
+      amount: String(expense.amount),
+      description: expense.description || '',
+      document_type: expense.document_type || 'boleta',
+      payment_method: expense.payment_method || 'efectivo',
+      affects_cash: expense.affects_cash !== false,
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editForm.category_id || !editForm.amount || parseFloat(editForm.amount) <= 0) {
+      toast.error('Selecciona categoría e ingresa un monto válido');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const actualizado = await api.patch(`/expenses/${editing.id}`, {
+        category_id: parseInt(editForm.category_id),
+        amount: parseFloat(editForm.amount),
+        description: editForm.description.trim() || null,
+        document_type: editForm.document_type,
+        payment_method: editForm.payment_method,
+        affects_cash: editForm.payment_method === 'efectivo' ? editForm.affects_cash : true,
+        supplier_id: editForm.supplier_id ? parseInt(editForm.supplier_id) : null,
+      });
+      toast.success('Gasto actualizado');
+      if (actualizado?.cash_warning) toast.error(actualizado.cash_warning);
+      setEditing(null);
+      await loadExpenses();
+    } catch (err) {
+      toast.error('Error: ' + err.message);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -164,7 +226,7 @@ export default function Gastos() {
       <div className="page-header">
         <h1 className="page-title">Gastos</h1>
         <span className="badge badge-info">
-          {isAdmin ? 'Vista administrador' : 'Vista vendedor'}
+          {canManage ? 'Gestión completa' : canViewHistory ? 'Consulta e historial' : 'Registro del día'}
         </span>
       </div>
 
@@ -181,19 +243,46 @@ export default function Gastos() {
             <div className="form-group">
               <label className="form-label">¿Cómo se pagó?</label>
               <select className="form-input" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-                <option value="efectivo">💵 Efectivo</option>
-                <option value="tarjeta">💳 Tarjeta</option>
-                <option value="debito">💳 Débito</option>
-                <option value="transferencia">🏦 Transferencia</option>
+                {PAYMENT_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
               </select>
-              {paymentMethod === 'efectivo' && (
-                <p style={{ marginTop: 6, fontSize: '0.78rem', lineHeight: 1.4, color: cashOpen ? 'var(--color-text-secondary)' : 'var(--color-danger)' }}>
-                  {cashOpen
-                    ? 'Se descontará del efectivo esperado de la caja abierta.'
-                    : 'La caja está cerrada: este gasto se registrará en contabilidad, pero no descontará del cajón.'}
-                </p>
-              )}
             </div>
+
+            {/* Un gasto en efectivo no siempre sale del cajón del local */}
+            {paymentMethod === 'efectivo' && (
+              <div className="form-group">
+                <label className="form-label">¿De dónde salió la plata?</label>
+                <div style={{ display: 'grid', gap: 'var(--space-xs)' }}>
+                  {[
+                    { val: true, lbl: 'Del cajón de la caja', hint: 'Se descuenta del efectivo esperado' },
+                    { val: false, lbl: 'De otro lado', hint: 'Banco, caja fuerte, bolsillo — no toca el cajón' },
+                  ].map(op => (
+                    <button
+                      key={String(op.val)}
+                      type="button"
+                      onClick={() => setAffectsCash(op.val)}
+                      style={{
+                        textAlign: 'left', padding: 'var(--space-sm)', cursor: 'pointer',
+                        border: `2px solid ${affectsCash === op.val ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                        borderRadius: 'var(--radius-sm)',
+                        background: affectsCash === op.val ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-surface))' : 'var(--color-surface)',
+                        color: affectsCash === op.val ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                        fontWeight: affectsCash === op.val ? 600 : 400, fontSize: '0.85rem',
+                      }}
+                    >
+                      {op.lbl}
+                      <span style={{ display: 'block', fontSize: '0.72rem', fontWeight: 400, color: 'var(--color-text-secondary)' }}>
+                        {op.hint}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {affectsCash && !cashOpen && (
+                  <p style={{ marginTop: 6, fontSize: '0.78rem', lineHeight: 1.4, color: 'var(--color-danger)' }}>
+                    La caja está cerrada: se registrará en contabilidad, pero no descontará del cajón.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Tipo de documento */}
             <div className="form-group">
@@ -232,7 +321,7 @@ export default function Gastos() {
             <div className="form-group">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <label className="form-label" style={{ margin: 0 }}>Categoría</label>
-                {isAdmin && (
+                {canManage && (
                   <button type="button" className="btn btn-ghost btn-sm"
                     onClick={() => setShowCategoryManager(true)}
                     style={{ fontSize: '0.75rem', padding: '2px 6px', gap: 4 }}>
@@ -258,7 +347,7 @@ export default function Gastos() {
                 <label className="form-label" style={{ margin: 0 }}>
                   Proveedor <span style={{ color: 'var(--color-text-secondary)', fontWeight: 400 }}>(opcional)</span>
                 </label>
-                {isAdmin && (
+                {canManage && (
                   <button type="button" className="btn btn-ghost btn-sm"
                     onClick={() => setShowSupplierManager(true)}
                     style={{ fontSize: '0.75rem', padding: '2px 6px', gap: 4 }}>
@@ -367,8 +456,8 @@ export default function Gastos() {
 
         {/* ── Lista ──────────────────────────────────────────────────────── */}
         <div>
-          {/* Filtros admin */}
-          {isAdmin && (
+          {/* Filtros (requieren permiso de historial) */}
+          {canViewHistory && (
             <div className="card" style={{ marginBottom: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
               <DateRangePresets
                 from={filterFrom}
@@ -406,7 +495,7 @@ export default function Gastos() {
           {/* Cabecera lista */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-sm)' }}>
             <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
-              {isAdmin ? 'Gastos del período' : 'Gastos de hoy'}
+              {canViewHistory ? 'Gastos del período' : 'Gastos de hoy'}
             </h3>
             {expenses.length > 0 && (
               <div style={{ textAlign: 'right' }}>
@@ -430,7 +519,7 @@ export default function Gastos() {
             <div className="card empty-state">
               <span style={{ fontSize: '2rem' }}>💸</span>
               <h3>Sin gastos</h3>
-              <p>{isAdmin ? 'No hay gastos en el período seleccionado' : 'No se han registrado gastos hoy'}</p>
+              <p>{canViewHistory ? 'No hay gastos en el período seleccionado' : 'No se han registrado gastos hoy'}</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
@@ -463,6 +552,11 @@ export default function Gastos() {
                       >
                         {expense.document_type === 'factura' ? '🧾 Factura' : 'Boleta'}
                       </span>
+                      {expense.payment_method === 'efectivo' && expense.affects_cash === false && (
+                        <span className="badge" style={{ fontSize: '0.7rem', background: 'var(--color-bg)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
+                          No sale del cajón
+                        </span>
+                      )}
                       {expense.description && (
                         <span style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {expense.description}
@@ -490,21 +584,32 @@ export default function Gastos() {
                     )}
                   </div>
 
-                  {isAdmin && (
+                  {/* Una compra con líneas se corrige desde Compras (ahí sí se revierte
+                      el stock que movió), así que acá solo la toca un admin */}
+                  {canManage && (isAdmin || !expense.has_items) && (
                     deletingId === expense.id ? (
                       <div style={{ display: 'flex', gap: 4 }}>
                         <button className="btn btn-danger btn-sm" onClick={() => handleDelete(expense.id)}>Sí, eliminar</button>
                         <button className="btn btn-ghost btn-sm" onClick={() => setDeletingId(null)}>Cancelar</button>
                       </div>
                     ) : (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => setDeletingId(expense.id)}
-                        title="Eliminar gasto"
-                        style={{ color: 'var(--color-danger)' }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => startEdit(expense)}
+                          title="Editar gasto"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setDeletingId(expense.id)}
+                          title="Eliminar gasto"
+                          style={{ color: 'var(--color-danger)' }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     )
                   )}
                 </div>
@@ -514,7 +619,91 @@ export default function Gastos() {
         </div>
       </div>
 
-      {/* Gestor de categorías (admin) */}
+      {/* Editar gasto */}
+      {editing && editForm && (
+        <div className="modal-overlay" onClick={() => setEditing(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Editar gasto</h2>
+              <button className="modal-close" onClick={() => setEditing(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Categoría</label>
+                <select className="form-select" value={editForm.category_id}
+                  onChange={e => setEditForm({ ...editForm, category_id: e.target.value })}>
+                  <option value="">Selecciona...</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Proveedor <span style={{ color: 'var(--color-text-secondary)', fontWeight: 400 }}>(opcional)</span></label>
+                <select className="form-select" value={editForm.supplier_id}
+                  onChange={e => setEditForm({ ...editForm, supplier_id: e.target.value })}>
+                  <option value="">— Sin proveedor —</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Monto ($)</label>
+                <input type="number" className="form-input" min="1" step="1" value={editForm.amount}
+                  onChange={e => setEditForm({ ...editForm, amount: e.target.value })} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Descripción</label>
+                <input type="text" className="form-input" maxLength={200} value={editForm.description}
+                  onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Tipo de documento</label>
+                <select className="form-select" value={editForm.document_type}
+                  onChange={e => setEditForm({ ...editForm, document_type: e.target.value })}>
+                  {DOC_TYPES.map(dt => <option key={dt.value} value={dt.value}>{dt.label}</option>)}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">¿Cómo se pagó?</label>
+                <select className="form-select" value={editForm.payment_method}
+                  onChange={e => setEditForm({ ...editForm, payment_method: e.target.value })}>
+                  {PAYMENT_METHODS.map(pm => <option key={pm.value} value={pm.value}>{pm.label}</option>)}
+                </select>
+                <p style={{ marginTop: 6, fontSize: '0.78rem', lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>
+                  El movimiento de caja se ajusta solo si el turno del gasto sigue abierto;
+                  un turno ya cerrado no se reescribe.
+                </p>
+              </div>
+
+              {editForm.payment_method === 'efectivo' && (
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    id="edit_affects_cash"
+                    checked={editForm.affects_cash}
+                    onChange={e => setEditForm({ ...editForm, affects_cash: e.target.checked })}
+                  />
+                  <label htmlFor="edit_affects_cash" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>
+                    Salió del cajón de la caja
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancelar</button>
+              <button className={`btn btn-primary ${savingEdit ? 'btn-loading' : ''}`}
+                onClick={handleSaveEdit} disabled={savingEdit}>
+                {savingEdit ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Gestor de categorías */}
       {showCategoryManager && (
         <CategoryManagerModal
           categories={categories}
@@ -523,7 +712,7 @@ export default function Gastos() {
         />
       )}
 
-      {/* Gestor de proveedores (admin) */}
+      {/* Gestor de proveedores */}
       {showSupplierManager && (
         <SupplierManagerModal
           suppliers={suppliers}

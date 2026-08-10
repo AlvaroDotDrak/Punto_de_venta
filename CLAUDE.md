@@ -227,7 +227,7 @@ Una DB legacy ya poblada (tiene vendedores) se auto-marca `business_type=pastele
 
 | Tabla | Campos destacados |
 |---|---|
-| `sellers` | `pin` (SHA-256 hash), `role` ('admin'\|'seller'\|'dev'), `active`, `failed_attempts`, `locked_until`, permisos granulares: `products_access` ('none'\|'view'\|'full'), `can_access_insumos`, `can_access_historial`, `can_void_sales`, `can_close_cash`, `can_cash_movements`, `can_view_costs`, `can_view_totals`, `can_withdraw_cash`, `can_apply_discount` |
+| `sellers` | `pin` (SHA-256 hash), `role` ('admin'\|'seller'\|'dev'), `active`, `failed_attempts`, `locked_until`, permisos granulares: `products_access` ('none'\|'view'\|'full'), `can_access_insumos`, `can_access_historial`, `can_void_sales`, `can_close_cash`, `can_cash_movements`, `can_view_costs`, `can_view_totals`, `can_withdraw_cash`, `can_apply_discount`, `can_give_courtesy`, `can_manage_expenses`, `can_view_expense_history` |
 | `products` | `category` (según rubro), `slices`, `slice_price`, `cost_price`, `sold_by` ('unit'\|'weight' — si weight, `price` = precio por kg), `stock` (Float nullable — unidades o kg; null = sin tracking), `min_stock_cooler`, `barcode`, `max_showcase_hours`, `photo` (base64) |
 | `showcase_items` | `showcase_type` ('entero'\|'trozado'), `status` ('active'\|'sold'\|'removed'\|'sliced'), `parent_id` (trozo → entero original) |
 | `sales` | `status` ('completed'\|'voided'), `voided_at`, `void_reason`, `payment_method`, `has_receipt`, `subtotal` (bruto), `discount_percent`, `discount_amount` |
@@ -239,7 +239,7 @@ Una DB legacy ya poblada (tiene vendedores) se auto-marca `business_type=pastele
 | `ingredient_movements` | `type` ('purchase'\|'adjustment'\|'usage'), `sale_id`/`product_id` (para revertir al anular y rentabilidad), `notes` |
 | `product_recipes` | `product_id`+`ingredient_id` (unique), `quantity` (por lote), `yield_qty` (unidades que rinde) |
 | `expense_categories` | `name`, `description`, `active` |
-| `expenses` | `category_id`, `amount`, `receipt_photo` (base64), `document_type` ('boleta'\|'factura'), `payment_method`, `seller_id`, `supplier_id`, `invoice_number` (folio del proveedor, detecta duplicados) |
+| `expenses` | `category_id`, `amount`, `receipt_photo` (base64), `document_type` ('boleta'\|'factura'), `payment_method`, `affects_cash` (si el efectivo salió del cajón), `seller_id`, `supplier_id`, `invoice_number` (folio del proveedor, detecta duplicados) |
 | `suppliers` | `name`, `rut`, `phone`, `email`, `notes`, `active` |
 | `purchase_items` | líneas de una factura de compra, cuelgan de un `Expense`; `product_id`/`ingredient_id`/`category_id` opcionales; `unit_cost` y `line_total` en **NETO** (sin IVA — el IVA es crédito fiscal, no costo) |
 | `invoices` | `invoice_number` (único), `rut`, `business_name`, `net_amount`, `tax_amount`, `total_amount`, `sale_id` (FK nullable) |
@@ -265,7 +265,10 @@ v2.14–v2.15 venta por peso, v2.16 barcode, v2.17–v2.19 compras (supplier_id,
 category_id por línea), v2.20 opened_by/closed_by en caja, v2.21–v2.23 escaneo de facturas
 (units_per_pack, expense_id en ingredient_movements, taxable), v2.24 can_view_totals,
 v2.25 retiros (can_withdraw_cash + expense_id en cash_movements), v2.26 invoice_number,
-v2.27 descuentos (can_apply_discount + subtotal/discount_percent/discount_amount en sales).
+v2.27 descuentos (can_apply_discount + subtotal/discount_percent/discount_amount en sales),
+v2.28 cortesías (can_give_courtesy + sales.notes), v2.29 discount_label, v2.30 pago mixto
+(tabla sale_payments, sin columnas nuevas), v2.31 can_manage_expenses,
+v2.32 can_view_expense_history, v2.33 expenses.affects_cash.
 
 Además de columnas, `_run_migrations()` corre **backfills de una sola vez** marcados con un flag en
 `system_config`: `aliases_backfilled` (alias de proveedor desde compras históricas) y
@@ -273,7 +276,12 @@ Además de columnas, `_run_migrations()` corre **backfills de una sola vez** mar
 no se creaban).
 
 **Siempre usar `datetime.now()`, nunca `datetime.utcnow()`** — la DB guarda hora local chilena.
-`utcnow()` causa que los filtros de fecha fallen y que los JWT expiren 3-4h antes de lo esperado.
+`utcnow()` hace que los filtros de fecha fallen.
+
+**La única excepción es el `exp` del JWT** (`auth.py::create_token`), que va en
+`datetime.now(timezone.utc)`: python-jose lo valida contra UTC, así que un naive local le
+restaba las 4 horas del huso y el token moría a las 8 h en vez de a las 12. Todo lo que se
+guarda en la DB sigue en hora local.
 
 ---
 
@@ -302,14 +310,16 @@ Columnas booleanas en `sellers` + `products_access` ('none'/'view'/'full'):
 |---|---|
 | `products_access` | Página Productos (view = solo lectura, full = CRUD) |
 | `can_access_insumos` | Página Insumos |
-| `can_access_historial` | Página Historial de Ventas |
+| `can_access_historial` | Página Historial de Ventas (hasta `history_days_limit` días atrás) |
 | `can_void_sales` | Anular ventas |
 | `can_close_cash` | Cerrar la caja (abrirla puede cualquiera) |
 | `can_cash_movements` | Ingresos/retiros manuales de caja |
 | `can_view_costs` | Ver precio de costo y márgenes (si no, el backend manda `cost_price`/`cost_per_unit` en null) |
-| `can_view_totals` | Ver ventas totales, tarjeta y transferencia en Caja (si no, el backend **recorta** los movimientos que no son efectivo) |
+| `can_view_totals` | Ver los totales del negocio: en Caja (el backend **recorta** los movimientos que no son efectivo) y los KPIs de plata de Historial. Ver el detalle de cada venta es parte del trabajo; saber cuánto vendió el local, no |
 | `can_withdraw_cash` | Retirar efectivo del cajón (sangría) |
 | `can_apply_discount` | Aplicar a una venta el descuento configurado (no puede cambiar el porcentaje) |
+| `can_view_expense_history` | Ver los gastos de días anteriores y filtrar por fecha/categoría/proveedor (solo lectura) |
+| `can_manage_expenses` | Editar/eliminar gastos y gestionar categorías y proveedores. Implica el historial (registrar un gasto no necesita ninguno de los dos) |
 
 Dependencias FastAPI en `backend/auth.py`: `get_current_seller`, `require_admin` (acepta admin y dev),
 `require_dev`, `require_product_access(write=bool)`, y el genérico **`require_permission(perm)`**
@@ -407,8 +417,17 @@ porcentaje viniera del cliente, cualquiera con la consola del navegador se harí
 - **Retiro (`withdrawal`) ≠ gasto.** Sacar plata del cajón para guardarla baja el efectivo esperado
   pero **nunca entra a Contabilidad**: la plata sigue siendo del negocio, solo cambió de lugar.
   Registrarlo como gasto destruiría la utilidad del mes. Requiere `can_withdraw_cash`.
+  El otro caso real es el **pago al repartidor**: el cliente pagó el delivery dentro de su
+  transferencia y el local le entrega ese efectivo del cajón. Sale plata sin que sea gasto del
+  negocio → es un retiro. (Ojo: si el delivery cobrado se contabiliza como venta y lo pagado al
+  repartidor no se descuenta en ninguna parte, la utilidad queda inflada en ese monto.)
+- **"Efectivo" no es lo mismo que "sale del cajón".** Un sueldo o la feria del mes se pagan en
+  billetes traídos del banco: son gasto, pero no descuentan del cajón del local. Eso lo decide
+  `expenses.affects_cash`. Sin esa distinción, un caso real dejó el efectivo esperado en
+  **−$1.135.690** y el arqueo de ese día no significaba nada. Si un gasto deja el esperado bajo
+  cero, la respuesta trae `cash_warning` (aviso, no bloqueo: el gasto se guarda igual).
 - **Los gastos en efectivo se reflejan en la caja.** Un `Expense` con `payment_method='efectivo'`
-  genera su `CashMovement` vinculado por `expense_id` (`expenses.py::_sync_cash_movement`, usado
+  y `affects_cash` distinto de False genera su `CashMovement` vinculado por `expense_id` (`expenses.py::_sync_cash_movement`, usado
   también por `purchases.py`); editarlo o borrarlo lo sincroniza. El gasto es la fuente de verdad y
   el movimiento su reflejo — por eso ese movimiento no se puede borrar desde Caja.
   **Los turnos ya cerrados no se reescriben**: solo se corta el vínculo (`_unlink_cash_movement`).
@@ -427,22 +446,92 @@ retiros y el top 5 de productos.
 - **Nunca bloquea el cierre**: corre en un hilo aparte con su propia sesión de DB. Si se cayó el
   wifi, el cierre se guarda igual y solo se pierde ese correo.
 - Usa `smtplib` de la stdlib: no agrega dependencias al `.exe`.
-- La contraseña vive en `system_config` en texto plano. Por eso `GET /api/config` **requiere admin**
-  y `smtp_password` no sale nunca por la API (va un flag `smtp_password_set`; se escribe, no se lee).
-  Al configurarlo, usar una cuenta dedicada con contraseña de aplicación de Gmail.
+- **La casilla emisora viene de fábrica** (`backend/mail_defaults.py`): el local solo carga a quién
+  le llega el resumen. `get_mail_config()` resuelve en este orden: lo guardado en `system_config` →
+  variables `POS_SMTP_*` → las constantes del módulo. Guardar los campos vacíos (lo que hace la
+  pantalla por defecto) devuelve el control a la cuenta de fábrica.
+- **El secreto empaquetado es recuperable.** PyInstaller no cifra: el base64 de `mail_defaults` evita
+  que la clave salga en un `strings` del binario, nada más. Por eso la cuenta es dedicada y no se usa
+  para nada más — si se filtra, se rota en Google y se recompila. Ojo: una contraseña de aplicación
+  de Gmail también habilita IMAP, así que quien la extraiga puede *leer* esa casilla. Migrar a un
+  relay con clave de solo envío (Brevo, SES) es cambiar las tres constantes del módulo.
+- Si un negocio quiere enviar desde su propia casilla, los campos SMTP siguen estando en Configuración
+  detrás de "Enviar desde otra casilla". Esa contraseña sí vive en `system_config` en texto plano: por
+  eso `GET /api/config` **requiere admin** y `smtp_password` no sale nunca por la API (va un flag
+  `smtp_password_set`; se escribe, no se lee).
+
+### Resumen del turno impreso
+
+`printing.py::build_close_report` arma el mismo contenido para la térmica. Con el turno **cerrado**
+es el papel que se firma y archiva; con el turno **abierto** lo imprime en modo parcial (título
+"RESUMEN DEL TURNO", sin contado ni diferencia, que solo existen al cerrar) para mirar cómo va el día
+o cuadrar antes de contar el cajón.
+
+- Se dispara solo al cerrar la caja si `auto_print_close` **≠ 'false'** (encendido por defecto).
+  Tiene flag propio a propósito: colgarlo de `auto_print` —la boleta de cada venta, que muchos
+  locales tienen apagada— dejaba el cierre sin imprimir y nadie entendía por qué.
+- **Nunca bloquea el cierre**, pero ya no falla en silencio: el error vuelve en
+  `CashRegisterOut.print_error` y Caja lo muestra en un toast.
+- Botón manual en Caja (`POST /api/print/cash-close`, requiere `can_close_cash`): sin `register_id`
+  usa la caja abierta y, si no hay, el último turno cerrado.
+- **`report_show_expenses`** (encendido por defecto) oculta la línea "Gastos" del papel. Ese
+  comprobante lo maneja quien atiende, y ahí salían los sueldos del local —incluido el suyo—.
+  Solo afecta a la térmica: el correo al dueño sigue con el detalle completo. Con los gastos
+  ocultos el esperado ya no se recompone sumando las líneas impresas (un gasto en efectivo del
+  cajón igual salió de ahí).
+
+### Historial de ventas: tope de días
+
+`history_days_limit` en `system_config` acota hasta dónde puede mirar atrás un vendedor. Cuenta
+días de calendario **incluyendo hoy** (1 = solo hoy, 2 = hoy y ayer, 0 = sin límite); con la
+convención de "días hacia atrás", poner 1 mostraba dos días y parecía un bug. Por defecto **3**,
+que es exactamente lo que mostraba el tope fijo que estaba en el frontend. **Lo recorta `sales.py::list_sales`**, no los selectores de fecha:
+antes el tope estaba escrito a mano en el frontend y bastaba pedir
+`/api/sales?date_from=2020-01-01` desde la consola para bajar el historial completo del negocio.
+Admin y dev sin tope. Se expone en el perfil para que los selectores usen el valor configurado.
+
+### Sesión y expiración del token
+
+- El token vive `TOKEN_EXPIRE_HOURS` (12) y **se renueva solo mientras haya actividad**
+  (`POST /api/auth/refresh`, disparado por `SellerContext` cada 30 min si hubo clicks en los
+  últimos 30). Una jornada larga nunca se corta a mitad de una venta; un equipo que quedó solo
+  igual expira.
+- **`api.js` intercepta el 401**: borra el token y emite `session-expired`, que devuelve a la
+  pantalla de PIN con un mensaje. Antes no se manejaba: el token muerto quedaba en
+  `sessionStorage`, la pantalla seguía mostrando a la cajera y **todo** fallaba con "Token
+  inválido". Parecía que la app se caía; el único arreglo era cerrar sesión y volver a entrar.
+- Los carritos viven en `localStorage`, así que sobreviven al re-login: no se pierde la venta
+  en curso.
 
 ### Anulación de ventas (void)
 
+0. **Ventana de tiempo** (`void_window_minutes` en `system_config`, 0 = sin límite): pasado ese
+   plazo solo admin/dev pueden anular. Se valida en `sales.py` — un límite que solo esconde el
+   botón se salta desde la consola. Se expone en el perfil para que el front apague el botón.
 1. Marcar `sale.status = 'voided'` con razón (mínimo 10 caracteres). Requiere `can_void_sales` (o admin).
 2. Revertir `showcase_items` asociados a `status: 'active'` y devolver stock/insumos consumidos.
 3. Si hay caja abierta → crear movimiento negativo con el método original de la venta.
 4. Registrar en audit log.
+
+### Corrección del método de pago
+
+`POST /api/sales/{id}/payment-method` (requiere `can_void_sales`) cambia con qué se cobró una
+venta sin anularla: borra sus `SalePayment` y `CashMovement` y los rehace con el método correcto.
+El total no se toca.
+
+- Marcar tarjeta cuando fue efectivo descuadra el cajón por ese monto. Antes la única salida era
+  anular y rehacer la venta, o taparlo con un ingreso manual — que descuadra la contabilidad en
+  vez del arqueo. Ambas cosas pasaron en instalaciones reales.
+- **Solo con el turno abierto**: reescribir los movimientos de una caja cerrada cambiaría un
+  arqueo que alguien contó y firmó. Devuelve 400 con la explicación.
 
 ### Boleta (`has_receipt`) e impresión térmica
 
 - `sale.has_receipt` se fuerza a `True` cuando el pago es `tarjeta` (Mercado Pago emite boleta
   automáticamente). Para efectivo y transferencia, el vendedor elige en `PaymentModal`.
 - Contabilidad usa este campo para boletas emitidas vs. sin boleta.
+- El ticket **no lleva la palabra "boleta"**: no es documento tributario del SII y rotularlo así
+  expone al local. Va como `COMPROBANTE DE VENTA` (la boleta real la emite la máquina de pago).
 - **Impresión**: `backend/routers/printing.py` genera ESC/POS (80mm, CP850 — cancela el modo de
   caracteres chinos de las POS-80 clónicas) y lo manda raw al spooler de Windows vía pywin32.
   En Linux o sin pywin32 devuelve 503 sin tumbar la app. Config en `system_config`
@@ -452,8 +541,18 @@ retiros y el top 5 de productos.
 
 - Los gastos se clasifican por `ExpenseCategory`. Las categorías se siembran **por rubro** y de forma
   idempotente (compara por nombre contra toda la tabla, no resucita desactivadas).
-- Cualquier vendedor puede registrar un gasto. Solo admin puede editarlos, eliminarlos o verlos fuera
-  del día actual. Comprobante como base64 en `expense.receipt_photo`.
+- Cualquier vendedor puede registrar un gasto. **Ver** los de días anteriores requiere
+  `can_view_expense_history`; **editarlos, eliminarlos** o gestionar categorías/proveedores requiere
+  `can_manage_expenses` (o ser admin). Están separados porque mirar el gasto de ayer para no
+  duplicarlo es rutina de turno, y poder borrarlo no: son riesgos distintos.
+  `expenses.py::_can_see_history` es la única fuente de esa condición y hace que
+  `can_manage_expenses` **implique** el historial — quien edita un gasto viejo necesita verlo.
+- El recorte al día en curso lo hace el backend en `list_expenses`: limitarlo solo en pantalla dejaba
+  el histórico completo del negocio a un fetch de distancia. Comprobante como base64 en
+  `expense.receipt_photo`.
+- Un gasto con `purchase_items` es una factura de compra: borrarlo desde Gastos **no revierte** el
+  stock ni los costos que movió (para eso está `DELETE /purchases/{id}`), así que solo lo toca un
+  admin — un seller con `can_manage_expenses` recibe 403.
 
 ### Compras / Proveedores (admin)
 
@@ -505,6 +604,17 @@ retiros y el top 5 de productos.
 - **Restore**: `POST /api/backup/restore?confirm=true` (admin) reemplaza TODOS los datos por los del
   JSON. Internamente hace `engine.dispose()` — el endpoint abre una sesión nueva para el audit log
   porque la del request queda inválida.
+- **El respaldo viaja adjunto al correo del cierre** (`backup_attach`, encendido por defecto).
+  `BACKUP_DIR` es `~/punto_de_venta_backups`: **el mismo disco que la base**, así que los 30 archivos
+  rotados no sobreviven a un disco muerto ni a un robo — que es justo el caso para el que existe un
+  backup. El correo es la única copia fuera del local.
+- El adjunto va **sin comprimir** a propósito (~380 KB contra los 25 MB que admite Gmail): la
+  pantalla de restauración espera un `.json`, y un `.gz` habría que descomprimirlo a mano el día que
+  algo se rompió. Si armarlo falla, el correo igual sale.
+- `_EXCLUDE_CONFIG_KEYS` saca los secretos de `system_config` antes de exportar. Sin eso,
+  `smtp_password` viajaría en texto plano por correo todos los días y quedaría en una casilla para
+  siempre. Restaurar obliga a reescribirlo: barato al lado de repartirlo. Cualquier secreto nuevo
+  que se guarde en `system_config` hay que agregarlo ahí **y** a `SENSITIVE_KEYS` de `config.py`.
 
 ---
 
@@ -622,7 +732,7 @@ correctamente con contenido largo.
 | PINs | SHA-256 + salt fijo (débil para secretos de 4-6 dígitos); mitigado por lockout |
 | Fotos | Base64 dentro de SQLite (products.photo, expenses.receipt_photo) infla la DB y los backups |
 | Entorno de tests | Vitest necesita Node ≥20.17 (hay 18.x en la máquina de desarrollo) y `pytest` no está en el `.venv`: hoy las suites **no corren** |
-| Secretos | `smtp_password` y `ZAI_API_KEY` viven en `system_config`/`.env` en texto plano junto al `.exe` |
+| Secretos | `smtp_password` y `ZAI_API_KEY` viven en `system_config`/`.env` en texto plano junto al `.exe`; la casilla emisora de fábrica va ofuscada dentro del binario (`mail_defaults.py`) y es recuperable por quien tenga el `.exe` |
 | Compras | Si el mismo ítem va en dos líneas de una factura, `cost_price` queda con el de la última, no con el promedio ponderado |
 | Escaneo IA | Sin caché: escanear dos veces el mismo archivo son dos llamadas pagadas |
 

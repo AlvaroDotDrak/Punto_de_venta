@@ -79,6 +79,8 @@ export function ConfigProvider({ children }) {
       invoiceScanEnabled: p.invoice_scan === true,
       discounts: p.discounts || [],
       weightEntryMode: p.weight_entry_mode || 'kg',
+      voidWindowMinutes: p.void_window_minutes || 0,   // 0 = sin límite
+      historyDaysLimit: p.history_days_limit ?? 3,     // días contando hoy; 0 = sin límite
       printing: p.printing,
       hasCapability,
       t,

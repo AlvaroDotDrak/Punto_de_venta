@@ -81,9 +81,19 @@ export default function ReceiptModal({ sale, onClose }) {
           </div>
 
           <h2 className="text-display" style={{ fontSize: '1.6rem', fontWeight: 900, marginBottom: 8 }}>Venta Completada</h2>
-          <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-xl)', fontSize: '0.9rem' }}>
+          <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-lg)', fontSize: '0.9rem' }}>
             La transacción ha sido registrada con éxito.
           </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
+            <button className="btn btn-secondary" onClick={onClose} disabled={sending} style={{ height: 50, borderRadius: 'var(--radius-lg)' }}>
+              Cerrar
+            </button>
+            <button className="btn btn-primary" onClick={handlePrint} disabled={sending} style={{ height: 50, borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-md)' }}>
+              {sending ? <Loader2 size={18} className="animate-spin" /> : <Printer size={18} />}
+              {sending ? 'Imprimiendo...' : 'Imprimir Boleta'}
+            </button>
+          </div>
 
           {/* ── TICKET (réplica de la térmica) ── */}
           <div style={{
@@ -92,11 +102,10 @@ export default function ReceiptModal({ sale, onClose }) {
             padding: '20px 18px',
             borderRadius: 'var(--radius-md)',
             border: '1px dashed var(--color-border)',
-            marginBottom: 'var(--space-xl)',
             color: '#000',
             fontFamily: "'Courier New', monospace",
             maxWidth: 320,
-            margin: '0 auto var(--space-xl)',
+            margin: '0 auto',
           }}>
             <div style={{ textAlign: 'center', marginBottom: 10 }}>
               {showLogo && (
@@ -148,6 +157,11 @@ export default function ReceiptModal({ sale, onClose }) {
             ) : (
               <Row left="TOTAL" right={formatCurrency(sale.total)} bold big />
             )}
+            {sale.paymentMethod === 'mixto' && (sale.payments?.length > 0) && (
+              sale.payments.map((p, i) => (
+                <Row key={i} left={p.method.replace(/^\w/, c => c.toUpperCase())} right={formatCurrency(p.amount)} />
+              ))
+            )}
             {isCash && sale.cashReceived > 0 && (
               <>
                 <Row left="Recibido" right={formatCurrency(sale.cashReceived)} />
@@ -156,20 +170,8 @@ export default function ReceiptModal({ sale, onClose }) {
             )}
 
             <div style={{ borderTop: '1px solid #000', margin: '10px 0' }} />
-            {sale.hasReceipt && (
-              <div style={{ textAlign: 'center', fontWeight: 800, fontSize: '0.85rem', marginBottom: 4 }}>*** BOLETA ***</div>
-            )}
+            <div style={{ textAlign: 'center', fontSize: '0.75rem', marginBottom: 4 }}>COMPROBANTE DE VENTA</div>
             <div style={{ textAlign: 'center', fontSize: '0.75rem', whiteSpace: 'pre-line' }}>{footer}</div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
-            <button className="btn btn-secondary" onClick={onClose} disabled={sending} style={{ height: 50, borderRadius: 'var(--radius-lg)' }}>
-              Cerrar
-            </button>
-            <button className="btn btn-primary" onClick={handlePrint} disabled={sending} style={{ height: 50, borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-md)' }}>
-              {sending ? <Loader2 size={18} className="animate-spin" /> : <Printer size={18} />}
-              {sending ? 'Imprimiendo...' : 'Imprimir Boleta'}
-            </button>
           </div>
         </div>
       </div>

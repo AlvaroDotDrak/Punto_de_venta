@@ -33,6 +33,8 @@ class SellerUpdate(BaseModel):
     can_withdraw_cash: Optional[bool] = None
     can_apply_discount: Optional[bool] = None
     can_give_courtesy: Optional[bool] = None
+    can_manage_expenses: Optional[bool] = None
+    can_view_expense_history: Optional[bool] = None
     demote_dev: bool = False   # confirmación explícita para quitarle el rol dev
 
 class SellerOut(BaseModel):
@@ -51,6 +53,8 @@ class SellerOut(BaseModel):
     can_withdraw_cash: bool
     can_apply_discount: bool
     can_give_courtesy: bool
+    can_manage_expenses: bool
+    can_view_expense_history: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -178,6 +182,10 @@ class SaleItemIn(BaseModel):
     # Es la única cifra que el servidor no puede recalcular — ver sales.py.
     amount: Optional[float] = Field(default=None, gt=0)
 
+class SalePaymentIn(BaseModel):
+    method: str        # 'efectivo' | 'tarjeta' | 'transferencia'
+    amount: float = Field(gt=0)
+
 class SaleCreate(BaseModel):
     total: float
     payment_method: str
@@ -187,7 +195,16 @@ class SaleCreate(BaseModel):
     # desde la configuración. Nunca se acepta un monto o un % del cliente.
     discount_id: Optional[str] = None   # cuál de los descuentos configurados aplicar
     notes: Optional[str] = None   # motivo; obligatorio si payment_method='cortesia'
+    # Pago mixto: reparto por método. Si viene, el servidor valida que sume el total
+    # y crea un CashMovement por línea. Si es una sola línea equivale a un pago simple.
+    payments: Optional[list[SalePaymentIn]] = None
     items: list[SaleItemIn]
+
+class SalePaymentOut(BaseModel):
+    method: str
+    amount: float
+
+    model_config = {"from_attributes": True}
 
 class SaleItemOut(BaseModel):
     id: int
@@ -218,12 +235,22 @@ class SaleOut(BaseModel):
     has_receipt: bool = False
     created_at: datetime
     items: list[SaleItemOut] = []
+    payments: list[SalePaymentOut] = []
     seller: Optional[SellerOut] = None
 
     model_config = {"from_attributes": True}
 
 class VoidSaleRequest(BaseModel):
     reason: str       # mínimo 10 caracteres
+
+
+class FixPaymentMethodRequest(BaseModel):
+    """Corrige el método con que se cobró una venta (se marcó tarjeta y fue efectivo).
+
+    No lleva montos: el total de la venta no cambia, solo con qué se pagó.
+    """
+    payment_method: Literal["efectivo", "tarjeta", "debito", "transferencia"]
+    reason: Optional[str] = None
 
 
 # ── Orders ────────────────────────────────────────────────────────────────────
@@ -324,6 +351,9 @@ class CashRegisterOut(BaseModel):
     opened_by: Optional[str] = None
     closed_by: Optional[str] = None
     movements: list[CashMovementOut] = []
+    # Solo lo llena el cierre: si la térmica falló, la cajera tiene que enterarse
+    # en ese momento y no al día siguiente cuando falta el papel firmado.
+    print_error: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -450,6 +480,7 @@ class ExpenseCreate(BaseModel):
     document_type: DocumentType = 'boleta'
     supplier_id: Optional[int] = None
     payment_method: Optional[PaymentMethod] = None
+    affects_cash: bool = True   # solo aplica si payment_method == 'efectivo'
 
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
@@ -459,6 +490,7 @@ class ExpenseUpdate(BaseModel):
     document_type: Optional[DocumentType] = None
     supplier_id: Optional[int] = None
     payment_method: Optional[PaymentMethod] = None
+    affects_cash: Optional[bool] = None
 
 class ExpenseOut(BaseModel):
     id: int
@@ -473,8 +505,12 @@ class ExpenseOut(BaseModel):
     supplier_id: Optional[int] = None
     supplier_name: Optional[str] = None
     payment_method: Optional[str] = None
+    affects_cash: bool = True
     has_items: bool = False
     created_at: datetime
+    # Aviso, no error: el gasto se guarda igual. Sirve para que la cajera vea en el
+    # momento que el cajón quedó en negativo, y no al cerrar con una diferencia enorme.
+    cash_warning: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

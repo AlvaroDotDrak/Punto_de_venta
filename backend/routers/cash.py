@@ -6,7 +6,8 @@ from ..database import get_db
 from ..models import CashMovement, CashRegister
 from ..auth import get_current_seller, require_permission
 from ..audit import ACTIONS, log_action
-from ..mailer import send_close_summary_async, get_mail_config, is_configured, build_summary, send_mail
+from ..mailer import (send_close_summary_async, get_mail_config, is_configured,
+                      build_summary, send_mail, backup_attachment)
 from ..schemas import (
     CashCloseRequest, CashMovementCreate, CashMovementOut,
     CashOpenRequest, CashRegisterOut,
@@ -14,10 +15,12 @@ from ..schemas import (
 
 router = APIRouter(prefix="/cash", tags=["cash"])
 
-def _get_flag(db: Session, key: str) -> bool:
+def _get_flag(db: Session, key: str, default: bool = False) -> bool:
     from ..models import SystemConfig
     item = db.query(SystemConfig).filter(SystemConfig.key == key).first()
-    return bool(item and item.value == "true")
+    if item is None or item.value is None:
+        return default
+    return item.value == "true"
 
 
 def _can_view_totals(seller) -> bool:
@@ -171,16 +174,23 @@ def close_register(
 
     # Mismo criterio con la impresora: si no hay papel, está apagada o el equipo
     # no es Windows, el turno ya cerró. Se puede reimprimir desde Caja.
-    if _get_flag(db, "auto_print"):
+    # Flag propio y encendido por defecto: colgarlo de `auto_print` (la boleta de
+    # cada venta, que muchos locales tienen apagada) dejaba el comprobante de
+    # cierre sin imprimir sin que nadie supiera por qué.
+    print_error = None
+    if _get_flag(db, "auto_print_close", default=True):
         try:
             from .printing import build_close_report, _print_raw, _printer_name
             _print_raw(_printer_name(db), build_close_report(db, register))
         except Exception as e:  # noqa: BLE001
+            print_error = str(getattr(e, "detail", None) or e)
             print(f"[printing] No se pudo imprimir el cierre de la caja {register.id}: {e}")
 
-    return _visible(db.query(CashRegister).options(
+    out = _visible(db.query(CashRegister).options(
         joinedload(CashRegister.movements)
     ).filter(CashRegister.id == register.id).first(), seller)
+    out.print_error = print_error
+    return out
 
 
 @router.post("/report/send")
@@ -194,7 +204,7 @@ def send_report_now(
     la última cerrada."""
     cfg = get_mail_config(db)
     if not is_configured(cfg):
-        raise HTTPException(status_code=400, detail="Falta configurar el correo (servidor, cuenta y destinatarios)")
+        raise HTTPException(status_code=400, detail="Falta indicar a qué correos se envía el resumen")
 
     if register_id:
         register = db.query(CashRegister).filter(CashRegister.id == register_id).first()
@@ -206,7 +216,7 @@ def send_report_now(
 
     asunto, html = build_summary(db, register)
     try:
-        send_mail(cfg, asunto, html)
+        send_mail(cfg, asunto, html, backup_attachment(db))
     except Exception as e:  # noqa: BLE001 — el error de SMTP se muestra tal cual al admin
         raise HTTPException(status_code=502, detail=f"No se pudo enviar: {e}")
 

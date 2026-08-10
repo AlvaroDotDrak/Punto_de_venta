@@ -24,7 +24,20 @@ import { es } from 'date-fns/locale';
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler);
 
 const chartColors = ['#BF5A2F','#C9923A','#E0BC82','#5B9BD5','#4CAF50','#F5A623','#E74C3C','#9B59B6','#1ABC9C','#34495E'];
-const PAYMENT_LABELS = { efectivo: '💵 Efectivo', tarjeta: '💳 Tarjeta', transferencia: '🏦 Transferencia' };
+const PAYMENT_LABELS = { efectivo: '💵 Efectivo', tarjeta: '💳 Tarjeta', transferencia: '🏦 Transferencia', mixto: '🔀 Mixto' };
+
+// Acumula el total de una venta por método. Una venta mixta reparte su total
+// según su desglose de pagos; las demás van enteras a su payment_method.
+function sumByMethod(counts, sale) {
+  if (sale.payments?.length > 0) {
+    sale.payments.forEach(p => {
+      counts[p.method] = (counts[p.method] || 0) + p.amount;
+    });
+  } else {
+    const m = sale.payment_method || 'otro';
+    counts[m] = (counts[m] || 0) + sale.total;
+  }
+}
 
 const defaultOptions = {
   responsive: true, maintainAspectRatio: false,
@@ -166,9 +179,7 @@ export default function Dashboard() {
 
   const todayPaymentMethod = useMemo(() => {
     const counts = {};
-    todaySales.forEach(s => {
-      counts[s.payment_method] = (counts[s.payment_method] || 0) + s.total;
-    });
+    todaySales.forEach(s => sumByMethod(counts, s));
     let dominant = '';
     let maxVal = -1;
     Object.entries(counts).forEach(([method, val]) => {
@@ -180,18 +191,9 @@ export default function Dashboard() {
     return dominant;
   }, [todaySales]);
 
-  // Efectivo esperado en caja: apertura + movimientos en efectivo con su signo
-  // (gasto resta, anulación ya es negativa). Coincide con _expected_cash del backend.
-  const cashExpected = useMemo(() => {
-    if (!currentCash) return null;
-    let exp = currentCash.opening_amount || 0;
-    for (const m of (currentCash.movements || [])) {
-      const isCash = m.payment_method === 'efectivo' || m.payment_method == null;
-      if (!isCash) continue;
-      exp += m.type === 'expense' ? -m.amount : m.amount;
-    }
-    return exp;
-  }, [currentCash]);
+  // Efectivo esperado en caja: autoritativo del backend (_expected_cash vía
+  // /cash/current). Recalcularlo acá terminaba divergiendo (no restaba retiros).
+  const cashExpected = currentCash ? (currentCash.expected_amount ?? null) : null;
 
   const lowStockIngredients = useMemo(() => {
     return restockSuggestions.map(item => ({
@@ -277,11 +279,7 @@ export default function Dashboard() {
   // Pago
   const paymentData = useMemo(() => {
     const map = {};
-    currentSales.forEach(s => {
-      const m = s.payment_method || 'otro';
-      if (!map[m]) map[m] = 0;
-      map[m] += s.total;
-    });
+    currentSales.forEach(s => sumByMethod(map, s));
     return map;
   }, [currentSales]);
 

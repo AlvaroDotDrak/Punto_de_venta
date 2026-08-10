@@ -108,3 +108,17 @@ def logout(seller: Seller = Depends(get_current_seller), db: Session = Depends(g
 @router.get("/me", response_model=SellerOut)
 def me(seller: Seller = Depends(get_current_seller)):
     return seller
+
+
+@router.post("/refresh", response_model=TokenOut)
+def refresh(seller: Seller = Depends(get_current_seller)):
+    """Renueva el token de una sesión activa.
+
+    El front lo llama solo si hubo actividad reciente: así una jornada larga nunca
+    se corta a mitad de una venta, pero un equipo que quedó solo igual expira.
+    No se registra en auditoría — es ruido, no una acción del vendedor.
+    """
+    return TokenOut(
+        access_token=create_token(seller.id),
+        seller=SellerOut.model_validate(seller),
+    )

@@ -51,6 +51,10 @@ _TALL_ON = b"\x1b!\x18"     # negrita + doble alto (no cambia el ancho en column
 _TALL_OFF = b"\x1b!\x00"
 _LINESPACING = b"\x1b\x33\x28"  # ESC 3 40: interlineado más holgado (menos compacto)
 _FEED_CUT = b"\x1bd\x09\x1dV\x01"  # avanzar 9 líneas + corte parcial (deja espacio bajo el cabezal)
+# ESC p: pulso al cajón de dinero por el conector RJ11/RJ12 de la impresora.
+# Se manda a ambos pines (2 y 5) porque el cableado varía según la caja; el pin
+# no conectado se ignora. Pulso de 50ms on / 500ms off (valores estándar).
+_KICK_DRAWER = b"\x1b\x70\x00\x19\xfa" + b"\x1b\x70\x01\x19\xfa"
 
 _SEP = "=" * LINE_WIDTH
 _SUB = "-" * LINE_WIDTH
@@ -130,6 +134,12 @@ def _wrap(texto: str, ancho: int = LINE_WIDTH) -> list[str]:
 def _flag(db: Session, key: str) -> bool:
     item = db.query(SystemConfig).filter(SystemConfig.key == key).first()
     return bool(item and item.value == "true")
+
+
+def _flag_on(db: Session, key: str) -> bool:
+    """Flag encendido por defecto: solo un 'false' explícito lo apaga."""
+    item = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    return not (item and item.value == "false")
 
 
 def _logo_raster(db: Session, max_width: int = LOGO_WIDTH) -> bytes:
@@ -254,6 +264,10 @@ def _build_receipt(db: Session, sale: Sale, cash_received: float | None) -> byte
         buf += _txt(_row(f"Descuento {sale.discount_percent:g}%", "-" + _money(sale.discount_amount))) + b"\n"
     buf += _TALL_ON + _txt(_row("TOTAL", _money(sale.total))) + b"\n" + _TALL_OFF
 
+    if sale.payment_method == "mixto" and sale.payments:
+        for p in sale.payments:
+            buf += _txt(_row(f"  {p.method.capitalize()}", _money(p.amount))) + b"\n"
+
     if sale.payment_method == "efectivo" and cash_received:
         buf += _txt(_row("Recibido", _money(cash_received))) + b"\n"
         buf += _txt(_row("Vuelto", _money(cash_received - sale.total))) + b"\n"
@@ -261,9 +275,10 @@ def _build_receipt(db: Session, sale: Sale, cash_received: float | None) -> byte
     buf += b"\n" + _txt(_SEP) + b"\n\n"
 
     # ── Pie (centrado) ──
+    # Sin marca de "BOLETA": este ticket no es documento tributario del SII y
+    # rotularlo así expone al local. La boleta real la emite la máquina de pago.
     buf += _CENTER
-    if sale.has_receipt:
-        buf += _BOLD_ON + _txt("*** BOLETA ***") + b"\n" + _BOLD_OFF
+    buf += _txt("COMPROBANTE DE VENTA") + b"\n"
     buf += _txt(footer) + b"\n"
     buf += _FEED_CUT
     return bytes(buf)
@@ -297,6 +312,10 @@ def build_close_report(db: Session, register) -> bytes:
     llega por correo a la dueña. Además del cuadre, lleva el desglose por
     categoría y el stock que queda: en una cevichería lo que sobró del día es
     justamente lo que hay que saber antes de preparar el lote de mañana.
+
+    Con el turno todavía abierto imprime el mismo resumen en modo parcial (sin
+    contado ni diferencia, que solo existen al cerrar): sirve para mirar cómo va
+    el día o para cuadrar antes de contar el cajón.
     """
     from ..models import CashMovement, Product, Sale, SaleItem
 
@@ -311,9 +330,19 @@ def build_close_report(db: Session, register) -> bytes:
     ventas = suma("sale") + suma("void")
     # Defensivo: las cortesías ya no generan movimiento, pero una instalación que
     # venía de antes puede tener alguno de $0 y no debe contar como transacción.
-    n_ventas = (len([m for m in movs if m.type == "sale" and m.payment_method != "cortesia"])
-                - len([m for m in movs if m.type == "void" and m.payment_method != "cortesia"]))
-    diferencia = (register.closing_amount or 0) - (register.expected_amount or 0)
+    # Se cuentan ventas distintas (por sale_id): un pago mixto deja un movimiento por
+    # método y no debe contarse como varias transacciones.
+    ids_venta = {m.sale_id for m in movs if m.type == "sale" and m.payment_method != "cortesia" and m.sale_id}
+    ids_anul = {m.sale_id for m in movs if m.type == "void" and m.payment_method != "cortesia" and m.sale_id}
+    n_ventas = len(ids_venta) - len(ids_anul)
+
+    abierta = register.status == "open"
+    if abierta:
+        from .cash import _expected_cash
+        esperado = _expected_cash(db, register)
+    else:
+        esperado = register.expected_amount or 0
+    diferencia = (register.closing_amount or 0) - esperado
 
     q = db.query(Sale).filter(Sale.created_at >= register.opened_at, Sale.status == "completed")
     if register.closed_at:
@@ -348,9 +377,12 @@ def build_close_report(db: Session, register) -> bytes:
     buf += _INIT + _CANCEL_KANJI + _CHARSET + _LINESPACING
     buf += _CENTER
     buf += _BIG_ON + _BOLD_ON + _txt(name) + b"\n" + _BIG_OFF + _BOLD_OFF
-    buf += _BOLD_ON + _txt("CIERRE DE TURNO") + b"\n" + _BOLD_OFF
+    buf += _BOLD_ON + _txt("RESUMEN DEL TURNO" if abierta else "CIERRE DE TURNO") + b"\n" + _BOLD_OFF
     fecha = (register.closed_at or datetime.now()).strftime("%d/%m/%Y %H:%M")
-    buf += _txt(fecha) + b"\n\n"
+    buf += _txt(fecha) + b"\n"
+    if abierta:
+        buf += _txt("(turno en curso - parcial)") + b"\n"
+    buf += b"\n"
 
     buf += _LEFT + _txt(_SEP) + b"\n"
     buf += _txt(_row("Apertura", register.opened_at.strftime("%d/%m %H:%M"))) + b"\n"
@@ -415,6 +447,12 @@ def build_close_report(db: Session, register) -> bytes:
         buf += b"\n"
 
     gastos, retiros, ingresos = suma("expense"), suma("withdrawal"), suma("income")
+    # El papel del turno lo maneja quien atiende, y ahí salían los sueldos del local
+    # —incluido el suyo—. El correo al dueño sigue trayendo el detalle completo.
+    # Ojo: con los gastos ocultos, el esperado ya no se puede recomponer sumando
+    # las líneas de arriba (los gastos en efectivo igual salieron del cajón).
+    if not _flag_on(db, "report_show_expenses"):
+        gastos = 0
     if gastos or retiros or ingresos:
         buf += _BOLD_ON + _txt("MOVIMIENTOS DE CAJA") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
         if gastos:
@@ -427,10 +465,13 @@ def build_close_report(db: Session, register) -> bytes:
 
     buf += _BOLD_ON + _txt("CUADRE DE EFECTIVO") + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
     buf += _txt(_row("Monto inicial", _money(register.opening_amount))) + b"\n"
-    buf += _txt(_row("Esperado", _money(register.expected_amount))) + b"\n"
-    buf += _txt(_row("Contado", _money(register.closing_amount))) + b"\n"
-    signo = "+" if diferencia >= 0 else "-"
-    buf += _TALL_ON + _txt(_row("DIFERENCIA", f"{signo}{_money(abs(diferencia))}")) + b"\n" + _TALL_OFF
+    if abierta:
+        buf += _TALL_ON + _txt(_row("ESPERADO EN CAJON", _money(esperado))) + b"\n" + _TALL_OFF
+    else:
+        buf += _txt(_row("Esperado", _money(esperado))) + b"\n"
+        buf += _txt(_row("Contado", _money(register.closing_amount))) + b"\n"
+        signo = "+" if diferencia >= 0 else "-"
+        buf += _TALL_ON + _txt(_row("DIFERENCIA", f"{signo}{_money(abs(diferencia))}")) + b"\n" + _TALL_OFF
 
     if register.notes:
         buf += b"\n" + _txt(_SUB) + b"\n" + _txt("Observaciones:") + b"\n"
@@ -438,7 +479,8 @@ def build_close_report(db: Session, register) -> bytes:
             buf += _txt(linea) + b"\n"
 
     buf += b"\n" + _txt(_SEP) + b"\n"
-    buf += _CENTER + _txt("Firma: ______________________") + b"\n"
+    if not abierta:
+        buf += _CENTER + _txt("Firma: ______________________") + b"\n"
     buf += _FEED_CUT
     return bytes(buf)
 
@@ -449,16 +491,19 @@ def print_cash_close(
     db: Session = Depends(get_db),
     _=Depends(require_permission("can_close_cash")),
 ):
-    """Imprime (o reimprime) el comprobante de cierre. Sin register_id usa el
-    último turno cerrado."""
+    """Imprime (o reimprime) el resumen del turno. Sin register_id usa la caja
+    abierta y, si no hay, el último turno cerrado — el mismo criterio que el
+    resumen por correo."""
     from ..models import CashRegister
     if register_id:
         register = db.query(CashRegister).filter(CashRegister.id == register_id).first()
     else:
-        register = (db.query(CashRegister).filter(CashRegister.status == "closed")
-                    .order_by(CashRegister.closed_at.desc()).first())
+        register = db.query(CashRegister).filter(CashRegister.status == "open").first()
+        if not register:
+            register = (db.query(CashRegister).filter(CashRegister.status == "closed")
+                        .order_by(CashRegister.closed_at.desc()).first())
     if not register:
-        raise HTTPException(404, "No hay ninguna caja cerrada para imprimir")
+        raise HTTPException(404, "No hay ningún turno para imprimir")
     _print_raw(_printer_name(db), build_close_report(db, register))
     return {"ok": True}
 
@@ -473,6 +518,17 @@ def print_receipt(
     if not sale:
         raise HTTPException(404, "Venta no encontrada")
     _print_raw(_printer_name(db), _build_receipt(db, sale, payload.cash_received))
+    return {"ok": True}
+
+
+@router.post("/open-drawer")
+def open_drawer(db: Session = Depends(get_db), _=Depends(get_current_seller)):
+    """Abre el cajón de dinero conectado a la impresora (pulso ESC p).
+
+    Lo dispara el POS al confirmar una venta con efectivo. No imprime nada:
+    solo manda el pulso. Cualquier vendedor autenticado puede — es la misma
+    cajera que necesita dar vuelto."""
+    _print_raw(_printer_name(db), _KICK_DRAWER)
     return {"ok": True}
 
 

@@ -223,11 +223,21 @@ def _run_migrations():
         _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN notes TEXT")
         # v2.29: varios descuentos configurables (10/15/20%, gift cards)
         _add_column_if_missing(conn, "ALTER TABLE sales ADD COLUMN discount_label TEXT")
+        # v2.30: pago mixto (una venta repartida en varios métodos → tabla sale_payments,
+        # creada por create_all). Sin columnas nuevas en sales: 'mixto' va en payment_method.
+        # v2.31: gestión de gastos delegada a un vendedor (categorías, proveedores, editar/borrar)
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_manage_expenses BOOLEAN DEFAULT 0")
+        # v2.32: ver el historial de gastos sin poder editarlo
+        _add_column_if_missing(conn, "ALTER TABLE sellers ADD COLUMN can_view_expense_history BOOLEAN DEFAULT 0")
+        # v2.33: gasto en efectivo que NO sale del cajón (sueldos, feria pagada con
+        # plata del banco). DEFAULT 1 mantiene el comportamiento de lo ya registrado.
+        _add_column_if_missing(conn, "ALTER TABLE expenses ADD COLUMN affects_cash BOOLEAN DEFAULT 1")
 
         # Índices para consultas frecuentes (v2.8)
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_created_at ON sales(created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sales_status ON sales(status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_items_sale_id ON sale_items(sale_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_payments_sale_id ON sale_payments(sale_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_sale_items_product_id ON sale_items(product_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_showcase_product_status ON showcase_items(product_id, status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_sale_id ON ingredient_movements(sale_id)"))

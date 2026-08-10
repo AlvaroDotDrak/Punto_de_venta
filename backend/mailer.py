@@ -13,6 +13,8 @@ from email.message import EmailMessage
 
 from sqlalchemy.orm import Session
 
+from . import mail_defaults
+from .backup import build_mail_attachment
 from .database import SessionLocal
 from .models import CashMovement, CashRegister, Product, Sale, SaleItem, SystemConfig
 
@@ -23,12 +25,29 @@ def _get(db: Session, key: str, default: str = "") -> str:
 
 
 def get_mail_config(db: Session) -> dict:
+    """La cuenta emisora viene de fábrica (ver mail_defaults) y el local solo carga
+    los destinatarios. Lo que el admin guarde igual manda: sirve para el negocio que
+    quiera mandar desde su propia casilla sin recompilar."""
+    fabrica = mail_defaults.sender()
+    try:
+        port = int(_get(db, "smtp_port") or 0)
+    except ValueError:
+        port = 0
+    if port <= 0:
+        port = fabrica["port"]
+    # Una casilla propia a medio configurar (con cuenta pero sin contraseña, que es
+    # como queda tras un restore, porque el backup no la trae) mezclaría el usuario
+    # de una cuenta con la clave de otra y el login fallaría en silencio. O están las
+    # dos, o se usa la de fábrica entera.
+    usuario, clave = _get(db, "smtp_user"), _get(db, "smtp_password")
+    if not (usuario and clave):
+        usuario, clave = fabrica["user"], fabrica["password"]
     return {
         "enabled": _get(db, "smtp_enabled") == "true",
-        "host": _get(db, "smtp_host", "smtp.gmail.com"),
-        "port": int(_get(db, "smtp_port", "587") or 587),
-        "user": _get(db, "smtp_user"),
-        "password": _get(db, "smtp_password"),
+        "host": _get(db, "smtp_host") or fabrica["host"],
+        "port": port,
+        "user": usuario,
+        "password": clave,
         "from_name": _get(db, "smtp_from_name", "Punto de Venta"),
         "recipients": [r.strip() for r in _get(db, "report_recipients").split(",") if r.strip()],
     }
@@ -56,8 +75,11 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     ventas = ventas_brutas + anulaciones
     # Defensivo: las cortesías ya no generan movimiento, pero una instalación que
     # venía de antes puede tener alguno de $0 y no debe contar como transacción.
-    n_ventas = (len([m for m in movs if m.type == "sale" and m.payment_method != "cortesia"])
-                - len([m for m in movs if m.type == "void" and m.payment_method != "cortesia"]))
+    # Se cuentan ventas distintas (por sale_id): un pago mixto deja un movimiento por
+    # método y no debe contarse como varias transacciones.
+    ids_venta = {m.sale_id for m in movs if m.type == "sale" and m.payment_method != "cortesia" and m.sale_id}
+    ids_anul = {m.sale_id for m in movs if m.type == "void" and m.payment_method != "cortesia" and m.sale_id}
+    n_ventas = len(ids_venta) - len(ids_anul)
 
     efectivo = suma("sale", "efectivo") + suma("void", "efectivo")
     tarjeta = suma("sale", "tarjeta") + suma("void", "tarjeta")
@@ -248,7 +270,24 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     return asunto, html
 
 
-def send_mail(cfg: dict, asunto: str, html: str) -> None:
+def backup_attachment(db: Session):
+    """El respaldo que viaja pegado al correo, o None si está apagado.
+
+    Es la única copia que queda fuera del local: los backups de `backup.py` se
+    guardan en el mismo disco que la base, así que no sirven de nada si ese
+    equipo se pierde. Si armarlo falla, el correo igual sale — vale más el
+    resumen sin respaldo que ningún correo.
+    """
+    if _get(db, "backup_attach", "true") == "false":
+        return None
+    try:
+        return build_mail_attachment(db)
+    except Exception as e:  # noqa: BLE001
+        print(f"[mailer] No se pudo adjuntar el respaldo: {e}")
+        return None
+
+
+def send_mail(cfg: dict, asunto: str, html: str, adjunto: tuple[str, bytes] | None = None) -> None:
     """Envía por SMTP. Lanza excepción si falla — el llamador decide qué hacer."""
     msg = EmailMessage()
     msg["Subject"] = asunto
@@ -256,6 +295,9 @@ def send_mail(cfg: dict, asunto: str, html: str) -> None:
     msg["To"] = ", ".join(cfg["recipients"])
     msg.set_content("Este resumen se ve mejor en un cliente de correo con HTML.")
     msg.add_alternative(html, subtype="html")
+    if adjunto:
+        nombre, contenido = adjunto
+        msg.add_attachment(contenido, maintype="application", subtype="json", filename=nombre)
 
     contexto = ssl.create_default_context()
     if cfg["port"] == 465:
@@ -286,7 +328,7 @@ def send_close_summary_async(register_id: int) -> None:
             if not register:
                 return
             asunto, html = build_summary(db, register)
-            send_mail(cfg, asunto, html)
+            send_mail(cfg, asunto, html, backup_attachment(db))
         except Exception as e:  # noqa: BLE001 — el envío jamás puede tumbar la app
             print(f"[mailer] No se pudo enviar el resumen de la caja {register_id}: {e}")
         finally:

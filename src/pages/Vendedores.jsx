@@ -24,19 +24,24 @@ const emptyForm = {
   can_view_totals: false,
   can_withdraw_cash: false,
   can_apply_discount: false,
-  can_give_courtesy: false
+  can_give_courtesy: false,
+  can_manage_expenses: false,
+  can_view_expense_history: false
 };
 
 const PERMISSION_PRESETS = {
   cajero: { products_access: 'none', can_access_insumos: false, can_access_historial: false,
     can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: false,
-    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: true, can_give_courtesy: false },
+    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: true, can_give_courtesy: false,
+    can_manage_expenses: false, can_view_expense_history: false },
   encargado: { products_access: 'view', can_access_insumos: false, can_access_historial: true,
     can_void_sales: true, can_close_cash: true, can_cash_movements: true, can_view_costs: false,
-    can_view_totals: true, can_withdraw_cash: true, can_apply_discount: true, can_give_courtesy: true },
+    can_view_totals: true, can_withdraw_cash: true, can_apply_discount: true, can_give_courtesy: true,
+    can_manage_expenses: true, can_view_expense_history: true },
   bodeguero: { products_access: 'full', can_access_insumos: true, can_access_historial: false,
     can_void_sales: false, can_close_cash: false, can_cash_movements: false, can_view_costs: true,
-    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: false, can_give_courtesy: false },
+    can_view_totals: false, can_withdraw_cash: false, can_apply_discount: false, can_give_courtesy: false,
+    can_manage_expenses: true, can_view_expense_history: true },
 };
 
 export default function Vendedores() {
@@ -91,7 +96,9 @@ export default function Vendedores() {
           can_view_totals: form.can_view_totals,
           can_withdraw_cash: form.can_withdraw_cash,
           can_apply_discount: form.can_apply_discount,
-          can_give_courtesy: form.can_give_courtesy
+          can_give_courtesy: form.can_give_courtesy,
+          can_manage_expenses: form.can_manage_expenses,
+          can_view_expense_history: form.can_view_expense_history
         };
         if (form.pin) patch.pin = form.pin;
         await api.patch(`/sellers/${editingId}`, patch);
@@ -124,7 +131,9 @@ export default function Vendedores() {
       can_view_totals: !!seller.can_view_totals,
       can_withdraw_cash: !!seller.can_withdraw_cash,
       can_apply_discount: !!seller.can_apply_discount,
-      can_give_courtesy: !!seller.can_give_courtesy
+      can_give_courtesy: !!seller.can_give_courtesy,
+      can_manage_expenses: !!seller.can_manage_expenses,
+      can_view_expense_history: !!seller.can_view_expense_history
     });
     setShowForm(true);
   };
@@ -297,6 +306,27 @@ export default function Vendedores() {
                     <input type="checkbox" id="can_withdraw_cash" checked={form.can_withdraw_cash} onChange={e => updateField('can_withdraw_cash', e.target.checked)} />
                     <label htmlFor="can_withdraw_cash" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Retirar efectivo del cajón (sangría)</label>
                   </div>
+
+                  <h4 className="section-title" style={{ marginTop: 'var(--space-md)', fontSize: '0.9rem' }}>Gastos</h4>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <input type="checkbox" id="can_view_expense_history"
+                      checked={form.can_view_expense_history || form.can_manage_expenses}
+                      disabled={form.can_manage_expenses}
+                      onChange={e => updateField('can_view_expense_history', e.target.checked)} />
+                    <label htmlFor="can_view_expense_history" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Ver historial de gastos</label>
+                  </div>
+                  <small style={{ display: 'block', marginBottom: '8px', color: 'var(--color-text-light)' }}>
+                    Consultar los gastos de días anteriores y filtrar por fecha, categoría o
+                    proveedor. Solo lectura: no puede editarlos ni eliminarlos.
+                  </small>
+                  <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <input type="checkbox" id="can_manage_expenses" checked={form.can_manage_expenses} onChange={e => updateField('can_manage_expenses', e.target.checked)} />
+                    <label htmlFor="can_manage_expenses" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Gestionar gastos</label>
+                  </div>
+                  <small style={{ display: 'block', marginBottom: '8px', color: 'var(--color-text-light)' }}>
+                    Editar y eliminar gastos, y crear o modificar categorías y proveedores.
+                    Incluye el historial. Registrar un gasto no necesita ningún permiso.
+                  </small>
 
                   <h4 className="section-title" style={{ marginTop: 'var(--space-md)', fontSize: '0.9rem' }}>Ventas</h4>
                   <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
