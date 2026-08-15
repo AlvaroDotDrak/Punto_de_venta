@@ -405,6 +405,7 @@ export default function Gastos() {
                   <img
                     src={receiptPhoto}
                     alt="Comprobante"
+                    className="img-clickable"
                     style={{ width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 'var(--radius-sm)', cursor: 'pointer', border: '1px solid var(--color-border)' }}
                     onClick={() => setPreviewPhoto(receiptPhoto)}
                   />
@@ -533,6 +534,7 @@ export default function Gastos() {
                     <img
                       src={expense.receipt_photo}
                       alt="Comprobante"
+                      className="img-clickable"
                       style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 'var(--radius-sm)', cursor: 'pointer', flexShrink: 0 }}
                       onClick={() => setPreviewPhoto(expense.receipt_photo)}
                     />

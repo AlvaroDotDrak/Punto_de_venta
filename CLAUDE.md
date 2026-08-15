@@ -523,6 +523,36 @@ Admin y dev sin tope. Se expone en el perfil para que los selectores usen el val
   inválido". Parecía que la app se caía; el único arreglo era cerrar sesión y volver a entrar.
 - Los carritos viven en `localStorage`, así que sobreviven al re-login: no se pierde la venta
   en curso.
+- **"No pude verificar" no es "el token es inválido".** Al montar, `SellerContext` valida la sesión
+  con `/auth/me`; **solo un 401 borra el token**, y un fallo de red se reintenta 3 veces. Antes
+  cualquier error lo borraba (`.catch(() => setToken(null))`) y eso echaba a la cajera con un token
+  vigente: al volver de una ventana tapada el navegador recarga la página, ese fetch sale antes de
+  que la red esté lista y la sesión moría. En el audit log de una instalación real se veía clarísimo
+  — las sesiones nunca morían a las 12 h, morían tras 6–67 min de **quietud**, 1–2 veces al día.
+  Ojo: `api.js` excluye las rutas `/auth/` de su interceptor de 401, así que en `/auth/me` la
+  decisión vive en un solo lugar.
+
+### El navegador del local (kiosco Edge)
+
+El POS corre en Edge/Chrome en kiosco con **perfil propio** (`--user-data-dir=PuntoVentaKiosk`, en
+`inicio.bat` y `run_pos.py`). Ese perfil está separado del que usa el local para navegar: cambiar
+un ajuste en el Edge de todos los días **no** afecta al kiosco. Para tocar su configuración hay que
+abrir ese mismo `--user-data-dir` sin `--kiosk`.
+
+- **Flags anti-congelamiento** (`KIOSK_FLAGS`): `--disable-backgrounding-occluded-windows`,
+  `--disable-renderer-backgrounding`, `--disable-background-timer-throttling`. El local suele tener
+  una segunda ventana (correo, WhatsApp) **tapando** la del POS; sin esto el navegador congela la
+  ventana tapada, detiene los timers y al volver recarga la pestaña. No borrarlos pensando que
+  sobran: son la mitad del arreglo de la sesión que se perdía (la otra mitad es el `/auth/me` de
+  arriba, y hacen falta las dos).
+- **`img { pointer-events: none }` en `index.css`** (con salida `.img-clickable`). Edge levanta su
+  barra de "Búsqueda visual" al pasar el cursor sobre un `<img>`; al apretarla **navega** a
+  `edge://screenshot/in-edge-search`, el kiosco la bloquea con `ERR_KIOSK_BLOCKED` y el POS
+  desaparece de esa ventana — sin barra de direcciones ni botón atrás, la única salida es matar el
+  proceso. Las imágenes de la app son decorativas y viven dentro del botón que se quiere apretar,
+  así que el click pasa igual. Solo las miniaturas de comprobante en Gastos son objetivo real de
+  click y llevan `.img-clickable`. Una vez que Edge navega no hay defensa posible desde la página:
+  hay que cortar la cadena antes.
 
 ### Anulación de ventas (void)
 
@@ -557,6 +587,28 @@ El total no se toca.
   caracteres chinos de las POS-80 clónicas) y lo manda raw al spooler de Windows vía pywin32.
   En Linux o sin pywin32 devuelve 503 sin tumbar la app. Config en `system_config`
   (`printer_name`, `auto_print`, `print_logo`, pie de boleta multilínea).
+- **Imprimir nunca puede retener una conexión a la base.** Los endpoints arman los bytes y llaman a
+  `_print_and_release(db, data)`, que lee el nombre de la impresora, **cierra la sesión** y recién
+  ahí bloquea. Y `_print_raw` corre en un hilo con tope `PRINT_TIMEOUT` (8 s), porque `win32print`
+  contra un spooler muerto no devuelve nunca.
+  Sin esas dos cosas, con `open_drawer` encendido (pulso del cajón en **cada venta en efectivo**) y
+  la impresora apagada, a la venta 15 se agotaba el pool de SQLAlchemy (5 + 10) y **toda** la app
+  respondía 500 tras 30 s de espera; solo se recuperaba reiniciando el proceso. Pasó en producción.
+  Reproducido con la base del cliente: 30 impresiones colgadas y `/api/products` en 20 ms.
+  `cash.py::close_register` guarda `register_id` antes de imprimir — al soltar la sesión el objeto
+  `register` queda desconectado y no puede recargar sus columnas.
+
+### Cuándo el servidor está "caído"
+
+- **`GET /api/health` toca la base** (`SELECT 1`, 503 si falla). Cuando devolvía `{"ok": True}` sin
+  pedir conexión era el único endpoint que seguía respondiendo 200 con el pool agotado: la app se
+  veía en línea mientras todo lo demás moría con 500, el banner nunca aparecía y desde el mesón
+  parecía "que está lento". Es el latido que consulta `App.jsx` cada 30 s.
+- **Un 5xx no cuenta como servidor sano.** `api.js` emite `server-status: online` solo con
+  `status < 500` (en `request()` y en la subida por XHR); antes lo emitía tras *cualquier*
+  respuesta, así que durante la falla borraba el banner que el latido acababa de encender.
+- **`fetch` no rechaza un 503**: solo falla si no hubo ida y vuelta. Por eso el ping de `App.jsx`
+  usa `.then(res => setServerOnline(res.ok))` y no `.then(() => setServerOnline(true))`.
 
 ### Gastos operativos
 
@@ -782,7 +834,9 @@ correctamente con contenido largo.
 6. **`backend/backup.py::restore_from_backup`** — Hace `engine.dispose()`; cualquier código posterior
    al restore debe abrir una sesión nueva.
 7. **`backend/routers/printing.py`** — Los comandos ESC/POS (CP850, cancelar modo kanji) están
-   calibrados para POS-80 clónicas; cambiarlos rompe acentos o el layout de la boleta.
+   calibrados para POS-80 clónicas; cambiarlos rompe acentos o el layout de la boleta. Además, todo
+   lo que imprima debe pasar por `_print_and_release` y respetar `PRINT_TIMEOUT`: bloquear con la
+   sesión de la base tomada tumba la app entera, no solo la impresión.
 8. **`dist/`** — Nunca editar manualmente. Siempre regenerar con `npm run build`.
 9. **`backend/routers/accounting.py::export_report`** — openpyxl falla en tiempo de request si no
    está instalado, no al arrancar.
@@ -794,6 +848,10 @@ correctamente con contenido largo.
     movimientos de cajas ya cerradas: reescribir un cierre firmado es peor que un dato viejo.
 13. **`build_exe.bat`** — `pypdfium2` trae una DLL nativa y necesita `--collect-all`; sin eso el
     escaneo de PDFs falla recién en la máquina del cliente.
+14. **Cualquier `catch` que decida sobre el estado del sistema** — tres bugs distintos de la misma
+    familia salieron el mismo día: `api.js` daba por sano un 500, `App.jsx` daba por vivo un 503
+    (`fetch` no rechaza por status), y `SellerContext` daba por inválido un token que solo no pudo
+    verificar. Antes de escribir uno nuevo: distinguir "me respondió que no" de "no pude saber".
 
 ---
 

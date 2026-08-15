@@ -34,14 +34,39 @@ export function SellerProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
-  // Restaurar sesión si hay token guardado
+  // Restaurar sesión si hay token guardado.
+  //
+  // Solo un 401 borra el token. Antes lo borraba cualquier fallo, y eso echaba a
+  // la cajera con un token perfectamente válido: al volver de una suspensión del
+  // equipo (o cuando Chrome descarta la pestaña en segundo plano y la recarga),
+  // este /auth/me sale antes de que la red esté lista, falla, y la sesión moría.
+  // Por eso se perdía siempre después de un rato de quietud y nunca trabajando.
+  // "No pude verificar" no es "el token es inválido": ante un fallo de red se
+  // reintenta y el token se conserva.
   useEffect(() => {
     const token = sessionStorage.getItem('authToken');
     if (!token) { setLoading(false); return; }
-    api.get('/auth/me')
-      .then(seller => { setCurrentSeller(seller); refreshConfig(); })
-      .catch(() => setToken(null))
-      .finally(() => setLoading(false));
+
+    let cancelado = false;
+    (async () => {
+      for (let intento = 0; intento < 3; intento++) {
+        try {
+          const seller = await api.get('/auth/me');
+          if (cancelado) return;
+          setCurrentSeller(seller);
+          refreshConfig();
+          break;
+        } catch (err) {
+          if (cancelado) return;
+          if (err.status === 401) { setToken(null); break; }  // token realmente vencido
+          if (intento === 2) break;                           // se conserva el token
+          await new Promise(r => setTimeout(r, 1000 * (intento + 1)));
+        }
+      }
+      if (!cancelado) setLoading(false);
+    })();
+
+    return () => { cancelado = true; };
   }, [refreshConfig]);
 
   // La sesión venció: api.js ya borró el token. Acá se cierra la sesión visible

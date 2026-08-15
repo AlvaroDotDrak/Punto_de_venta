@@ -23,6 +23,15 @@ PORT = 8000
 URL = f"http://localhost:{PORT}"
 KIOSK_PROFILE_NAME = "PuntoVentaKiosk"
 
+# El local suele tener una segunda ventana del navegador (correo, WhatsApp) tapando
+# la del POS. Sin estos flags el navegador congela la ventana tapada: los timers se
+# detienen y al volver la pestaña se recarga, que es donde se perdía la sesión.
+KIOSK_FLAGS = [
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+]
+
 
 def app_dir() -> Path:
     """Carpeta donde viven los datos: junto al .exe, o la raíz del proyecto en dev."""
@@ -74,12 +83,12 @@ def open_kiosk() -> None:
     if kind == "edge":
         subprocess.Popen([
             browser, "--kiosk", URL, "--edge-kiosk-type=fullscreen",
-            "--no-first-run", f"--user-data-dir={profile}",
+            "--no-first-run", *KIOSK_FLAGS, f"--user-data-dir={profile}",
         ])
     elif kind == "chrome":
         subprocess.Popen([
             browser, "--kiosk", URL, "--no-first-run",
-            f"--user-data-dir={profile}",
+            *KIOSK_FLAGS, f"--user-data-dir={profile}",
         ])
     else:
         import webbrowser

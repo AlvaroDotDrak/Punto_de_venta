@@ -73,9 +73,12 @@ export default function App() {
 
   // Heartbeat cada 30s para detectar recuperación
   useEffect(() => {
+    // `res.ok` no es opcional: fetch solo rechaza si no hubo ida y vuelta, así
+    // que un 503 de /api/health (base sin conexiones libres) entraba por el
+    // .then y se anunciaba como servidor sano.
     const ping = () =>
       fetch('/api/health')
-        .then(() => setServerOnline(true))
+        .then(res => setServerOnline(res.ok))
         .catch(() => setServerOnline(false));
     const interval = setInterval(ping, 30000);
     return () => clearInterval(interval);

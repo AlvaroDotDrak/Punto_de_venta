@@ -7,6 +7,7 @@ disponible (ej. servidor Linux), los endpoints devuelven 503 sin tumbar la app.
 import base64
 import io
 import json
+import threading
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -32,6 +33,11 @@ except ImportError:
 router = APIRouter(prefix="/print", tags=["printing"])
 
 LINE_WIDTH = 48  # columnas de una térmica de 80mm con Font A
+
+# Tope para que una impresora muerta no cuelgue el request (ver _print_raw). Una
+# boleta de 80mm sale en menos de 2 s; 8 s da aire a un spooler lento sin dejar
+# a la cajera esperando frente al cliente.
+PRINT_TIMEOUT = 8
 
 # ── Comandos ESC/POS ─────────────────────────────────────────────────────────
 _INIT = b"\x1b@"
@@ -189,20 +195,63 @@ def _logo_raster(db: Session, max_width: int = LOGO_WIDTH) -> bytes:
 
 
 def _print_raw(printer_name: str, data: bytes) -> None:
+    """Manda los bytes RAW al spooler, con tope de tiempo.
+
+    win32print bloquea contra el spooler de Windows y una impresora apagada, sin
+    papel o con el cable suelto cuelga la llamada sin devolver nunca. Sin tope,
+    cada venta en efectivo (el pulso del cajón) dejaba tomada una conexión del
+    pool; a las 15 el pool se agotaba y TODA la app empezaba a responder 500 tras
+    30 s de espera. Solo se recuperaba reiniciando el proceso.
+
+    El hilo se deja huérfano a propósito: las llamadas de win32print no se pueden
+    cancelar desde afuera, pero el request sale y suelta sus recursos igual.
+    """
     if not _PRINT_AVAILABLE:
         raise HTTPException(503, "Impresión no disponible en este servidor (falta pywin32)")
-    try:
-        h = win32print.OpenPrinter(printer_name)
-    except Exception as e:
-        raise HTTPException(400, f"No se pudo abrir la impresora '{printer_name}': {e}")
-    try:
-        win32print.StartDocPrinter(h, 1, ("Boleta POS", None, "RAW"))
-        win32print.StartPagePrinter(h)
-        win32print.WritePrinter(h, bytes(data))
-        win32print.EndPagePrinter(h)
-        win32print.EndDocPrinter(h)
-    finally:
-        win32print.ClosePrinter(h)
+
+    fallo: dict[str, HTTPException] = {}
+
+    def _enviar():
+        try:
+            h = win32print.OpenPrinter(printer_name)
+        except Exception as e:  # noqa: BLE001
+            fallo["error"] = HTTPException(400, f"No se pudo abrir la impresora '{printer_name}': {e}")
+            return
+        try:
+            win32print.StartDocPrinter(h, 1, ("Boleta POS", None, "RAW"))
+            win32print.StartPagePrinter(h)
+            win32print.WritePrinter(h, bytes(data))
+            win32print.EndPagePrinter(h)
+            win32print.EndDocPrinter(h)
+        except Exception as e:  # noqa: BLE001
+            fallo["error"] = HTTPException(400, f"Falló la impresión en '{printer_name}': {e}")
+        finally:
+            win32print.ClosePrinter(h)
+
+    hilo = threading.Thread(target=_enviar, daemon=True)
+    hilo.start()
+    hilo.join(PRINT_TIMEOUT)
+    if hilo.is_alive():
+        raise HTTPException(
+            503, f"La impresora '{printer_name}' no respondió en {PRINT_TIMEOUT}s. "
+                 "Revisá que esté encendida, con papel y bien conectada."
+        )
+    if "error" in fallo:
+        raise fallo["error"]
+
+
+def _print_and_release(db: Session, data: bytes) -> None:
+    """Suelta la conexión a la base ANTES de bloquear contra la impresora.
+
+    El endpoint tiene una sesión tomada del pool (5 + 10 conexiones). Imprimir
+    con ella en la mano hace que una impresora lenta la retenga todo ese rato y
+    el resto de la app se quede sin conexiones. Los bytes ya vienen armados: acá
+    solo se lee el nombre de la impresora, se devuelve la conexión y recién ahí
+    se bloquea.
+    """
+    printer_name = _printer_name(db)
+    db.close()
+    _print_raw(printer_name, data)
 
 
 def _build_receipt(db: Session, sale: Sale, cash_received: float | None) -> bytes:
@@ -317,7 +366,7 @@ def build_close_report(db: Session, register) -> bytes:
     contado ni diferencia, que solo existen al cerrar): sirve para mirar cómo va
     el día o para cuadrar antes de contar el cajón.
     """
-    from ..models import CashMovement, Product, Sale, SaleItem
+    from ..models import CashMovement, Product, Sale, SaleItem, StockMovement
 
     branding = _branding(db)
     name = branding.get("name") or "Punto de Venta"
@@ -421,6 +470,20 @@ def build_close_report(db: Session, register) -> bytes:
     # cuánto preparar mañana. Que queden 40 bebidas es ruido. En el resto de las
     # categorías se lista únicamente lo que se vendió.
     con_remanente = set(_json_config(db, "report_stock_categories", []))
+
+    # Cuánto entró en el turno: sin este número el papel decía cuánto se vendió y
+    # cuánto quedaba, pero no cuánto se había preparado, que es lo que decide la
+    # producción del día siguiente.
+    ingresos_turno: dict[int, float] = {}
+    qm = db.query(StockMovement).filter(
+        StockMovement.type.in_(("ingreso", "compra")),
+        StockMovement.created_at >= register.opened_at,
+    )
+    if register.closed_at:
+        qm = qm.filter(StockMovement.created_at <= register.closed_at)
+    for mov in qm.all():
+        ingresos_turno[mov.product_id] = ingresos_turno.get(mov.product_id, 0) + mov.quantity
+
     con_stock = (db.query(Product)
                  .filter(Product.active == True, Product.stock.isnot(None))  # noqa: E712
                  .order_by(Product.category, Product.name).all())
@@ -435,15 +498,19 @@ def build_close_report(db: Session, register) -> bytes:
             filas.append((prod, vend, False))
 
     if filas:
-        titulo = "VENDIDO / QUEDA" if any(m for _, _, m in filas) else "VENDIDO"
+        titulo = "HIZO / VENDIO / QUEDA" if any(m for _, _, m in filas) else "VENDIDO"
         buf += _BOLD_ON + _txt(titulo) + b"\n" + _BOLD_OFF + _txt(_SUB) + b"\n"
         cat_actual = None
         for prod, vend, muestra_queda in filas:
             if prod.category != cat_actual:
                 cat_actual = prod.category
                 buf += _txt(etiquetas.get(cat_actual, cat_actual.capitalize())) + b"\n"
-            derecha = f"{vend:g} / {prod.stock:g}" if muestra_queda else f"{vend:g}"
-            buf += _txt(_row(f"  {prod.name[:24]}", derecha)) + b"\n"
+            if muestra_queda:
+                entro = ingresos_turno.get(prod.id, 0)
+                derecha = f"{entro:g} / {vend:g} / {prod.stock:g}"
+            else:
+                derecha = f"{vend:g}"
+            buf += _txt(_row(f"  {prod.name[:22]}", derecha)) + b"\n"
         buf += b"\n"
 
     gastos, retiros, ingresos = suma("expense"), suma("withdrawal"), suma("income")
@@ -504,7 +571,7 @@ def print_cash_close(
                         .order_by(CashRegister.closed_at.desc()).first())
     if not register:
         raise HTTPException(404, "No hay ningún turno para imprimir")
-    _print_raw(_printer_name(db), build_close_report(db, register))
+    _print_and_release(db, build_close_report(db, register))
     return {"ok": True}
 
 
@@ -517,7 +584,7 @@ def print_receipt(
     sale = db.query(Sale).filter(Sale.id == payload.sale_id).first()
     if not sale:
         raise HTTPException(404, "Venta no encontrada")
-    _print_raw(_printer_name(db), _build_receipt(db, sale, payload.cash_received))
+    _print_and_release(db, _build_receipt(db, sale, payload.cash_received))
     return {"ok": True}
 
 
@@ -528,11 +595,11 @@ def open_drawer(db: Session = Depends(get_db), _=Depends(get_current_seller)):
     Lo dispara el POS al confirmar una venta con efectivo. No imprime nada:
     solo manda el pulso. Cualquier vendedor autenticado puede — es la misma
     cajera que necesita dar vuelto."""
-    _print_raw(_printer_name(db), _KICK_DRAWER)
+    _print_and_release(db, _KICK_DRAWER)
     return {"ok": True}
 
 
 @router.post("/test")
 def print_test(db: Session = Depends(get_db), _=Depends(require_admin)):
-    _print_raw(_printer_name(db), _build_test(db))
+    _print_and_release(db, _build_test(db))
     return {"ok": True}

@@ -116,6 +116,22 @@ body {
   min-height: 100vh;
 }
 
+/* Edge levanta su barra de "Búsqueda visual" al pasar el cursor sobre un <img>.
+   En modo kiosco esa navegación queda bloqueada y la app se cuelga sin vuelta
+   atrás: hay que matar el proceso y reabrirlo. Las imágenes de la app son
+   decorativas y viven dentro del botón que la cajera quiere apretar, así que no
+   necesitan recibir el puntero — el click pasa igual al botón de abajo.
+   Las pocas que SÍ son el objetivo del click llevan .img-clickable. */
+img {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+img.img-clickable {
+  pointer-events: auto;
+}
+
 h1,
 h2,
 h3,

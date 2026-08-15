@@ -177,18 +177,22 @@ def close_register(
     # Flag propio y encendido por defecto: colgarlo de `auto_print` (la boleta de
     # cada venta, que muchos locales tienen apagada) dejaba el comprobante de
     # cierre sin imprimir sin que nadie supiera por qué.
+    # Se guarda el id aparte: imprimir suelta la sesión (ver _print_and_release),
+    # lo que deja a `register` desconectado y sin poder recargar sus columnas.
+    register_id = register.id
+
     print_error = None
     if _get_flag(db, "auto_print_close", default=True):
         try:
-            from .printing import build_close_report, _print_raw, _printer_name
-            _print_raw(_printer_name(db), build_close_report(db, register))
+            from .printing import build_close_report, _print_and_release
+            _print_and_release(db, build_close_report(db, register))
         except Exception as e:  # noqa: BLE001
             print_error = str(getattr(e, "detail", None) or e)
-            print(f"[printing] No se pudo imprimir el cierre de la caja {register.id}: {e}")
+            print(f"[printing] No se pudo imprimir el cierre de la caja {register_id}: {e}")
 
     out = _visible(db.query(CashRegister).options(
         joinedload(CashRegister.movements)
-    ).filter(CashRegister.id == register.id).first(), seller)
+    ).filter(CashRegister.id == register_id).first(), seller)
     out.print_error = print_error
     return out
 

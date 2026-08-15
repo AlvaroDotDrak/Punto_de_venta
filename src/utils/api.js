@@ -32,8 +32,12 @@ async function request(method, path, body = undefined) {
     throw new Error('Sin conexión con el servidor');
   }
 
-  // Si llegamos aquí, el servidor respondió (aunque sea con error HTTP)
-  window.dispatchEvent(new CustomEvent('server-status', { detail: { online: true } }));
+  // El servidor respondió. Un 5xx NO cuenta como sano: cuando el pool de la base
+  // se agota, todo responde 500 y anunciar "online" acá borraba el banner que el
+  // latido de /api/health acababa de encender. Se deja que el latido decida.
+  if (res.status < 500) {
+    window.dispatchEvent(new CustomEvent('server-status', { detail: { online: true } }));
+  }
 
   if (res.status === 204) return null;
 
@@ -92,7 +96,10 @@ function postWithProgress(path, body, { onProgress, timeoutMs = 300000 } = {}) {
     xhr.upload.onload = () => { if (onProgress) onProgress(1); };
 
     xhr.onload = () => {
-      window.dispatchEvent(new CustomEvent('server-status', { detail: { online: true } }));
+      // Mismo criterio que en request(): un 5xx no prueba que el servidor esté sano.
+      if (xhr.status < 500) {
+        window.dispatchEvent(new CustomEvent('server-status', { detail: { online: true } }));
+      }
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch { /* respuesta vacía o no JSON */ }
       if (xhr.status >= 200 && xhr.status < 300) { resolve(xhr.status === 204 ? null : data); return; }

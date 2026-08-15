@@ -8,14 +8,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
-from .database import Base, SessionLocal, engine
+from .database import Base, SessionLocal, engine, get_db
 from .models import ProductRecipe, StockMovement, SupplierItemAlias  # Asegurar creación de las tablas
 from .seed import seed_database
 from .utils import normalize_description
@@ -399,7 +400,18 @@ app.include_router(printing.router, prefix="/api")
 
 
 @app.get("/api/health")
-def health_check():
+def health_check(db: Session = Depends(get_db)):
+    """Latido que el frontend consulta cada 30 s para el banner de servidor caído.
+
+    Toca la base a propósito. Cuando solo devolvía {"ok": True} sin pedir una
+    conexión, era el único endpoint que seguía respondiendo 200 con el pool
+    agotado: la app se veía en línea mientras todo lo demás moría con 500. El
+    banner nunca aparecía y desde el mesón parecía que el sistema estaba lento.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:  # noqa: BLE001
+        raise HTTPException(503, "La base de datos no está respondiendo")
     return {"ok": True}
 
 

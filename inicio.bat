@@ -76,9 +76,14 @@ goto :eof
 
 :launchbrowser
 timeout /t 2 /nobreak >nul
+:: Los tres --disable-*background* evitan que el navegador congele la ventana del
+:: POS cuando queda tapada por otra ventana (el local suele tener una segunda
+:: ventana para el correo). Al congelarla, los timers se detienen y al volver la
+:: pestaña se recarga: ahí se perdia la sesion.
+set KIOSKFLAGS=--no-first-run --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling
 if "%BROWSER_KIND%"=="edge" (
-    start "" "%BROWSER%" --kiosk http://localhost:8000 --edge-kiosk-type=fullscreen --no-first-run --user-data-dir="%LocalAppData%\PuntoVentaKiosk"
+    start "" "%BROWSER%" --kiosk http://localhost:8000 --edge-kiosk-type=fullscreen %KIOSKFLAGS% --user-data-dir="%LocalAppData%\PuntoVentaKiosk"
 ) else (
-    start "" "%BROWSER%" --kiosk http://localhost:8000 --no-first-run --user-data-dir="%LocalAppData%\PuntoVentaKiosk"
+    start "" "%BROWSER%" --kiosk http://localhost:8000 %KIOSKFLAGS% --user-data-dir="%LocalAppData%\PuntoVentaKiosk"
 )
 exit /b
