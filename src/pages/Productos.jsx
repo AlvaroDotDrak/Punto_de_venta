@@ -117,7 +117,6 @@ export default function Productos() {
       photo: form.photo || null,
       barcode: hasCapability('barcode') && form.barcode.trim() ? form.barcode.trim() : null,
       sold_by: soldBy,
-      stock: isStockCat(form.category) ? (Number.isFinite(stockVal) ? stockVal : 0) : null,
       cost_price: (isStockCat(form.category) || form.category === 'cafe') && parseFloat(form.cost_price) > 0
         ? parseFloat(form.cost_price)
         : null,
@@ -125,10 +124,15 @@ export default function Productos() {
 
     try {
       if (editingId) {
+        // `stock` no viaja en el PATCH: el backend tampoco lo acepta. Mover
+        // inventario desde acá no dejaba registro de cuánto entró ni por qué.
         await api.patch(`/products/${editingId}`, payload);
         toast.success('Producto actualizado');
       } else {
-        await api.post('/products', payload);
+        await api.post('/products', {
+          ...payload,
+          stock: isStockCat(form.category) ? (Number.isFinite(stockVal) ? stockVal : 0) : null,
+        });
         toast.success('Producto creado');
       }
       setShowForm(false);
@@ -271,9 +275,9 @@ export default function Productos() {
               )}
               {canEdit && (
                 <>
-                  <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}><Edit size={14} /></button>
+                  <button className="btn btn-ghost btn-sm" title="Editar" onClick={() => handleEdit(p)}><Edit size={14} /></button>
                   {p.active ? (
-                    <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p)}>
+                    <button className="btn btn-ghost btn-sm" title="Desactivar" onClick={() => handleDelete(p)}>
                       <Trash2 size={14} />
                     </button>
                   ) : (
@@ -436,11 +440,21 @@ export default function Productos() {
                 </div>
               )}
 
-              {isStockCat(form.category) && (
+              {isStockCat(form.category) && !editingId && (
                 <div className="form-group">
                   <label className="form-label">Stock inicial ({form.sold_by === 'weight' ? 'kg' : 'unidades'})</label>
                   <input className="form-input" type="number" min="0" step={form.sold_by === 'weight' ? '0.01' : '1'}
                     value={form.stock} onChange={e => updateField('stock', e.target.value)} placeholder="0" />
+                </div>
+              )}
+
+              {isStockCat(form.category) && editingId && (
+                <div className="form-group">
+                  <label className="form-label">Stock</label>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    El stock se mueve con <strong>Reponer</strong>, <strong>Merma</strong> o{' '}
+                    <strong>Ajustar</strong>, para que quede registrado quién y por qué.
+                  </p>
                 </div>
               )}
 

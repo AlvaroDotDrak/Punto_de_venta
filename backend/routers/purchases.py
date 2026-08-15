@@ -14,6 +14,7 @@ from ..models import (
     IngredientMovement, PurchaseItem, SupplierItemAlias,
 )
 from ..auth import require_admin
+from ..stock import COMPRA, record_stock
 from ..utils import normalize_description, detect_pack
 from ..audit import ACTIONS, log_action
 from ._common import parse_date_from, parse_date_to
@@ -240,12 +241,12 @@ def create_purchase(
             product = db.query(Product).filter(Product.id == it.product_id).first()
             if not product:
                 raise HTTPException(status_code=404, detail=f"Producto {it.product_id} no encontrado")
-            # stock=None significa "este producto no lleva inventario" (café de
-            # máquina, productos por receta). Sumarle stock lo convertiría en
-            # controlado y el POS bloquearía su venta al llegar a 0. Para empezar
-            # a llevarlo hay que darle un stock inicial en Productos.
-            if product.stock is not None:
-                product.stock += inventory_qty
+            # record_stock ignora los productos con stock=None ("no lleva
+            # inventario"): darles un número los volvería bloqueables en el POS
+            # al llegar a 0. El costo sí se actualiza siempre.
+            record_stock(db, product, COMPRA, inventory_qty,
+                         seller_id=admin.id, expense_id=expense.id,
+                         notes=f"Compra {expense.invoice_number or ''}".strip()[:200] or None)
             product.cost_price = cost_per_unit  # último costo neto de compra, por unidad
 
         elif it.ingredient_id:
@@ -531,16 +532,18 @@ def delete_purchase(
             if not product:
                 continue
             if product.stock is not None:
-                nuevo = product.stock - inventory_qty
-                if nuevo < 0:
+                descontado = inventory_qty
+                if product.stock - inventory_qty < 0:
                     # Parte de lo comprado ya se vendió: el faltante es real y no
                     # se puede deshacer, así que se avisa en vez de dejar negativo.
                     avisos.append(
                         f"{product.name}: se descontaron {product.stock:g} de {inventory_qty:g} unidades "
                         f"(el resto ya se había vendido)"
                     )
-                    nuevo = 0
-                product.stock = nuevo
+                    descontado = product.stock
+                record_stock(db, product, COMPRA, -descontado,
+                             seller_id=admin.id, expense_id=expense_id,
+                             notes="Reversa: se borró la compra")
             anterior = _costo_anterior(db, expense_id, product_id=it.product_id)
             if anterior is not None:
                 product.cost_price = anterior

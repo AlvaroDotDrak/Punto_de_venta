@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Cargar .env antes de importar cualquier módulo del backend
 
 import json
+import re
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -15,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from .database import Base, SessionLocal, engine
-from .models import ProductRecipe, SupplierItemAlias  # Asegurar creación de las tablas
+from .models import ProductRecipe, StockMovement, SupplierItemAlias  # Asegurar creación de las tablas
 from .seed import seed_database
 from .utils import normalize_description
 from .backup import check_and_run_backup
@@ -73,6 +74,64 @@ def _backfill_item_aliases(conn) -> None:
 
     conn.execute(text("INSERT INTO system_config (key, value) VALUES ('aliases_backfilled', 'true')"))
     conn.commit()
+
+
+def _backfill_stock_movements(conn) -> None:
+    """v2.34: siembra la libreta del stock con las reposiciones que quedaron en el
+    audit log, para que el historial no arranque en blanco.
+
+    Solo se recupera lo que pasó por "Reponer" (`Restock X: +N` y `Reposición por
+    lote: X +N, Y +M`). Lo que se editó a mano en la ficha del producto se perdió:
+    ese log no guardaba qué cambiaba, que es justo el motivo de esta tabla.
+    `stock_after` queda en NULL — el saldo de entonces no es reconstruible.
+    Corre una sola vez (marca en system_config)."""
+    ya_corrio = conn.execute(
+        text("SELECT 1 FROM system_config WHERE key='stock_movements_backfilled'")
+    ).fetchone()
+    if ya_corrio:
+        return
+
+    productos = {
+        nombre: pid
+        for pid, nombre in conn.execute(text("SELECT id, name FROM products")).fetchall()
+    }
+    filas = conn.execute(text(
+        "SELECT seller_id, details, created_at FROM audit_log "
+        "WHERE action='PRODUCT_UPDATE' AND (details LIKE 'Restock %' OR details LIKE 'Reposición por lote:%') "
+        "ORDER BY id ASC"
+    )).fetchall()
+
+    insertados = 0
+    for seller_id, details, created_at in filas:
+        pares = []
+        if details.startswith("Restock "):
+            m = re.match(r"^Restock (.+?): \+([\d.]+)", details)
+            if m:
+                pares.append((m.group(1), m.group(2)))
+        else:
+            cuerpo = details.split(":", 1)[1] if ":" in details else ""
+            for trozo in cuerpo.split(","):
+                m = re.match(r"^\s*(.+?) \+([\d.]+)\s*$", trozo)
+                if m:
+                    pares.append((m.group(1), m.group(2)))
+
+        for nombre, cantidad in pares:
+            product_id = productos.get(nombre.strip())
+            if product_id is None:
+                continue  # producto renombrado o borrado: sin match seguro, se omite
+            conn.execute(text(
+                "INSERT INTO stock_movements "
+                "  (product_id, type, quantity, stock_after, seller_id, notes, created_at) "
+                "VALUES (:pid, 'ingreso', :qty, NULL, :sid, 'Recuperado del registro de auditoría', :ts)"
+            ), {"pid": product_id, "qty": float(cantidad), "sid": seller_id, "ts": created_at})
+            insertados += 1
+
+    conn.execute(text(
+        "INSERT INTO system_config (key, value) VALUES ('stock_movements_backfilled', 'true')"
+    ))
+    conn.commit()
+    if insertados:
+        print(f"[migración] libreta de stock: {insertados} movimientos recuperados del audit log")
 
 
 def _backfill_noncash_movements(conn) -> None:
@@ -248,6 +307,11 @@ def _run_migrations():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_purchase_items_ingredient_id ON purchase_items(ingredient_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingredient_movements_expense_id ON ingredient_movements(expense_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cash_movements_expense_id ON cash_movements(expense_id)"))
+        # v2.34: libreta del stock. La tabla la crea Base.metadata.create_all.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_stock_movements_product "
+            "ON stock_movements(product_id, created_at)"
+        ))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_expenses_supplier_invoice "
             "ON expenses(supplier_id, invoice_number)"
@@ -261,6 +325,7 @@ def _run_migrations():
         _backfill_item_aliases(conn)
         _migrar_descuento_unico(conn)
         _backfill_noncash_movements(conn)
+        _backfill_stock_movements(conn)
 
         # v2.13: marca de rubro (multi-vertical). Una instalación legacy ya poblada
         # (tiene vendedores) se auto-marca como pastelería ya configurada para no

@@ -11,6 +11,7 @@ from ..audit import ACTIONS, log_action
 from ._common import parse_date_from, parse_date_to
 from .config import _build_discounts, _get_weight_mode, _void_window_minutes, _history_days_limit
 from ..schemas import SaleCreate, SaleOut, VoidSaleRequest, FixPaymentMethodRequest
+from ..stock import ANULACION, VENTA, record_stock
 from ..utils import calculate_recipe_fraction
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -263,7 +264,8 @@ def create_sale(
                         status_code=400,
                         detail=f"Stock insuficiente para '{product.name}' (disponible: {product.stock:g} {unit_label})"
                     )
-                product.stock -= consumed
+                record_stock(db, product, VENTA, -consumed,
+                             seller_id=seller.id, sale_id=sale.id)
 
         # Descontar insumos basados en recetas de productos (si existen)
         if product:
@@ -465,7 +467,9 @@ def void_sale(
                         returned = 0.0
                 else:
                     returned = item.quantity
-                product.stock += returned
+                record_stock(db, product, ANULACION, returned,
+                             seller_id=seller.id, sale_id=sale_id,
+                             notes=f"Anulación: {payload.reason}"[:200])
 
     # Revertir showcase items
     showcase_items = db.query(ShowcaseItem).filter(ShowcaseItem.sale_id == sale_id).all()

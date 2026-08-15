@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from . import mail_defaults
 from .backup import build_mail_attachment
 from .database import SessionLocal
-from .models import CashMovement, CashRegister, Product, Sale, SaleItem, SystemConfig
+from .models import CashMovement, CashRegister, Product, Sale, SaleItem, StockMovement, SystemConfig
 
 
 def _get(db: Session, key: str, default: str = "") -> str:
@@ -133,6 +133,18 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
     except (ValueError, TypeError):
         con_remanente = set()
 
+    # Cuánto entró en el turno: el dueño necesita el trío completo para decidir
+    # la producción del día siguiente, no solo el saldo final.
+    ingresos_turno: dict[int, float] = {}
+    qm = db.query(StockMovement).filter(
+        StockMovement.type.in_(("ingreso", "compra")),
+        StockMovement.created_at >= register.opened_at,
+    )
+    if register.closed_at:
+        qm = qm.filter(StockMovement.created_at <= register.closed_at)
+    for mov in qm.all():
+        ingresos_turno[mov.product_id] = ingresos_turno.get(mov.product_id, 0) + mov.quantity
+
     con_stock = (db.query(Product)
                  .filter(Product.active == True, Product.stock.isnot(None))  # noqa: E712
                  .order_by(Product.category, Product.name).all())
@@ -209,14 +221,16 @@ def build_summary(db: Session, register: CashRegister) -> tuple[str, str]:
 
     filas_stock = "".join(
         f'<tr><td style="padding:4px 0;color:#555">{p.name}</td>'
-        f'<td style="padding:4px 0;text-align:right">{v:g} vendidos</td>'
+        + (f'<td style="padding:4px 0;text-align:right;color:#555">{ingresos_turno.get(p.id, 0):g} entraron</td>'
+           if muestra else '<td></td>')
+        + f'<td style="padding:4px 0;text-align:right">{v:g} vendidos</td>'
         + (f'<td style="padding:4px 0;text-align:right;font-weight:700">{p.stock:g} quedan</td>'
            if muestra else '<td></td>')
         + '</tr>'
         for p, v, muestra in quedan
     )
     stock_html = (
-        '<h3 style="font-size:15px;margin:0 0 6px">Vendido y lo que queda</h3>'
+        '<h3 style="font-size:15px;margin:0 0 6px">Lo que entró, se vendió y quedó</h3>'
         '<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">'
         f'{filas_stock}</table>'
     ) if filas_stock else ""

@@ -21,6 +21,15 @@ const RANGES = [
 
 const categoryEmoji = { vitrina: '🍰', salados: '🥪', encargo: '🎂', bebidas: '🥤', cafe: '☕' };
 
+const MOV_LABEL = {
+  ingreso: 'Ingreso',
+  venta: 'Venta',
+  anulacion: 'Anulación',
+  compra: 'Compra',
+  merma: 'Se botó',
+  ajuste: 'Ajuste',
+};
+
 function rangeToParams(rangeId) {
   const now = new Date();
   if (rangeId === 'all') return {};
@@ -35,6 +44,15 @@ export default function ProductStatsModal({ product, onClose }) {
   const [range, setRange] = useState('30d');
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [movements, setMovements] = useState(null);
+
+  // El historial no depende del rango: es la libreta completa del producto.
+  useEffect(() => {
+    if (product.stock == null) { setMovements([]); return; }
+    api.get(`/products/${product.id}/movements`)
+      .then(setMovements)
+      .catch(() => setMovements([]));
+  }, [product.id, product.stock]);
 
   useEffect(() => {
     setLoading(true);
@@ -192,6 +210,51 @@ export default function ProductStatsModal({ product, onClose }) {
                 )}
               </div>
             </>
+          )}
+
+          {product.stock != null && (
+            <div>
+              <h3 style={{ fontSize: '0.95rem', margin: '0 0 8px' }}>Movimientos de stock</h3>
+              {movements === null && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-light)', margin: 0 }}>Cargando…</p>
+              )}
+              {movements?.length === 0 && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-light)', margin: 0 }}>
+                  Todavía no hay movimientos registrados.
+                </p>
+              )}
+              {movements?.length > 0 && (
+                <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
+                  <table style={{ width: '100%', fontSize: '0.82rem', borderCollapse: 'collapse' }}>
+                    <tbody>
+                      {movements.map(m => (
+                        <tr key={m.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                          <td style={{ padding: '6px 10px', color: 'var(--color-text-light)', whiteSpace: 'nowrap' }}>
+                            {formatDate(m.created_at)}
+                          </td>
+                          <td style={{ padding: '6px 10px' }}>
+                            {MOV_LABEL[m.type] || m.type}
+                            {m.notes && (
+                              <span style={{ color: 'var(--color-text-light)' }}> · {m.notes}</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap',
+                                       color: m.quantity >= 0 ? 'var(--color-success, #2E8B57)' : 'var(--color-danger, #C0392B)' }}>
+                            {m.quantity > 0 ? '+' : ''}{m.quantity}
+                          </td>
+                          <td style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+                            {m.stock_after != null ? `→ ${m.stock_after}` : '—'}
+                          </td>
+                          <td style={{ padding: '6px 10px', color: 'var(--color-text-light)', whiteSpace: 'nowrap' }}>
+                            {m.seller_name || ''}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

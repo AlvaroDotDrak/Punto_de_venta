@@ -237,6 +237,7 @@ Una DB legacy ya poblada (tiene vendedores) se auto-marca `business_type=pastele
 | `cash_movements` | `type` ('sale'\|'expense'\|'income'\|'void'\|'withdrawal'), `payment_method`, `seller_id`, `expense_id` (FK nullable → el gasto que lo generó) |
 | `ingredients` | `unit`, `current_stock`, `min_stock`, `last_price` |
 | `ingredient_movements` | `type` ('purchase'\|'adjustment'\|'usage'), `sale_id`/`product_id` (para revertir al anular y rentabilidad), `notes` |
+| `stock_movements` | libreta de `products.stock`: `type` ('ingreso'\|'venta'\|'anulacion'\|'compra'\|'merma'\|'ajuste'), `quantity` (con signo), `stock_after` (saldo tras el movimiento; null = fila reconstruida), `sale_id`/`expense_id`/`seller_id`, `notes` |
 | `product_recipes` | `product_id`+`ingredient_id` (unique), `quantity` (por lote), `yield_qty` (unidades que rinde) |
 | `expense_categories` | `name`, `description`, `active` |
 | `expenses` | `category_id`, `amount`, `receipt_photo` (base64), `document_type` ('boleta'\|'factura'), `payment_method`, `affects_cash` (si el efectivo salió del cajón), `seller_id`, `supplier_id`, `invoice_number` (folio del proveedor, detecta duplicados) |
@@ -268,12 +269,13 @@ v2.25 retiros (can_withdraw_cash + expense_id en cash_movements), v2.26 invoice_
 v2.27 descuentos (can_apply_discount + subtotal/discount_percent/discount_amount en sales),
 v2.28 cortesías (can_give_courtesy + sales.notes), v2.29 discount_label, v2.30 pago mixto
 (tabla sale_payments, sin columnas nuevas), v2.31 can_manage_expenses,
-v2.32 can_view_expense_history, v2.33 expenses.affects_cash.
+v2.32 can_view_expense_history, v2.33 expenses.affects_cash, v2.34 libreta de stock
+(tabla stock_movements, sin columnas nuevas).
 
 Además de columnas, `_run_migrations()` corre **backfills de una sola vez** marcados con un flag en
-`system_config`: `aliases_backfilled` (alias de proveedor desde compras históricas) y
+`system_config`: `aliases_backfilled` (alias de proveedor desde compras históricas),
 `noncash_movements_backfilled` (movimientos de caja de ventas con tarjeta/transferencia, que antes
-no se creaban).
+no se creaban) y `stock_movements_backfilled` (reposiciones rescatadas del audit log).
 
 **Siempre usar `datetime.now()`, nunca `datetime.utcnow()`** — la DB guarda hora local chilena.
 `utcnow()` hace que los filtros de fecha fallen.
@@ -371,6 +373,25 @@ Al vender un "entero": buscar `{ showcase_type: 'entero', status: 'active' }` y 
 - Al vender, el stock se decrementa; si es insuficiente → HTTP 400.
 - Reponer: `POST /api/products/{id}/restock` (solo admin) o vía una compra con líneas.
 - Productos con `stock == 0` aparecen deshabilitados en el POS ("Sin stock").
+
+**La libreta del stock (`backend/stock.py`)**
+
+`record_stock()` es el **único** lugar que modifica `products.stock`: mueve el número y escribe
+la fila en `stock_movements` en la misma operación. Antes había seis puntos sueltos haciendo
+`product.stock += ...` y el saldo no tenía explicación — se sabía cuánto quedaba, no cuánto
+había entrado. Cualquier código nuevo que mueva inventario tiene que pasar por ahí.
+
+- Ignora los productos con `stock is None` ("no lleva inventario"), igual que hacían las compras:
+  darles un número los volvería bloqueables en el POS al llegar a 0.
+- **`stock` no se puede editar desde la ficha del producto** (no está en `ProductUpdate` ni en el
+  formulario al editar). Mover inventario obligaba a abrir una pantalla donde también están el
+  nombre y el precio: en producción eso renombró un producto en pleno servicio, y el audit log
+  no registraba qué había cambiado. Solo se acepta `stock` al **crear** (stock inicial).
+- Endpoints: `POST /{id}/restock` y `/restock-bulk` (ingreso), `POST /{id}/writeoff` (merma, con
+  motivo obligatorio), `POST /{id}/adjust` (ajuste a lo contado, con motivo), `GET /{id}/movements`.
+- `PRODUCT_UPDATE` guarda el diff (`precio 8500 → 9000`), no solo "Producto actualizado".
+- El comprobante de cierre y el correo muestran **hizo / vendió / queda** por producto: los
+  ingresos del turno salen de sumar los movimientos `ingreso`+`compra` de la ventana de la caja.
 
 ### Venta por peso y código de barras (retail)
 
@@ -711,14 +732,21 @@ correctamente con contenido largo.
 
 ## Tests
 
-- **Frontend** (`tests/*.test.jsx|js`, Vitest + jsdom): `StockLogic`, `VoidAndCash` (legacy, simulan
-  la lógica con un mock Dexie), `RecipeModal`, `RestockPanel`, `formatters`, `verticals`.
+- **Frontend** (`tests/*.test.jsx|js`, Vitest + jsdom, 50 tests): `StockLogic`, `VoidAndCash`
+  (legacy, simulan la lógica con un mock Dexie), `RecipeModal`, `RestockPanel`, `formatters`,
+  `verticals`, y los de la libreta de stock — `ProductStatsModal` (historial), `VisicoolerBaja`
+  (merma/ajuste), `ProductosStockField` (que la ficha no mueva inventario).
   Correr: `npx vitest run`.
-- **Backend** (`tests/test_*.py`, pytest): `test_utils.py`, `test_verticals.py` — lógica pura, sin DB.
-  Correr: `python -m pytest tests/ -q` (requiere pytest instalado en el venv).
-- ⚠️ La suite de Vitest requiere **Node ≥ 20.17** (jsdom arrastra una dependencia ESM que Node 18
-  no puede `require()`). Con Node 18 los tests fallan al arrancar el worker.
-- Nada prueba la API FastAPI de punta a punta todavía.
+- **Backend** (`tests/test_*.py`, pytest, 82 tests): `test_utils.py`, `test_verticals.py` (lógica
+  pura), `test_void_sales.py`, y `test_stock_movements.py` — 56 tests sobre la libreta de stock,
+  con SQLite en memoria y llamadas directas a las funciones de los routers.
+  Correr: `python -m pytest tests/ -q`.
+- **Versión de Node**: el proyecto fija **Node 22** en `.nvmrc` (`nvm use`). Vitest necesita al
+  menos 20.19 / 22.12: jsdom arrastra una dependencia ESM y las versiones anteriores no pueden
+  `require()`-la, así que los workers mueren antes de correr un solo test.
+- Nada prueba la API FastAPI de punta a punta todavía: los tests llaman a las funciones de los
+  routers directo, salteando las dependencias de FastAPI. Verifican la lógica, no que los
+  `Depends(require_...)` estén bien puestos.
 
 ---
 
@@ -726,12 +754,11 @@ correctamente con contenido largo.
 
 | Área | Problema |
 |---|---|
-| Tests | Cobertura mínima; no prueban la API FastAPI; los de stock son legacy con mock Dexie |
+| Tests | No prueban la API FastAPI de punta a punta (los routers se llaman directo, sin los `Depends`); los de vitrina son legacy con mock Dexie |
 | Sin CI/CD | No hay GitHub Actions ni pipeline |
 | Migraciones | Manual (`ALTER TABLE`), sin historial de versiones ni rollback |
 | PINs | SHA-256 + salt fijo (débil para secretos de 4-6 dígitos); mitigado por lockout |
 | Fotos | Base64 dentro de SQLite (products.photo, expenses.receipt_photo) infla la DB y los backups |
-| Entorno de tests | Vitest necesita Node ≥20.17 (hay 18.x en la máquina de desarrollo) y `pytest` no está en el `.venv`: hoy las suites **no corren** |
 | Secretos | `smtp_password` y `ZAI_API_KEY` viven en `system_config`/`.env` en texto plano junto al `.exe`; la casilla emisora de fábrica va ofuscada dentro del binario (`mail_defaults.py`) y es recuperable por quien tenga el `.exe` |
 | Compras | Si el mismo ítem va en dos líneas de una factura, `cost_price` queda con el de la última, no con el promedio ponderado |
 | Escaneo IA | Sin caché: escanear dos veces el mismo archivo son dos llamadas pagadas |
@@ -759,11 +786,13 @@ correctamente con contenido largo.
 8. **`dist/`** — Nunca editar manualmente. Siempre regenerar con `npm run build`.
 9. **`backend/routers/accounting.py::export_report`** — openpyxl falla en tiempo de request si no
    está instalado, no al arrancar.
-10. **`backend/routers/cash.py::_expected_cash`** — es la única fuente del efectivo esperado. Un
+10. **`backend/stock.py::record_stock`** — único punto que toca `products.stock`. Sumar o restar
+    el stock por fuera deja la libreta desalineada y el historial deja de explicar el saldo.
+11. **`backend/routers/cash.py::_expected_cash`** — es la única fuente del efectivo esperado. Un
     tipo de movimiento nuevo hay que sumarlo acá con su signo, o el arqueo miente en silencio.
-11. **`expenses.py::_sync_cash_movement`** — lo usan gastos y compras. Debe seguir sin tocar los
+12. **`expenses.py::_sync_cash_movement`** — lo usan gastos y compras. Debe seguir sin tocar los
     movimientos de cajas ya cerradas: reescribir un cierre firmado es peor que un dato viejo.
-12. **`build_exe.bat`** — `pypdfium2` trae una DLL nativa y necesita `--collect-all`; sin eso el
+13. **`build_exe.bat`** — `pypdfium2` trae una DLL nativa y necesita `--collect-all`; sin eso el
     escaneo de PDFs falla recién en la máquina del cliente.
 
 ---

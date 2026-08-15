@@ -12,13 +12,34 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 
 from ..database import get_db
-from ..models import Product, Sale, SaleItem, ProductRecipe, Ingredient
+from ..models import Product, Sale, SaleItem, ProductRecipe, Ingredient, StockMovement
 from ..auth import get_current_seller, require_admin, require_product_access
 from ..audit import ACTIONS, log_action
-from ..schemas import RestockBulkRequest, RestockBulkResult, ProductCreate, ProductOut, ProductUpdate, RestockRequest
+from ..schemas import (
+    RestockBulkRequest, RestockBulkResult, ProductCreate, ProductOut, ProductUpdate,
+    RestockRequest, StockAdjustRequest, StockMovementOut, StockWriteoffRequest,
+)
+from ..stock import AJUSTE, INGRESO, MERMA, record_stock
 from ..utils import calculate_recipe_fraction, compute_cost_per_unit
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+_ETIQUETAS = {
+    "name": "nombre", "category": "categoría", "price": "precio",
+    "cost_price": "costo", "slices": "trozos", "slice_price": "precio trozo",
+    "max_showcase_hours": "horas en vitrina", "sold_by": "se vende por",
+    "min_stock_cooler": "alerta de stock", "barcode": "código", "active": "activo",
+}
+
+
+def _fmt(valor) -> str:
+    if valor is None or valor == "":
+        return "—"
+    if isinstance(valor, bool):
+        return "sí" if valor else "no"
+    if isinstance(valor, float) and valor.is_integer():
+        return f"{valor:g}"
+    return str(valor)
 
 
 @router.get("", response_model=list[ProductOut])
@@ -84,12 +105,21 @@ def update_product(
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
+    cambios = []
     for field, value in payload.model_dump(exclude_none=True).items():
+        anterior = getattr(product, field, None)
+        if anterior != value:
+            cambios.append(f"{_ETIQUETAS.get(field, field)} {_fmt(anterior)} → {_fmt(value)}")
         setattr(product, field, value)
 
     db.commit()
     db.refresh(product)
-    log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, f"Producto actualizado: {product.name}")
+    # Sin el detalle de qué cambió, un precio mal tocado es indetectable: el log
+    # decía solo "Producto actualizado" y nadie podía saber de cuánto a cuánto.
+    detalle = f"Producto actualizado: {product.name}"
+    if cambios:
+        detalle += " — " + ", ".join(cambios)
+    log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, detalle[:500])
     return product
 
 
@@ -105,7 +135,7 @@ def restock_product(
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     if product.stock is None:
         raise HTTPException(status_code=400, detail="Este producto no tiene tracking de stock")
-    product.stock += payload.quantity
+    record_stock(db, product, INGRESO, payload.quantity, seller_id=seller.id)
     db.commit()
     db.refresh(product)
     log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, f"Restock {product.name}: +{payload.quantity} (total: {product.stock})")
@@ -139,7 +169,8 @@ def restock_bulk(
             # asignarle un número lo volvería bloqueable en el POS al llegar a 0.
             avisos.append(f"{producto.name}: no lleva inventario, se omitió")
             continue
-        producto.stock += it.quantity
+        record_stock(db, producto, INGRESO, it.quantity, seller_id=seller.id,
+                     notes="Carga del día")
 
     aplicados = [it for it in payload.items if productos[it.product_id].stock is not None]
     db.commit()
@@ -147,6 +178,96 @@ def restock_bulk(
     detalle = ", ".join(f"{productos[it.product_id].name} +{it.quantity:g}" for it in aplicados)
     log_action(db, ACTIONS.PRODUCT_UPDATE, seller.id, f"Reposición por lote: {detalle}"[:500])
     return RestockBulkResult(actualizados=len(aplicados), avisos=avisos)
+
+
+@router.post("/{product_id}/writeoff", response_model=ProductOut)
+def writeoff_product(
+    product_id: int,
+    payload: StockWriteoffRequest,
+    db: Session = Depends(get_db),
+    seller=Depends(require_product_access(write=True)),
+):
+    """Da de baja lo que se botó: vencido, roto, en mal estado.
+
+    Antes esto se hacía escribiendo el stock a mano en la ficha del producto, y
+    la pérdida no quedaba en ninguna parte. En lo perecible es el número que
+    decide cuánto preparar mañana."""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if product.stock is None:
+        raise HTTPException(status_code=400, detail="Este producto no lleva inventario")
+    if payload.quantity > product.stock:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Solo hay {product.stock:g} en stock, no se pueden dar de baja {payload.quantity:g}",
+        )
+
+    record_stock(db, product, MERMA, -payload.quantity,
+                 seller_id=seller.id, notes=payload.reason)
+    db.commit()
+    db.refresh(product)
+    log_action(db, ACTIONS.STOCK_WRITEOFF, seller.id,
+               f"Merma {product.name}: -{payload.quantity:g} (queda: {product.stock:g}) — {payload.reason}"[:500])
+    return product
+
+
+@router.post("/{product_id}/adjust", response_model=ProductOut)
+def adjust_product_stock(
+    product_id: int,
+    payload: StockAdjustRequest,
+    db: Session = Depends(get_db),
+    seller=Depends(require_product_access(write=True)),
+):
+    """Corrige el stock a lo que se contó físicamente, con motivo obligatorio.
+
+    Siempre va a existir el caso de "conté y hay 3, no 5". La diferencia con
+    editar el número a mano es que acá queda registrado como ajuste: si aparecen
+    muchos, es señal de que algo más está fallando."""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if product.stock is None:
+        raise HTTPException(status_code=400, detail="Este producto no lleva inventario")
+
+    anterior = product.stock
+    delta = payload.counted - anterior
+    if delta == 0:
+        return product
+
+    record_stock(db, product, AJUSTE, delta, seller_id=seller.id, notes=payload.reason)
+    db.commit()
+    db.refresh(product)
+    log_action(db, ACTIONS.STOCK_ADJUST, seller.id,
+               f"Ajuste {product.name}: {anterior:g} → {payload.counted:g} — {payload.reason}"[:500])
+    return product
+
+
+@router.get("/{product_id}/movements", response_model=list[StockMovementOut])
+def list_stock_movements(
+    product_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    seller=Depends(require_product_access(write=False)),
+):
+    """Historial de stock del producto, del más nuevo al más viejo."""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    movimientos = (db.query(StockMovement)
+                   .options(joinedload(StockMovement.seller))
+                   .filter(StockMovement.product_id == product_id)
+                   .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+                   .limit(limit).all())
+    return [
+        StockMovementOut(
+            id=m.id, type=m.type, quantity=m.quantity, stock_after=m.stock_after,
+            notes=m.notes, created_at=m.created_at,
+            seller_name=m.seller.name if m.seller else None,
+        )
+        for m in movimientos
+    ]
 
 
 # Open Food Facts: base abierta de productos empaquetados. Sin API key; solo

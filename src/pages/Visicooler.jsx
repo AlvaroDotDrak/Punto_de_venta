@@ -10,7 +10,7 @@ import api from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
 import {
   Thermometer, Plus, Minus, AlertTriangle, CheckCircle2,
-  XCircle, Search, X, Settings, Package, PackagePlus,
+  XCircle, Search, X, Settings, Package, PackagePlus, Trash2,
 } from 'lucide-react';
 
 // Thresholds: si min_stock_cooler no está definido, usar 3 como fallback
@@ -46,6 +46,11 @@ export default function Visicooler() {
   const [restockTarget, setRestockTarget] = useState(null);
   const [restockQty, setRestockQty]       = useState(1);
   const [restockLoading, setRestockLoading] = useState(false);
+  const [lossTarget, setLossTarget]   = useState(null);
+  const [lossMode, setLossMode]       = useState('merma');  // 'merma' | 'ajuste'
+  const [lossQty, setLossQty]         = useState('');
+  const [lossReason, setLossReason]   = useState('');
+  const [lossLoading, setLossLoading] = useState(false);
 
   // Carga del día: reponer varios productos de una vez (el lote de la mañana)
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -148,6 +153,36 @@ export default function Visicooler() {
       toast.error('Error al reponer: ' + err.message);
     } finally {
       setRestockLoading(false);
+    }
+  };
+
+  const openLoss = (product) => {
+    setLossTarget(product);
+    setLossMode('merma');
+    setLossQty('');
+    setLossReason('');
+  };
+
+  const handleLoss = async () => {
+    if (!lossTarget) return;
+    const cantidad = parseFloat(lossQty);
+    if (!Number.isFinite(cantidad) || cantidad < 0) { toast.error('Ingresa una cantidad válida'); return; }
+    if (lossReason.trim().length < 3) { toast.error('El motivo es obligatorio'); return; }
+    setLossLoading(true);
+    try {
+      if (lossMode === 'merma') {
+        await api.post(`/products/${lossTarget.id}/writeoff`, { quantity: cantidad, reason: lossReason.trim() });
+        toast.success(`Se dieron de baja ${cantidad} de "${lossTarget.name}"`);
+      } else {
+        await api.post(`/products/${lossTarget.id}/adjust`, { counted: cantidad, reason: lossReason.trim() });
+        toast.success(`"${lossTarget.name}" quedó en ${cantidad}`);
+      }
+      setLossTarget(null);
+      loadProducts();
+    } catch (err) {
+      toast.error('Error: ' + err.message);
+    } finally {
+      setLossLoading(false);
     }
   };
 
@@ -429,14 +464,24 @@ export default function Visicooler() {
                         <Settings size={12} /> Alerta
                       </button>
                       {product.stock != null && (
-                        <button
-                          className="btn btn-primary btn-sm"
-                          style={{ fontSize: '0.78rem' }}
-                          onClick={() => openRestock(product)}
-                          title="Reponer stock"
-                        >
-                          <Plus size={12} /> Reponer
-                        </button>
+                        <>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ fontSize: '0.78rem' }}
+                            onClick={() => openLoss(product)}
+                            title="Dar de baja lo que se botó, o corregir el stock contado"
+                          >
+                            <Trash2 size={12} /> Baja
+                          </button>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            style={{ fontSize: '0.78rem' }}
+                            onClick={() => openRestock(product)}
+                            title="Reponer stock"
+                          >
+                            <Plus size={12} /> Reponer
+                          </button>
+                        </>
                       )}
                     </div>
                   )}
@@ -447,6 +492,70 @@ export default function Visicooler() {
         </div>
         </div>
         ))
+      )}
+
+      {/* ── MODAL: MERMA / AJUSTE ─────────────────────── */}
+      {lossTarget && (
+        <div className="modal-overlay" onClick={() => setLossTarget(null)}>
+          <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 style={{ fontSize: '1rem' }}>Dar de baja</h2>
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                  {lossTarget.name} · stock actual: <strong>{lossTarget.stock}</strong>
+                </span>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setLossTarget(null)}><X size={16} /></button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--space-md)' }}>
+                <button
+                  className={`btn btn-sm ${lossMode === 'merma' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setLossMode('merma'); setLossQty(''); }}
+                >Se botó</button>
+                <button
+                  className={`btn btn-sm ${lossMode === 'ajuste' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setLossMode('ajuste'); setLossQty(''); }}
+                >Conté y no cuadra</button>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  {lossMode === 'merma' ? '¿Cuántos se botaron?' : '¿Cuántos hay de verdad?'}
+                </label>
+                <input className="form-input" type="number" min="0" step="0.01" autoFocus
+                  value={lossQty} onChange={e => setLossQty(e.target.value)} placeholder="0" />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Motivo</label>
+                <input className="form-input" type="text" maxLength={200}
+                  value={lossReason} onChange={e => setLossReason(e.target.value)}
+                  placeholder={lossMode === 'merma' ? 'Vencido, en mal estado…' : 'Se contó el stock físico…'} />
+              </div>
+
+              {Number.isFinite(parseFloat(lossQty)) && (
+                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                  Queda en <strong>
+                    {lossMode === 'merma'
+                      ? Math.max(0, (lossTarget.stock ?? 0) - parseFloat(lossQty))
+                      : parseFloat(lossQty)}
+                  </strong>
+                </p>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setLossTarget(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleLoss} disabled={lossLoading}>
+                {lossLoading ? 'Guardando…' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── MODAL: REPONER STOCK ──────────────────────── */}

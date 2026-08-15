@@ -12,7 +12,7 @@ from .models import (
     AuditLog, CashMovement, CashRegister, Expense, ExpenseCategory,
     Ingredient, IngredientMovement, Invoice, Order, OrderItem, Product,
     ProductRecipe, Sale, SaleItem, SalePayment, Seller, ShowcaseItem, Supplier,
-    PurchaseItem, SupplierItemAlias, SystemConfig
+    PurchaseItem, StockMovement, SupplierItemAlias, SystemConfig
 )
 from .audit import ACTIONS, log_action
 
@@ -52,6 +52,7 @@ _MODELS_BY_KEY = {
     "order_items": OrderItem,
     "cash_movements": CashMovement,
     "ingredient_movements": IngredientMovement,
+    "stock_movements": StockMovement,
     "product_recipes": ProductRecipe,
     "expenses": Expense,
     "purchase_items": PurchaseItem,

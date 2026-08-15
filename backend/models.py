@@ -60,6 +60,33 @@ class Product(Base):
     showcase_items = relationship("ShowcaseItem", back_populates="product")
     sale_items = relationship("SaleItem", back_populates="product")
     recipes = relationship("ProductRecipe", back_populates="product", cascade="all, delete-orphan")
+    stock_movements = relationship("StockMovement", back_populates="product")
+
+
+class StockMovement(Base):
+    """Libreta del stock: una línea por cada cambio de `products.stock`.
+
+    Antes el stock era un número suelto que se pisaba. Con esto queda el rastro
+    de cuánto entró, cuánto salió y quién lo movió: sin eso no hay forma de
+    saber cuánto se produjo en el día ni de explicar un descuadre.
+    """
+    __tablename__ = "stock_movements"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    # 'ingreso' | 'venta' | 'anulacion' | 'compra' | 'merma' | 'ajuste'
+    type = Column(String, nullable=False)
+    quantity = Column(Float, nullable=False)      # con signo: + entra al stock, − sale
+    stock_after = Column(Float, nullable=True)    # saldo tras el movimiento (None = fila reconstruida del audit log)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=True)
+    sale_id = Column(Integer, ForeignKey("sales.id"), nullable=True)
+    expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    product = relationship("Product", back_populates="stock_movements")
+    seller = relationship("Seller")
+    sale = relationship("Sale")
 
 
 class ShowcaseItem(Base):

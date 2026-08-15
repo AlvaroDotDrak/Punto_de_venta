@@ -100,7 +100,10 @@ class ProductUpdate(BaseModel):
     slice_price: Optional[float] = None
     max_showcase_hours: Optional[int] = None
     sold_by: Optional[str] = None
-    stock: Optional[float] = None
+    # `stock` no se edita acá a propósito: mover inventario obliga a abrir esta
+    # ficha, donde también están el nombre y el precio, y un resbalón los cambia
+    # sin dejar rastro. El stock se mueve con reponer / merma / ajuste, que sí
+    # registran. Ver backend/stock.py.
     min_stock_cooler: Optional[float] = None
     photo: Optional[str] = None
     barcode: Optional[str] = None
@@ -145,6 +148,28 @@ class RestockBulkRequest(BaseModel):
 class RestockBulkResult(BaseModel):
     actualizados: int
     avisos: list[str] = []
+
+
+class StockWriteoffRequest(BaseModel):
+    quantity: float = Field(gt=0)      # cuánto se botó
+    reason: str = Field(min_length=3, max_length=200)
+
+
+class StockAdjustRequest(BaseModel):
+    counted: float = Field(ge=0)       # lo que hay de verdad, no la diferencia
+    reason: str = Field(min_length=3, max_length=200)
+
+
+class StockMovementOut(BaseModel):
+    id: int
+    type: str
+    quantity: float
+    stock_after: Optional[float] = None
+    notes: Optional[str] = None
+    seller_name: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # ── Showcase ──────────────────────────────────────────────────────────────────
